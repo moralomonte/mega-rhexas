@@ -51,6 +51,28 @@ def _stage(batch: dict) -> str:
     return _STAGES.get(str(batch.get("stage") or "").lower(), "Starting")
 
 
+def next_line(nxt) -> str:
+    """One line for the batch downloading ahead. Empty when nothing is prefetched."""
+    if not isinstance(nxt, dict) or nxt.get("active") is False:
+        return ""
+    stage = str(nxt.get("stage") or "").lower()
+    try:
+        total = int(nxt.get("stars_total") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    try:
+        done = int(nxt.get("stars_done") or 0)
+    except (TypeError, ValueError):
+        done = 0
+    if stage in {"ready", "downloaded"}:
+        return "Next: ready"
+    if stage in {"downloading", "claimed", "download"}:
+        if total:
+            return f"Next: downloading {done}/{total}"
+        return "Next: downloading"
+    return ""
+
+
 def mission_state(snap: dict) -> dict:
     """Counters and stage names the original header, rings, and steps already draw."""
     batch = snap.get("batch") if isinstance(snap.get("batch"), dict) else {}
@@ -120,6 +142,7 @@ def mission_state(snap: dict) -> dict:
         "coord_line": " · ".join(bits),
         "banner": banner,
         "pace_mode": pace_mode,
+        "next_line": next_line(snap.get("next")),
         "worker_panel": {
             "stars_searched": int(life.get("stars_searched") or 0),
             "batches_submitted": int(life.get("batches_submitted") or 0),

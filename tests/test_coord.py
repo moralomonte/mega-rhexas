@@ -649,6 +649,59 @@ def test_cli_status_and_token_list_show_the_split(tmp_path, capsys):
     assert "just now" in listed
 
 
+def test_prefetch_claim_holds_two_leases_and_keeps_replica_rules(tmp_path):
+    store = _store(tmp_path)
+    try:
+        store.enroll_tics(107, [1, 2, 3, 4, 5, 6], unit_size=2)
+        tokens, ids = _ids(store, "ada", "ada2", "bea")
+        store.conn.execute(
+            "UPDATE workers SET account_id=(SELECT account_id FROM workers WHERE id=?) WHERE id=?",
+            (ids["ada"], ids["ada2"]),
+        )
+        first = store.claim(ids["ada"])
+        assert first["tics"] == [1, 2]
+        app = App(store)
+        claimed = app.handle(
+            "POST", "/api/v1/projects/exoplanets/tasks/claim", "",
+            {"Authorization": f"Bearer {tokens['ada']}"},
+            json.dumps({"prefetch": True}).encode(),
+        )
+        assert claimed.status == 200
+        second = json.loads(claimed.body)["assignment"]
+        assert second["tics"] == [3, 4]
+        assert second["assignment_id"] != first["assignment_id"]
+        assert store.claim(ids["ada"])["assignment_id"] == first["assignment_id"]
+        assert store.claim(ids["ada"], prefetch=True) is None
+        leased = store.leases(ids["ada"])
+        assert [row["assignment_id"] for row in leased] == [first["assignment_id"], second["assignment_id"]]
+        assert store.current(ids["ada"])["assignment_id"] == first["assignment_id"]
+        store.heartbeat(
+            ids["ada"], first["assignment_id"],
+            progress={"phase": "search", "done": 1, "total": 2},
+        )
+        store.heartbeat(
+            ids["ada"], second["assignment_id"],
+            progress={"phase": "download", "done": 1, "total": 2},
+        )
+        bea = store.claim(ids["bea"])
+        assert bea["tics"] == [1, 2]
+        ada2 = store.claim(ids["ada2"])
+        assert ada2["tics"] == [5, 6]
+        current = app.handle(
+            "GET", "/api/v1/projects/exoplanets/tasks/current", "",
+            {"Authorization": f"Bearer {tokens['ada']}"},
+            b"",
+        )
+        assert current.status == 200
+        body = json.loads(current.body)
+        assert body["assignment"]["assignment_id"] == first["assignment_id"]
+        assert [row["assignment_id"] for row in body["assignments"]] == [
+            first["assignment_id"], second["assignment_id"],
+        ]
+    finally:
+        store.close()
+
+
 def _call(port, method, path, body=None, headers=None):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     data = None if body is None else json.dumps(body).encode()

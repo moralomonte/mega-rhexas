@@ -25,8 +25,10 @@ class CoordinatorClient:
     def current(self) -> dict:
         return self._request("GET", self._task("current"), None)
 
-    def claim(self) -> dict:
-        return self._request("POST", self._task("claim"), {})
+    def claim(self, *, prefetch: bool = False) -> dict:
+        """Lease a batch. ``prefetch`` asks for a second lease while the first is still held."""
+        body = {"prefetch": True} if prefetch else {}
+        return self._request("POST", self._task("claim"), body)
 
     def heartbeat(self, assignment_id: int, progress: dict | None = None) -> dict:
         """Renew the lease. ``progress`` is omitted when unknown so older coordinators still accept the body.

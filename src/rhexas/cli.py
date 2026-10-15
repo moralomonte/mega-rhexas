@@ -140,6 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--poll-seconds", type=float, default=None, help="Wait between empty claims (default 60)")
     p.add_argument("--cache-dir", default=None, help="Where this worker keeps temporary light curves")
     p.add_argument("--once", action="store_true", help="Process one batch (or exit if the queue is empty) and stop")
+    p.add_argument(
+        "--prefetch", type=int, default=None, choices=[0, 1],
+        help="Batches to download while the current one is searching (default 1). 0 waits until that upload finishes.",
+    )
     p.add_argument("--dashboard", action="store_true", help="Also serve the local live dashboard and open it in a browser")
     _dashboard_flags(p)
 
