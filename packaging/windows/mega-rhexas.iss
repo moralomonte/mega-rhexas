@@ -3,7 +3,7 @@
 ; Uninstall does not delete %LOCALAPPDATA%\Mega Rhexas (token and cache).
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.4"
+  #define MyAppVersion "0.3.5"
 #endif
 
 #define MyAppName "Mega Rhexas"
@@ -23,6 +23,11 @@ PrivilegesRequired=lowest
 OutputDir=output
 OutputBaseFilename=MegaRhexas-Setup-{#MyAppVersion}
 SetupIconFile=..\assets\triskelion.ico
+WizardImageFile=..\assets\wizard-image.bmp
+WizardSmallImageFile=..\assets\wizard-small.bmp
+; Site background #05060f, so the images meet the wizard without a light fringe.
+WizardImageBackColor=$0F0605
+WizardSmallImageBackColor=$0F0605
 UninstallDisplayIcon={app}\triskelion.ico
 Compression=lzma2
 SolidCompression=yes

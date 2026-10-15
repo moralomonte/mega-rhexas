@@ -26,8 +26,9 @@ Opening Mega Rhexas starts the worker and the local dashboard (the same screen a
 `rhexas worker --dashboard`, with Eco, Live, and Turbo) and opens that page in the browser.
 A triskelion sits in the tray: Open dashboard, Eco, Live, Turbo, Pause, and Quit.
 
-The first time, the page asks you to paste the invite token. It is saved in your AppData
-folder and is not shown again. Cache, low priority, Live pace, a 20 GB cap, and the disk-space
+The first time, choose **Sign in with megarhexas.com**. A browser opens so you can sign in
+on the website. If you already have a token, choose **Paste a token**. Either way it is saved
+in your AppData folder and is not shown again. Cache, low priority, Live pace, a 20 GB cap, and the disk-space
 guard are already set.
 
 The installer is about 100 MB (about 400 MB once installed) because it contains Python plus numpy, astropy, and lightkurve.

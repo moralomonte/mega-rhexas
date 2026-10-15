@@ -24,10 +24,10 @@ On Windows you do not need git, Python, or a command prompt.
 2. Run it. If Windows says it protected your PC, that is SmartScreen reacting to an unsigned installer. Click **More info**, then **Run anyway**. The installer does not need an administrator password.
 3. Leave **Start Mega Rhexas when I sign in** unchecked unless you want that. It is off by default.
 4. Open **Mega Rhexas** from the Start menu. Your browser opens the dashboard. Eco, Live, and Turbo are on that page. Live is already selected.
-5. The first time, paste the invite token (`rhx_…`) into the box and choose **Save and start**. It is stored on this computer and the page does not show it again. **Sign in with megarhexas.com** is there for when browser sign-in is switched on; until then, pasting the token is the way in.
+5. The first time, choose **Sign in with megarhexas.com**. Finish signing in in the browser. The page continues on its own, and it does not show the saved login again. **Paste a token** is there if you already have one.
 6. Leave it running. The triskelion in the tray opens the dashboard, changes Eco / Live / Turbo, pauses, or quits. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
 
-The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and stops if the drive has under 5 GB free. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to paste it a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
+The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and stops if the drive has under 5 GB free. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to sign in a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
 
 A newer version shows up as a link on the dashboard. Quit Mega Rhexas from the tray, then download the installer and run it. The app will not install it for you. Quit first so Windows can replace the program files.
 

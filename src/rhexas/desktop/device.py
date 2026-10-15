@@ -59,7 +59,7 @@ class DeviceLink:
         if uri and user_code and "code=" not in uri:
             uri = uri + ("&" if "?" in uri else "?") + "code=" + quote(user_code)
         if not code or not uri.startswith(("https://", "http://")):
-            raise DeviceError("Sign-in from megarhexas.com did not start. Paste the invite token instead.")
+            raise DeviceError("Sign-in with megarhexas.com did not start. You can paste a token instead.")
         try:
             interval = float(data.get("interval") or 5)
         except (TypeError, ValueError):
@@ -85,7 +85,7 @@ class DeviceLink:
 
     def _post(self, path: str, payload: dict) -> dict:
         if not self.base.startswith(("https://", "http://")):
-            raise DeviceError("The coordinator address is not set. Paste the invite token instead.")
+            raise DeviceError("This computer does not know where to sign in. You can paste a token instead.")
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base + path, data=body, method="POST")
         request.add_header("Content-Type", "application/json")
@@ -104,21 +104,21 @@ class DeviceLink:
                     return body
             if exc.code in (404, 405, 501):
                 raise DeviceError(
-                    "Sign-in from megarhexas.com is not available yet. Paste the invite token instead."
+                    "Sign-in with megarhexas.com is not available right now. You can paste a token instead."
                 ) from None
-            raise DeviceError("Could not reach megarhexas.com. Paste the invite token, or try sign-in again.") from None
+            raise DeviceError("Could not reach megarhexas.com. You can paste a token, or try again.") from None
         except DeviceError:
             raise
         except Exception:
-            raise DeviceError("Could not reach megarhexas.com. Paste the invite token, or try sign-in again.") from None
+            raise DeviceError("Could not reach megarhexas.com. You can paste a token, or try again.") from None
         try:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise DeviceError(
-                "Sign-in from megarhexas.com sent an unexpected reply. Paste the invite token instead."
+                "megarhexas.com sent a reply this app could not read. You can paste a token instead."
             ) from None
         if not isinstance(data, dict):
             raise DeviceError(
-                "Sign-in from megarhexas.com sent an unexpected reply. Paste the invite token instead."
+                "megarhexas.com sent a reply this app could not read. You can paste a token instead."
             )
         return data
