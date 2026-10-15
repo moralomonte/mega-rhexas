@@ -1,7 +1,7 @@
-"""Where the desktop app keeps the invite and the light-curve cache.
+"""Where the desktop app keeps the token and the light-curve cache.
 
 The token file sits next to the cache, not inside it, so emptying the cache
-does not forget the invite. Nothing in here prints the token.
+does not forget the token. Nothing in here prints the token.
 """
 from __future__ import annotations
 

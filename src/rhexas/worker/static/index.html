@@ -85,11 +85,13 @@ canvas{width:100%;display:block}
 #setup .panel{max-width:460px;width:100%;background:linear-gradient(160deg,rgba(30,27,75,.95),rgba(8,10,25,.96));border:1px solid var(--bd);border-radius:22px;padding:26px 24px;box-shadow:0 30px 90px #000a}
 #setup h2{margin:0 0 8px;font-size:22px;text-transform:none;letter-spacing:0;color:var(--tx)}
 #setup p{color:var(--mut);margin:0 0 14px}
-#setup label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px}
+#setup label{display:block;font-size:12px;color:var(--mut);margin:12px 0 6px}
 #setup input{width:100%;background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:12px;padding:12px 14px;font:inherit;font-size:15px}
-#setup .go{margin-top:12px;width:100%;padding:11px 14px;border-radius:12px;border:0;background:linear-gradient(90deg,#7c5cff,#22d3ee);color:#fff;font:inherit;font-weight:700;cursor:pointer}
-#setup .alt{margin-top:8px;width:100%}
-#setup .msg{min-height:1.2em;color:var(--warn);font-size:13px}
+#setup .go{margin-top:4px;width:100%;padding:12px 14px;border-radius:12px;border:0;background:linear-gradient(90deg,#7c5cff,#22d3ee);color:#fff;font:inherit;font-weight:700;font-size:15px;cursor:pointer}
+#setup .texty{display:block;margin:14px auto 0;padding:2px 4px;border:0;background:none;color:var(--mut);font:inherit;font-size:13px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+#setup .texty:hover{color:var(--tx)}
+#setup .minor{margin-top:10px;width:100%;padding:8px 12px;border-radius:10px;border:1px solid var(--bd);background:transparent;color:var(--tx);font:inherit;font-size:13px;cursor:pointer}
+#setup .msg{min-height:1.2em;color:var(--warn);font-size:13px;margin:12px 0 0}
 #update-offer a{color:#ffd166}
 </style></head><body><canvas id="stars"></canvas>
 <div class="wrap">
@@ -109,13 +111,16 @@ canvas{width:100%;display:block}
 <form class="panel" id="setup-form" autocomplete="off">
 <h2 id="setup-title">Welcome to Mega Rhexas</h2>
 <p>This computer downloads a few hundred stars at a time, searches them, and sends back a small results file. The big files are deleted after that.</p>
+<div data-setup="signin"><button class="go" id="setup-signin" type="button">Sign in with megarhexas.com</button></div>
 <div data-setup="paste">
-<label for="setup-token">Paste invite token</label>
-<input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="rhx_…">
-<button class="go" type="submit">Save and start</button>
+<button class="texty" id="setup-paste" type="button">Paste a token</button>
+<div id="setup-paste-fields" hidden>
+<label for="setup-token">Your token</label>
+<input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token">
+<button class="minor" type="submit">Save and start</button>
+</div>
 </div>
 <p class="msg" id="setup-msg"></p>
-<div data-setup="signin"><button class="btn alt" id="setup-signin" type="button">Sign in with megarhexas.com</button></div>
 </form>
 </div>
 <div class="grid"><section class="card s3"><h2>Current batch <span class="r kv" id="next_line"></span></h2>
@@ -479,10 +484,26 @@ async function refreshUpdate(attempt){
   link.href=href; link.target='_blank'; link.rel='noopener'; link.textContent='Download the update';
   box.append(link, '. It will not install by itself.');
 }
+const pasteBtn=$('setup-paste');
+if(pasteBtn){
+  pasteBtn.onclick=()=>{
+    pasteBtn.hidden=true;
+    const box=$('setup-paste-fields');
+    if(box) box.hidden=false;
+    const input=$('setup-token');
+    if(input) input.focus();
+  };
+}
 const setupForm=$('setup-form');
 if(setupForm){
   setupForm.onsubmit=async ev=>{
     ev.preventDefault();
+    const box=$('setup-paste-fields');
+    if(box && box.hidden){
+      const sign=$('setup-signin');
+      if(sign) sign.click();
+      return;
+    }
     const input=$('setup-token');
     const msg=$('setup-msg');
     let token=input.value;
@@ -507,15 +528,15 @@ if(signin){
     try{
       const res=await fetch('/api/setup/device/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
       start=await res.json().catch(()=>({}));
-      if(!res.ok){msg.textContent=start.error||'Sign-in is not available yet. Paste the invite token.';return}
-    }catch(e){msg.textContent='Sign-in is not available yet. Paste the invite token.';return}
+      if(!res.ok){msg.textContent=start.error||'Sign-in is not available right now. You can paste a token instead.';return}
+    }catch(e){msg.textContent='Sign-in is not available right now. You can paste a token instead.';return}
     if(!start.opened && safeHttp(start.verification_uri)) window.open(start.verification_uri,'_blank','noopener');
-    if(!start.opened && !safeHttp(start.verification_uri)){msg.textContent='Sign-in did not return a web page. Paste the invite token.';return}
-    msg.textContent='Finish signing in in the browser. This page will continue when it is done.';
+    if(!start.opened && !safeHttp(start.verification_uri)){msg.textContent='Sign-in did not open a page. You can paste a token instead.';return}
+    msg.textContent='Finish signing in in your browser. This page will continue on its own.';
     let wait=Math.max(2,(+start.interval||5))*1000;
     const deadline=Date.now()+Math.max(30,(+start.expires_in||600))*1000;
     const tick=async ()=>{
-      if(Date.now()>deadline){msg.textContent='Sign-in timed out. Paste the invite token.';return}
+      if(Date.now()>deadline){msg.textContent='Sign-in took too long. You can paste a token instead.';return}
       try{
         const res=await fetch('/api/setup/device/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
         const body=await res.json().catch(()=>({}));
@@ -524,8 +545,8 @@ if(signin){
           if(+body.interval>0) wait=Math.max(2,+body.interval)*1000;
           setTimeout(tick,wait);return
         }
-        msg.textContent=body.error||'Sign-in did not finish. Paste the invite token.';
-      }catch(e){msg.textContent='Sign-in did not finish. Paste the invite token.'}
+        msg.textContent=body.error||'Sign-in did not finish. You can paste a token instead.';
+      }catch(e){msg.textContent='Sign-in did not finish. You can paste a token instead.'}
     };
     setTimeout(tick,wait);
   };

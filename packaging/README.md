@@ -9,6 +9,8 @@ plus wheels, which is what numpy, astropy, and lightkurve install cleanly into.
 PyInstaller is not used: those libraries ship data files and extension modules
 that a freeze often misses.
 
+The installer icon, Start-menu shortcut, tray icon, and Inno Setup wizard images are the triskelion from `site/img/triskelion.svg`. Regenerate them with `python packaging/windows/make_icon.py` (needs `rsvg-convert` and Pillow).
+
 The tag workflow (`.github/workflows/windows-installer.yml`) builds
 `MegaRhexas-Setup-<version>.exe` on `windows-latest` and attaches it to the
 GitHub release. The file is not code-signed.

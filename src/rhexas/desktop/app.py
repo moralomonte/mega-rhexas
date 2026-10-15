@@ -85,7 +85,7 @@ def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int 
     try:
         if not gate.ready.is_set():
             print(
-                "Paste your invite token in the dashboard. It stays on this computer and is not shown again.",
+                "Sign in with megarhexas.com on the dashboard, or paste a token. It stays on this computer and is not shown again.",
                 flush=True,
             )
             while not gate.ready.wait(0.4):

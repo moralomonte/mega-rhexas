@@ -1,4 +1,4 @@
-"""Invite token on disk. The value is never put in an error message."""
+"""Saved sign-in token on disk. The value is never put in an error message."""
 from __future__ import annotations
 
 import os
@@ -43,12 +43,12 @@ def restrict_private(path: Path) -> None:
 
 
 def write_token(app_dir: Path, token: str) -> None:
-    """Store one invite. Rejects anything that is not an ``rhx_`` token."""
+    """Store one token. Rejects anything that is not an ``rhx_`` token."""
     text = str(token or "").strip()
     if not text:
-        raise TokenError("Paste the invite token from the person who invited you.")
+        raise TokenError("Paste a token to continue.")
     if not _TOKEN.fullmatch(text):
-        raise TokenError("That doesn't look like an invite token. It should start with rhx_.")
+        raise TokenError("That doesn't look like a token from megarhexas.com.")
     root = Path(app_dir)
     root.mkdir(parents=True, exist_ok=True)
     path = root / "token"
@@ -60,7 +60,7 @@ def write_token(app_dir: Path, token: str) -> None:
 
 
 def read_token(app_dir: Path) -> str:
-    """Return the saved invite, or ``""`` when there is none. Does not log it."""
+    """Return the saved token, or ``""`` when there is none. Does not log it."""
     path = Path(app_dir) / "token"
     if not path.is_file():
         return ""

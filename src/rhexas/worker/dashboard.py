@@ -226,7 +226,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return
             data = self._read_json(4096)
             if data is None or "token" not in data:
-                self._json(400, {"error": "Paste the invite token from the person who invited you."})
+                self._json(400, {"error": "Paste a token to continue."})
                 return
             try:
                 gate.save_pasted(data.get("token"))
@@ -245,7 +245,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             try:
                 payload = gate.begin_device()
             except Exception as exc:
-                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. Paste the invite token instead."
+                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. You can paste a token, or try again."
                 self._json(502, {"error": message})
                 return
             payload = dict(payload)
@@ -261,7 +261,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             try:
                 payload = gate.poll_device()
             except Exception as exc:
-                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. Paste the invite token instead."
+                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. You can paste a token, or try again."
                 self._json(502, {"error": message})
                 return
             self._json(200, payload)

@@ -78,6 +78,22 @@ def test_token_file_is_private_and_errors_do_not_echo_it(tmp_path):
         raise AssertionError("expected TokenError")
 
 
+def test_setup_errors_do_not_mention_an_invite(tmp_path):
+    gate = SetupGate(tmp_path, "https://api.megarhexas.com", linker=_Linker())
+    idle = gate.poll_device()["error"].lower()
+    assert "invite" not in idle
+    assert "paste a token" in idle
+    try:
+        write_token(tmp_path, "not-a-token")
+    except TokenError as exc:
+        message = str(exc).lower()
+    else:
+        raise AssertionError("expected TokenError")
+    assert "invite" not in message
+    assert "megarhexas.com" in message
+    assert SECRET not in message
+
+
 def test_missing_token_file_reads_as_empty(tmp_path):
     from rhexas.worker.loop import load_token
     cfg = resolve_worker(default_config(tmp_path), token_file=str(tmp_path / "missing"), environ={})
@@ -165,8 +181,16 @@ def test_setup_page_saves_a_pasted_token_without_showing_it(tmp_path, monkeypatc
         assert SECRET.encode() not in body
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
             page = response.read()
-        assert b"Paste invite token" in page
-        assert b"Sign in with megarhexas.com" in page
+        setup = page[page.index(b'id="setup"'):page.index(b'class="grid"', page.index(b'id="setup"'))]
+        assert b"Sign in with megarhexas.com" in setup
+        assert b"Paste a token" in setup
+        assert setup.index(b"Sign in with megarhexas.com") < setup.index(b"Paste a token")
+        assert b'class="go" id="setup-signin"' in setup
+        assert b'class="texty" id="setup-paste"' in setup
+        assert b"Paste invite token" not in page
+        assert b"invite" not in setup.lower()
+        assert b"crypto" not in setup.lower()
+        assert b"coin" not in setup.lower()
         assert SECRET.encode() not in page
         code, started = _post(port, "/api/setup/device/start", {})
         assert code == 200

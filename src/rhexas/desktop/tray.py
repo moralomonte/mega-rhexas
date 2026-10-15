@@ -1,33 +1,45 @@
 """Tray menu. The same labels are what a future macOS status item should show."""
 from __future__ import annotations
 
-import math
+import io
 import threading
+from pathlib import Path
 
 MENU_LABELS = ("Open dashboard", "Eco", "Live", "Turbo", "Pause", "Quit")
 
+# Native 16 and 32 (and the other sizes) from site/img/triskelion.svg.
+_ICON = Path(__file__).resolve().parent / "icons" / "triskelion.ico"
+
 
 def triskelion_image():
-    """A small triskelion for the tray. None when Pillow is not installed."""
+    """The site triskelion for the tray. None when Pillow or the icon is missing.
+
+    The in-memory image is the native 32px frame. Saving as ICO writes every
+    size in the file, including the native 16px frame, so Windows can pick a
+    sharp icon instead of scaling one drawing.
+    """
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image
     except ImportError:
         return None
-    size = 64
-    image = Image.new("RGBA", (size, size), (8, 10, 28, 255))
-    draw = ImageDraw.Draw(image)
-    colors = ((165, 243, 252, 255), (129, 140, 248, 255), (192, 132, 252, 255))
-    center = size / 2
-    for index, color in enumerate(colors):
-        angle = -math.pi / 2 + index * (2 * math.pi / 3)
-        x = center + math.cos(angle) * 14
-        y = center + math.sin(angle) * 14
-        draw.ellipse((x - 9, y - 9, x + 9, y + 9), fill=color)
-        arm = angle + 0.9
-        x2 = center + math.cos(arm) * 24
-        y2 = center + math.sin(arm) * 24
-        draw.line((center, center, x2, y2), fill=color, width=6)
-    draw.ellipse((center - 5, center - 5, center + 5, center + 5), fill=(255, 255, 255, 255))
+    if not _ICON.is_file():
+        return None
+    blob = _ICON.read_bytes()
+    image = Image.open(io.BytesIO(blob))
+    if (32, 32) in image.info.get("sizes", ()):
+        image.size = (32, 32)
+        image.load()
+
+    def save(fp, format=None, **params):
+        if (format or "").upper() in ("", "ICO"):
+            if hasattr(fp, "write"):
+                fp.write(blob)
+            else:
+                Path(fp).write_bytes(blob)
+            return
+        Image.Image.save(image, fp, format=format, **params)
+
+    image.save = save
     return image
 
 

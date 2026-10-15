@@ -14,10 +14,10 @@ _WAITING = {"pending", "authorization_pending", "slow_down"}
 
 
 class SetupGate:
-    """Paste-a-token today. ``begin_device`` / ``poll_device`` are the sign-in button.
+    """First-run sign-in. The main button calls ``begin_device`` / ``poll_device``.
 
-    The button can replace the paste field later without a new storage path:
-    both call :meth:`save_pasted`, and :meth:`status` tells the page which to show.
+    Pasting a token calls :meth:`save_pasted`. Both paths store the same file,
+    and :meth:`status` tells the page that a token is still needed.
     """
 
     def __init__(self, app_dir: Path, coordinator_url: str, linker: DeviceLink | None = None):
@@ -74,7 +74,7 @@ class SetupGate:
         if not code:
             return {
                 "status": "idle",
-                "error": "Sign-in has not started. Paste the invite token, or try Sign in again.",
+                "error": "Sign-in has not started. Try Sign in again, or paste a token.",
             }
         try:
             result = self.linker.poll(code)
@@ -92,7 +92,7 @@ class SetupGate:
             except TokenError:
                 return {
                     "status": "error",
-                    "error": "Sign-in returned something that is not an invite token. Paste the token instead.",
+                    "error": "Sign-in did not return a usable token. Paste a token instead.",
                 }
             return {"status": "ready"}
         status = result.status or "pending"
@@ -105,11 +105,11 @@ class SetupGate:
         if status == "ready":
             return {
                 "status": "error",
-                "error": "Sign-in finished without a token. Paste the invite token instead.",
+                "error": "Sign-in finished without a token. Paste a token instead.",
             }
         payload = {"status": status, "interval": interval}
         if result.message:
             payload["error"] = redact(result.message)
         elif status in {"expired", "access_denied", "denied"}:
-            payload["error"] = "Sign-in did not finish. Paste the invite token instead."
+            payload["error"] = "Sign-in did not finish. Paste a token instead."
         return payload
