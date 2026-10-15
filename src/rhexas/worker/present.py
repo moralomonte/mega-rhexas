@@ -94,6 +94,8 @@ def mission_state(snap: dict) -> dict:
     banner = ""
     if not alive and stage != "Done":
         banner = "The worker process is not attached to this cache. Leave rhexas worker running and this page will follow it."
+    elif res.get("user_paused"):
+        banner = "Paused. Resume from the Mega Rhexas menu. This batch stays leased."
     elif res.get("paused"):
         banner = "Eco is paused between stars. This batch stays leased."
     pace_mode = res.get("mode") if res.get("mode") in ("eco", "live", "turbo") else "live"
@@ -131,7 +133,7 @@ def mission_state(snap: dict) -> dict:
             "pid": int(res.get("pid") or 0),
             "alive": alive,
             "mode": pace_mode,
-            "paused": bool(res.get("paused")),
+            "paused": bool(res.get("paused")) or bool(res.get("user_paused")),
             "cache_bytes": int(cache_bytes),
             "max_cache_gb": cap,
             "cpu": _num(res.get("cpu_percent")),

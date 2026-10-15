@@ -18,6 +18,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+packaging/windows/dist/
+packaging/windows/embed/
+packaging/windows/output/
 .env
 *.key
 *.pem

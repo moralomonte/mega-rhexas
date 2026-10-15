@@ -14,6 +14,31 @@ you override them.
 
 ## Install
 
+### Just download and run
+
+Friends who were invited do not need git, Python, or a command line. On 64-bit Windows, download
+**MegaRhexas-Setup** from the [latest GitHub release](https://github.com/moralomonte/mega-rhexas/releases/latest)
+and run it. The installer is per-user: it does not ask for an administrator password. It adds
+**Mega Rhexas** to the Start menu. "Start when I sign in" is a checkbox and is off unless you
+turn it on.
+
+Opening Mega Rhexas starts the worker and the local dashboard (the same screen as
+`rhexas worker --dashboard`, with Eco, Live, and Turbo) and opens that page in the browser.
+A triskelion sits in the tray: Open dashboard, Eco, Live, Turbo, Pause, and Quit.
+
+The first time, the page asks you to paste the invite token. It is saved in your AppData
+folder and is not shown again. Cache, low priority, Live pace, a 20 GB cap, and the disk-space
+guard are already set.
+
+The installer is about 100 MB (about 400 MB once installed) because it contains Python plus numpy, astropy, and lightkurve.
+It is not code-signed. Windows SmartScreen will say it doesn't recognize the publisher.
+Choose **More info**, then **Run anyway**. That warning stays until the file is signed
+with an Authenticode certificate. The app checks for a newer GitHub release when it
+starts and links to the download. It does not install an update by itself.
+
+The same `rhexas desktop` command is what a future macOS app should launch. That build
+is not in this release. Mac and Linux instructions for a source checkout are in `FRIENDS.md`.
+
 Python 3.11 or newer. Windows is the machine this is run on today; the same install works
 on macOS and Linux.
 
@@ -109,8 +134,9 @@ or `MR_ROOT` points somewhere else.
 | `disk.max_project_gb` | 400 | Stop when sector files plus `env_overhead_gb` exceed this |
 | `disk.env_overhead_gb` | 4.5 | Flat size allowance (the check does not walk `venv`) |
 | `download.threads` | 8 | MAST concurrency |
-| `download.retries` | 5 | Attempts per file |
+| `download.retries` | 5 | Attempts per file, then one more pass over stars that still have no file |
 | `download.timeout_s` | 120 | Per-file timeout |
+| `download.jitter` | 0.2 | Equal jitter on those waits (0.2 is 80–120% of the backoff). A partial file is resumed |
 | `download.curl_timeout_s` | 60 | Sector curl-script timeout |
 | `download.throttle_base_s` | 15 | HTTP 429/503 backoff, `base * factor**attempt` |
 | `download.throttle_factor` | 2 | |

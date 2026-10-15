@@ -30,9 +30,11 @@ class DownloadConfig:
     timeout_s: int = 120
     curl_timeout_s: int = 60
     # 15 * 2**t seconds on HTTP 429/503; 5 * 2**t seconds on other errors.
+    # jitter is the equal-jitter fraction (0.2 -> 80% to 120% of that delay).
     throttle_base_s: int = 15
     throttle_factor: int = 2
     retry_base_s: int = 5
+    jitter: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -416,6 +418,10 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("max_project_gb must be > 0")
     if cfg.download.threads < 1:
         raise ConfigError("download.threads must be >= 1")
+    if cfg.download.retries < 1:
+        raise ConfigError("download.retries must be >= 1")
+    if not (0 <= cfg.download.jitter <= 1):
+        raise ConfigError("download.jitter must be between 0 and 1")
     if cfg.search.procs < 1:
         raise ConfigError("search.procs must be >= 1")
     if cfg.search.n_periods < 2:
@@ -502,6 +508,7 @@ def _as_str(value) -> str:
 _DOWNLOAD_CAST = {name: _as_int for name in (
     "threads", "retries", "timeout_s", "curl_timeout_s", "throttle_base_s", "throttle_factor", "retry_base_s",
 )}
+_DOWNLOAD_CAST["jitter"] = _as_float
 _SEARCH_CAST = {
     "procs": _as_int,
     "period_min_days": _as_float,

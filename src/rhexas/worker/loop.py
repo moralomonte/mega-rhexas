@@ -22,6 +22,29 @@ from .cache import delete_lightcurves, enforce_cache_cap
 from .client import CoordinatorClient, ProtocolError
 from .priority import apply_priority
 
+# One worker process. Download threads read these; they are not thread-locals.
+_stop_event: threading.Event | None = None
+_hold_fn = None
+
+
+class WorkerStopped(Exception):
+    """The tray asked this process to quit."""
+
+
+def _check_stop() -> None:
+    event = _stop_event
+    if event is not None and event.is_set():
+        raise WorkerStopped()
+
+
+def _set_hold(fn) -> None:
+    global _hold_fn
+    _hold_fn = fn
+
+
+def _user_paused(live) -> bool:
+    return bool(_live_call(live, "user_paused"))
+
 _FLOATS = (
     "period", "t0", "duration", "depth", "depth_err", "snr", "sde",
     "odd_even_sigma", "sec_sigma", "score",
@@ -196,7 +219,7 @@ def discard_local(cache: Path, state: dict) -> None:
 
 def default_download(cfg: Config, tics) -> int:
     from rhexas.download import run
-    code = run(cfg, threads=cfg.download.threads, tics=set(tics))
+    code = run(cfg, threads=cfg.download.threads, tics=set(tics), hold=_hold_fn)
     if code == 2:
         raise RuntimeError("disk limit stopped the download")
     return code
@@ -317,10 +340,11 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
 
 
 def wait_until_running(cfg: Config, live, memory: dict, sleeper) -> dict:
-    """Hold here while eco is selected. The caller keeps the lease."""
+    """Hold here while eco is selected, or the tray Pause is on. The lease stays."""
     while True:
+        _check_stop()
         settings = current_pace(cfg, live, memory)
-        if not settings["paused"]:
+        if not settings["paused"] and not _user_paused(live):
             return settings
         sleeper(0.4)
 
@@ -336,6 +360,7 @@ def _with_pace(ucfg: Config, settings: dict) -> Config:
 def _paced_sleep(cfg: Config, live, memory: dict, sleeper, seconds: float) -> None:
     deadline = time.monotonic() + float(seconds)
     while True:
+        _check_stop()
         current_pace(cfg, live, memory)
         left = deadline - time.monotonic()
         if left <= 0:
@@ -415,6 +440,34 @@ def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, prog
             return
 
 
+def stars_still_missing(results_dir: Path, tics: list[int]) -> list[int]:
+    """TICs with no measurement. A star the search actually rejected is not in this list."""
+    missing = []
+    for row in read_stars(results_dir, tics):
+        if row.get("error") == "no result":
+            missing.append(int(row["tic"]))
+    return missing
+
+
+def retry_missing_before_submit(ucfg: Config, tics: list[int], download, search, filt) -> list[int]:
+    """One more download and search for stars that never produced a row.
+
+    Replica comparison treats a star only one worker measured as a miss. A home
+    connection that dropped the MAST transfer should not become that miss if the
+    file can still be fetched.
+    """
+    missing = stars_still_missing(ucfg.sector_results, tics)
+    if not missing:
+        return []
+    print(f"retrying {len(missing)} stars still missing before upload", flush=True)
+    download(ucfg, set(missing))
+    _check_stop()
+    search(ucfg, set(missing), int(ucfg.search.procs))
+    _check_stop()
+    filt(ucfg, set(tics))
+    return missing
+
+
 def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None,
              progress: HeartbeatProgress | None = None, pace_memory=None, sleeper=None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
@@ -446,10 +499,16 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             name="rhexas-download-watch", daemon=True,
         )
         watch.start()
+
+        def _hold():
+            wait_until_running(cfg, live, memory, pause_sleep)
+
+        _set_hold(_hold)
         try:
             ensure_space(cache, cfg)
             download(ucfg, tic_set)
         finally:
+            _set_hold(None)
             stop_watch.set()
             watch.join(timeout=2.0)
         state = _advance(path, state, "downloaded")
@@ -507,6 +566,18 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         state = _advance(path, state, "filtered")
         stage = "filtered"
     if stage == "filtered":
+        def _hold():
+            wait_until_running(cfg, live, memory, pause_sleep)
+
+        _set_hold(_hold)
+        try:
+            retry_missing_before_submit(ucfg, tics, download, search, filt)
+        except WorkerStopped:
+            raise
+        except Exception as exc:
+            print(f"final retry for missing stars did not finish: {exc}", flush=True)
+        finally:
+            _set_hold(None)
         stars = read_stars(ucfg.sector_results, tics)
         candidates = read_candidates(ucfg.sector_results)
         _live_call(live, "record_candidates", assignment, candidates)
@@ -563,10 +634,15 @@ def _close_local(live, log, old_out, old_err) -> None:
 
 
 def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, search=None, filt=None,
-               sleeper=time.sleep, heartbeat_s: float = 300) -> int:
+               sleeper=time.sleep, heartbeat_s: float = 300, quit_event: threading.Event | None = None) -> int:
+    global _stop_event
+    previous_stop = _stop_event
+    if quit_event is not None:
+        _stop_event = quit_event
     token = load_token(cfg)
     if client is None:
         if not cfg.worker.coordinator_url or not token:
+            _stop_event = previous_stop
             print("rhexas worker: set the coordinator URL and a token", file=sys.stderr)
             return 2
         client = CoordinatorClient(cfg.worker.coordinator_url, token)
@@ -575,7 +651,11 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
     filt = filt or default_filter
     cache = cache_dir(cfg)
     cache.mkdir(parents=True, exist_ok=True)
-    live, log, old_out, old_err = _open_local(cfg, cache)
+    try:
+        live, log, old_out, old_err = _open_local(cfg, cache)
+    except BaseException:
+        _stop_event = previous_stop
+        raise
     try:
         try:
             apply_priority(cfg.worker.priority)
@@ -591,9 +671,19 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         current_pace(cfg, live, pace_memory)
         attempt = 0
         while True:
+            _check_stop()
+            if _user_paused(live) and not pace_memory.get("announced_pause"):
+                print("paused. Resume from the Mega Rhexas menu to continue.", flush=True)
+                pace_memory["announced_pause"] = True
+            while _user_paused(live):
+                _check_stop()
+                sleeper(0.4)
+            pace_memory["announced_pause"] = False
             try:
                 assignment = _next_assignment(client, cache)
                 attempt = 0
+            except WorkerStopped:
+                raise
             except ProtocolError as exc:
                 print(f"coordinator rejected the request ({exc.status}): {exc}", flush=True)
                 _live_call(live, "set_connection", False, f"rejected ({exc.status})")
@@ -635,6 +725,10 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                     download=download, search=search, filt=filt, live=live, progress=beat,
                     pace_memory=pace_memory, sleeper=sleeper,
                 )
+            except WorkerStopped:
+                if stop is not None:
+                    stop.set()
+                return 0
             except ProtocolError as exc:
                 if stop is not None:
                     stop.set()
@@ -666,7 +760,10 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             print(f"unit {assignment['assignment_id']} uploaded; light curves deleted", flush=True)
             if once:
                 return 0
+    except WorkerStopped:
+        return 0
     finally:
+        _stop_event = previous_stop
         _close_local(live, log, old_out, old_err)
 
 
@@ -711,6 +808,8 @@ def load_token(cfg: Config) -> str:
     path = Path(cfg.worker.token_file).expanduser()
     if not path.is_absolute():
         path = cfg.root / path
+    if not path.is_file():
+        return ""
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):

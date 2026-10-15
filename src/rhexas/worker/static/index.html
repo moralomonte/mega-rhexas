@@ -81,6 +81,16 @@ canvas{width:100%;display:block}
 .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;margin:10px 0 6px}
 .bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .6s ease}
 #wcpu{background:rgba(255,255,255,.03);border-radius:8px}
+#setup{position:fixed;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(3,4,12,.82);backdrop-filter:blur(10px);padding:24px}
+#setup .panel{max-width:460px;width:100%;background:linear-gradient(160deg,rgba(30,27,75,.95),rgba(8,10,25,.96));border:1px solid var(--bd);border-radius:22px;padding:26px 24px;box-shadow:0 30px 90px #000a}
+#setup h2{margin:0 0 8px;font-size:22px;text-transform:none;letter-spacing:0;color:var(--tx)}
+#setup p{color:var(--mut);margin:0 0 14px}
+#setup label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px}
+#setup input{width:100%;background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:12px;padding:12px 14px;font:inherit;font-size:15px}
+#setup .go{margin-top:12px;width:100%;padding:11px 14px;border-radius:12px;border:0;background:linear-gradient(90deg,#7c5cff,#22d3ee);color:#fff;font:inherit;font-weight:700;cursor:pointer}
+#setup .alt{margin-top:8px;width:100%}
+#setup .msg{min-height:1.2em;color:var(--warn);font-size:13px}
+#update-offer a{color:#ffd166}
 </style></head><body><canvas id="stars"></canvas>
 <div class="wrap">
 <header><div class="logo"><svg class="trisk" xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 721 721"><defs><linearGradient id="tgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5f3fc"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
@@ -94,6 +104,20 @@ canvas{width:100%;display:block}
 <div class="stat"><span>Cache</span><b id="s_disk">–</b></div><div class="stat"><span>Cap left</span><b id="s_free">–</b></div>
 <div class="stat"><span>CPU</span><b id="s_cpu">–</b></div></div></header>
 <div id="banner" class="banner"></div>
+<div id="update-offer" class="banner"></div>
+<div id="setup" role="dialog" aria-labelledby="setup-title" data-setup="gate">
+<form class="panel" id="setup-form" autocomplete="off">
+<h2 id="setup-title">Welcome to Mega Rhexas</h2>
+<p>This computer downloads a few hundred stars at a time, searches them, and sends back a small results file. The big files are deleted after that.</p>
+<div data-setup="paste">
+<label for="setup-token">Paste invite token</label>
+<input id="setup-token" type="password" autocomplete="off" spellcheck="false" placeholder="rhx_…">
+<button class="go" type="submit">Save and start</button>
+</div>
+<p class="msg" id="setup-msg"></p>
+<div data-setup="signin"><button class="btn alt" id="setup-signin" type="button">Sign in with megarhexas.com</button></div>
+</form>
+</div>
 <div class="grid"><section class="card s3"><h2>Current batch</h2>
 <div class="rings"><div class="ring" id="r_dl"></div><div class="ring" id="r_se"></div><div class="ring" id="r_ca"></div></div><div class="pnew"><div><div class="kv">Candidates, unverified</div><b id="p_new">–</b></div><div class="chips"><span class="chip cp">verified <b id="p_p">0</b></span><span class="chip cu">pending <b id="p_u">0</b></span><span class="chip cf">submitted <b id="p_f">0</b></span></div></div>
 <div class="kv" style="margin-top:8px">No coins in this beta. Pending until the coordinator agrees. Verified means it agreed.</div><div class="steps"><div class="step" id="st0"></div><div class="step" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
@@ -424,4 +448,86 @@ if(ys.length===1){xs=[0,1];ys=[ys[0],ys[0]]}
 plot($('wcpu'),[{x:xs,y:ys,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%'});
 const link=w.ok===true?'coordinator connected':w.ok===false?'coordinator unreachable':'coordinator not checked yet';
 $('conn_kv').textContent=link+(w.url?' · '+w.url:'')+(w.detail?' · '+w.detail:'')}
+function safeHttp(url){try{const u=new URL(url);return u.protocol==='https:'||u.protocol==='http:'}catch(e){return false}}
+async function refreshSetup(attempt){
+  const overlay=$('setup'); if(!overlay) return;
+  let status;
+  try{status=await (await fetch('/api/setup')).json()}catch(e){
+    if((attempt||0)<5) setTimeout(()=>refreshSetup((attempt||0)+1), 400);
+    return;
+  }
+  overlay.style.display=status.needs_token?'flex':'none';
+}
+async function refreshUpdate(attempt){
+  const box=$('update-offer'); if(!box) return;
+  let body;
+  try{body=await (await fetch('/api/update')).json()}catch(e){
+    if((attempt||0)<8) setTimeout(()=>refreshUpdate((attempt||0)+1), 2000);
+    return;
+  }
+  const offer=body&&body.offer;
+  if(!offer){
+    if((attempt||0)<8) setTimeout(()=>refreshUpdate((attempt||0)+1), 2000);
+    return;
+  }
+  box.textContent='';
+  const href=offer.asset_url||offer.html_url;
+  if(!safeHttp(href)) return;
+  box.append('Mega Rhexas '+(offer.version||'')+' is available. ');
+  const link=document.createElement('a');
+  link.href=href; link.target='_blank'; link.rel='noopener'; link.textContent='Download the update';
+  box.append(link, '. It will not install by itself.');
+}
+const setupForm=$('setup-form');
+if(setupForm){
+  setupForm.onsubmit=async ev=>{
+    ev.preventDefault();
+    const input=$('setup-token');
+    const msg=$('setup-msg');
+    let token=input.value;
+    input.value='';
+    msg.textContent='Saving…';
+    try{
+      const res=await fetch('/api/setup/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+      token='';
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok){msg.textContent=data.error||'That token was not saved.';return}
+      msg.textContent='';
+      $('setup').style.display='none';
+    }catch(e){token='';msg.textContent='That token was not saved.'}
+  };
+}
+const signin=$('setup-signin');
+if(signin){
+  signin.onclick=async ()=>{
+    const msg=$('setup-msg');
+    msg.textContent='Opening megarhexas.com…';
+    let start;
+    try{
+      const res=await fetch('/api/setup/device/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      start=await res.json().catch(()=>({}));
+      if(!res.ok){msg.textContent=start.error||'Sign-in is not available yet. Paste the invite token.';return}
+    }catch(e){msg.textContent='Sign-in is not available yet. Paste the invite token.';return}
+    if(!start.opened && safeHttp(start.verification_uri)) window.open(start.verification_uri,'_blank','noopener');
+    if(!start.opened && !safeHttp(start.verification_uri)){msg.textContent='Sign-in did not return a web page. Paste the invite token.';return}
+    msg.textContent='Finish signing in in the browser. This page will continue when it is done.';
+    let wait=Math.max(2,(+start.interval||5))*1000;
+    const deadline=Date.now()+Math.max(30,(+start.expires_in||600))*1000;
+    const tick=async ()=>{
+      if(Date.now()>deadline){msg.textContent='Sign-in timed out. Paste the invite token.';return}
+      try{
+        const res=await fetch('/api/setup/device/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        const body=await res.json().catch(()=>({}));
+        if(body.status==='ready'){$('setup').style.display='none';msg.textContent='';return}
+        if(body.status==='pending'){
+          if(+body.interval>0) wait=Math.max(2,+body.interval)*1000;
+          setTimeout(tick,wait);return
+        }
+        msg.textContent=body.error||'Sign-in did not finish. Paste the invite token.';
+      }catch(e){msg.textContent='Sign-in did not finish. Paste the invite token.'}
+    };
+    setTimeout(tick,wait);
+  };
+}
+refreshSetup(); refreshUpdate();
 </script></body></html>

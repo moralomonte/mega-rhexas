@@ -75,7 +75,8 @@ def test_download_retries_429_and_writes_a_file(tmp_path, monkeypatch):
         return _Resp(200, content=b"FITSBYTES")
 
     cfg = _cfg(tmp_path)
-    code = run(cfg, threads=1, tics={7}, getter=getter, sleeper=sleeps.append)
+    # rng 0.5 is the jitter midpoint, so the 429 wait stays exactly throttle_base_s.
+    code = run(cfg, threads=1, tics={7}, getter=getter, sleeper=sleeps.append, rng=lambda: 0.5)
     assert code == 0
     dest = cfg.sector_data / _name(7)
     assert dest.read_bytes() == b"FITSBYTES"
