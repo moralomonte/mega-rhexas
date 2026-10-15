@@ -13,17 +13,33 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
-from .live import LOG_NAME, redact, snapshot
+from .live import LOG_NAME, redact, read_log_tail, snapshot
+from .present import (
+    cycle_star,
+    detail_payload,
+    fresh_logs,
+    mission_cands,
+    mission_hist,
+    mission_lc,
+    mission_logs,
+    mission_sky,
+    mission_state,
+    mode_event,
+    sectors_payload,
+)
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _PORT_SPAN = 50
 _FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/img/triskelion.svg": ("triskelion.svg", "image/svg+xml"),
-    "/favicon.ico": ("triskelion.svg", "image/svg+xml"),
+    "/img/triskelion.svg": ("img/triskelion.svg", "image/svg+xml"),
+    "/img/favicon.svg": ("img/favicon.svg", "image/svg+xml"),
+    "/img/favicon-32.png": ("img/favicon.svg", "image/svg+xml"),
+    "/img/favicon-192.png": ("img/favicon.svg", "image/svg+xml"),
+    "/favicon.ico": ("img/favicon.svg", "image/svg+xml"),
 }
 
 
@@ -97,8 +113,11 @@ def bind_server(host: str, port: int, handler) -> tuple[DashboardServer, int]:
 
 
 def _static_bytes(name: str) -> bytes:
-    path = _STATIC / name
-    if path.parent != _STATIC or not path.is_file():
+    root = _STATIC.resolve()
+    path = (root / name).resolve()
+    if path != root and root not in path.parents:
+        raise FileNotFoundError(name)
+    if not path.is_file():
         raise FileNotFoundError(name)
     return path.read_bytes()
 
@@ -129,17 +148,42 @@ def make_handler(cache: Path, fallback: dict | None):
             parts = urlsplit(self.path)
             path = parts.path or "/"
             if path == "/events":
-                self._events(once="once=1" in (parts.query or ""))
+                query = parse_qs(parts.query)
+                mode = (query.get("mode") or ["live"])[0]
+                self._events(once="once" in query and "1" in query["once"], mode=mode)
                 return
             if path == "/api/state":
                 body = dumps_safe(snapshot(cache, fallback=fallback))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
             if path == "/api/log":
-                from .live import read_log_tail
                 lines, size = read_log_tail(cache, limit=200)
                 body = dumps_safe({"lines": lines, "size": size, "path": LOG_NAME})
                 self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/api/sectors":
+                body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/api/detail":
+                tic = (parse_qs(parts.query).get("tic") or ["0"])[0]
+                try:
+                    tic_i = int(tic)
+                except ValueError:
+                    tic_i = 0
+                body = dumps_safe(detail_payload(snapshot(cache, fallback=fallback), tic_i))
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/api/pixels":
+                body = dumps_safe({
+                    "kind": "aperture",
+                    "aperture": None,
+                    "note": "Pixel movies stay on the sector dashboard. This page follows the worker cache.",
+                })
+                self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/api/cutout":
+                self._send(404, b"no cutout in the worker cache", "text/plain; charset=utf-8")
                 return
             spec = _FILES.get(path)
             if spec is None:
@@ -152,16 +196,56 @@ def make_handler(cache: Path, fallback: dict | None):
                 return
             self._send(200, body, spec[1])
 
-        def _events(self, *, once: bool):
+        def _ev(self, name: str, payload) -> None:
+            body = dumps_safe(payload)
+            if name:
+                self.wfile.write(b"event: " + name.encode("ascii") + b"\n")
+            self.wfile.write(b"data: " + body + b"\n\n")
+
+        def _events(self, *, once: bool, mode: str):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "close" if once else "keep-alive")
             self.end_headers()
+            sent_snapshot = False
+            seen_logs: list = []
+            seen = {}
             while True:
                 try:
-                    body = dumps_safe(snapshot(cache, fallback=fallback))
-                    self.wfile.write(b"data: " + body + b"\n\n")
+                    snap = snapshot(cache, fallback=fallback)
+                    if not sent_snapshot:
+                        # The snapshot stays the first event so existing clients can poll one JSON object.
+                        self.wfile.write(b"data: " + dumps_safe(snap) + b"\n\n")
+                        self._ev("mode", mode_event(mode))
+                        sent_snapshot = True
+                    self._ev("state", mission_state(snap))
+                    lines, _size = read_log_tail(cache, limit=400)
+                    fresh = fresh_logs(seen_logs, lines)
+                    if fresh:
+                        self._ev("log", mission_logs(fresh))
+                        seen_logs = list(lines)
+                    cands = mission_cands(snap)
+                    cand_key = tuple((row["tic"], row["score"]) for row in cands)
+                    if cand_key != seen.get("cands"):
+                        self._ev("cands", cands)
+                        seen["cands"] = cand_key
+                    hist = mission_hist(snap)
+                    hist_key = (tuple(hist["sde"][0]), tuple(hist["snr"][0]))
+                    if hist_key != seen.get("hist"):
+                        self._ev("hist", hist)
+                        seen["hist"] = hist_key
+                    sky = mission_sky(snap)
+                    sky_key = tuple(tuple(point) for point in sky)
+                    if sky_key != seen.get("sky"):
+                        self._ev("sky", sky)
+                        seen["sky"] = sky_key
+                    star = cycle_star(snap)
+                    lc = mission_lc(star)
+                    lc_key = None if lc is None else (lc["tic"], lc["status"], lc["t"])
+                    if lc is not None and lc_key != seen.get("lc"):
+                        self._ev("lc", lc)
+                        seen["lc"] = lc_key
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                     return

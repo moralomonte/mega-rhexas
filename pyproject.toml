@@ -32,7 +32,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "rhexas.coord" = ["*.html", "*.svg"]
-"rhexas.worker" = ["static/*"]
+"rhexas.worker" = ["static/*", "static/img/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

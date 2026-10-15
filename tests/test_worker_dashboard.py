@@ -427,12 +427,55 @@ def test_download_watcher_reports_file_rate_and_eta(tmp_path):
     assert batch["eta_min"] is not None and batch["eta_min"] >= 0
 
 
-def test_page_copy_does_not_claim_a_discovery():
+def test_page_reuses_the_mission_control_screen():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
+    original = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "index.html").read_text(encoding="utf-8")
+    for marker in ('id="sky"', 'id="pgc"', 'id="hist"', 'id="lcc"', 'id="fdc"', "trspin", "Eco", "auto-scroll", "EventSource"):
+        assert marker in text
+        assert marker in original
     assert "candidates, unverified" in text
     assert "No coins" in text
     assert "discovery" not in text.lower()
+    assert "passes vetting" not in text
+    assert "★ NEW" not in text
+    assert "getImageData" not in text
+    assert "/api/cutout" not in text
+
+
+def test_mission_events_follow_the_worker_snapshot(tmp_path):
+    from rhexas.worker.present import detail_payload, mission_cands, mission_lc, mission_state
+
+    spec = {"db": str(tmp_path / DB_NAME), "project": "exoplanets", "sector": 82, "unit_id": 14}
+    spec.update({
+        "sde_min": 6, "snr_min": 7, "min_transits": 3, "max_depth": 0.05,
+        "odd_even_max_sigma": 3, "secondary_max_sigma": 3, "max_duration_fraction": 0.12,
+    })
+    time_values, flux = _curve()
+    row = _passing_row(ra=82.5, dec=-12.25, tmag=9.4, _pgram_p=[1.0, 2.5, 4.0], _pgram_w=[0.2, 9.0, 0.4])
+    publish_star(spec, row, time_values, flux, processing=False)
+    snap = snapshot(tmp_path)
+    state = mission_state(snap)
+    assert state["stage"] == "Starting"
+    assert state["new_counts"]["total"] == 1
+    assert "coordinator" in state["coord_line"]
+    assert "discovery" not in json.dumps(state).lower()
+    lc = mission_lc(snap["current_star"])
+    assert lc["passed"] is True
+    assert lc["status"] == CANDIDATE_LABEL
+    assert lc["pgram"][0][1] == pytest.approx(2.5)
+    assert lc["fold"][0]
+    assert lc["ra"] == pytest.approx(82.5)
+    cands = mission_cands(snap)
+    assert cands[0]["label"] == CANDIDATE_LABEL
+    assert cands[0]["status"] == "NEW"
+    detail = detail_payload(snap, 42)
+    assert detail["vet"]["verdict"] == CANDIDATE_LABEL
+    assert detail["odd"] and detail["even"]
+    assert detail["img"] is None
+    blob = json.dumps(detail)
+    assert "rhx_" not in blob
+    assert "token" not in blob
     limits = {name: getattr(FilterConfig(), name) for name in (
         "sde_min", "snr_min", "min_transits", "max_depth", "odd_even_max_sigma",
         "secondary_max_sigma", "max_duration_fraction",

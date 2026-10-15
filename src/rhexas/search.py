@@ -49,6 +49,47 @@ def _publish_live(row: dict, t, y, *, processing: bool) -> None:
         return
 
 
+_LIVE_KEYS = ("ra", "dec", "tmag", "_pgram_p", "_pgram_w")
+
+
+def _meta_float(meta, *names):
+    for name in names:
+        try:
+            value = float(meta.get(name))
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value):
+            return float(value)
+    return None
+
+
+def _attach_coords(row: dict, meta) -> None:
+    """Sky position already in the FITS header. Stripped before the CSV is written."""
+    row["ra"] = _meta_float(meta, "RA_OBJ", "RA")
+    row["dec"] = _meta_float(meta, "DEC_OBJ", "DEC")
+    row["tmag"] = _meta_float(meta, "TESSMAG", "TMAG")
+
+
+def _attach_pgram(row: dict, periods, power) -> None:
+    """Downsample the periodogram the search just computed. Not a second BLS."""
+    n = int(len(periods))
+    if n == 0:
+        return
+    step = max(1, n // 160)
+    idx = list(range(0, n, step))
+    imax = int(np.argmax(power))
+    if imax not in idx:
+        idx.append(imax)
+        idx.sort()
+    row["_pgram_p"] = [round(float(periods[i]), 5) for i in idx]
+    row["_pgram_w"] = [round(float(power[i]), 3) for i in idx]
+
+
+def _strip_live_keys(row: dict) -> None:
+    for key in _LIVE_KEYS:
+        row.pop(key, None)
+
+
 def bls_metrics(t, y, dy, search: SearchConfig | None = None) -> dict:
     """BLS on an already-cleaned, binned light curve. Raises if there are too few points."""
     from astropy.timeseries import BoxLeastSquares
@@ -75,6 +116,7 @@ def bls_metrics(t, y, dy, search: SearchConfig | None = None) -> dict:
         depth_secondary=st["depth_phased"][0],
         sec_sigma=st["depth_phased"][0] / st["depth_phased"][1] if st["depth_phased"][1] > 0 else 0,
     )
+    _attach_pgram(row, res.period, res.power)
     return row
 
 
@@ -94,13 +136,15 @@ def analyze(path):
         t = lc.time.value
         y = lc.flux.value
         dy = lc.flux_err.value
+        _attach_coords(row, lc.meta)
         _publish_live(row, t, y, processing=True)
         row.update(bls_metrics(t, y, dy, s))
     except Exception as e:
         row["error"] = str(e)[:200]
         _publish_live(row, t, y, processing=False)
-        return row
-    _publish_live(row, t, y, processing=False)
+    else:
+        _publish_live(row, t, y, processing=False)
+    _strip_live_keys(row)
     return row
 
 
