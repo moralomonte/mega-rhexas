@@ -414,11 +414,16 @@ class Store:
             })
 
     def request_mode(self, mode: str) -> str:
-        """Remember a speed. Only eco, live, or turbo are stored."""
+        """Remember a speed. Only eco, live, or turbo are stored. Pause is separate."""
         if mode not in PACE_MODES:
             raise ValueError("mode must be eco, live, or turbo")
         with self._locked() as conn:
-            _write_kv(conn, "control", {"mode": mode, "at": time.time()})
+            row = _read_kv(conn, "control") or {}
+            if not isinstance(row, dict):
+                row = {}
+            row["mode"] = mode
+            row["at"] = time.time()
+            _write_kv(conn, "control", row)
         return mode
 
     def requested_mode(self) -> str:
@@ -427,6 +432,22 @@ class Store:
         if isinstance(row, dict) and row.get("mode") in PACE_MODES:
             return str(row["mode"])
         return "live"
+
+    def request_user_pause(self, paused: bool) -> bool:
+        """Tray Pause. This is not Eco: Eco is a speed, Pause freezes the worker."""
+        with self._locked() as conn:
+            row = _read_kv(conn, "control") or {}
+            if not isinstance(row, dict):
+                row = {}
+            row["user_paused"] = bool(paused)
+            row["pause_at"] = time.time()
+            _write_kv(conn, "control", row)
+        return bool(paused)
+
+    def user_paused(self) -> bool:
+        with self._locked() as conn:
+            row = _read_kv(conn, "control")
+        return bool(isinstance(row, dict) and row.get("user_paused"))
 
     def baseline(self) -> dict:
         with self._locked() as conn:
@@ -897,6 +918,8 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
     connection = kv.get("connection") if isinstance(kv.get("connection"), dict) else {
         "ok": None, "detail": "no worker state yet", "at": None,
     }
+    control = kv.get("control") if isinstance(kv.get("control"), dict) else {}
+    user_paused = bool(control.get("user_paused"))
     cache_bytes, cpu = _sample_machine(cache)
     log_tail, log_size = read_log_tail(cache)
     max_gb = worker.get("max_cache_gb", fallback.get("max_cache_gb"))
@@ -931,6 +954,7 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
             "worker_alive": _worker_alive(worker.get("pid")),
             "mode": worker.get("mode") if worker.get("mode") in PACE_MODES else "live",
             "paused": bool(worker.get("paused")),
+            "user_paused": user_paused,
         },
         "log_tail": log_tail,
         "log_size": log_size,

@@ -28,7 +28,8 @@ timeout_s = 120
 curl_timeout_s = 60
 throttle_base_s = 15       # HTTP 429/503 backoff: base * factor**attempt
 throttle_factor = 2
-retry_base_s = 5           # other errors: base * factor**attempt
+retry_base_s = 5           # other errors, including MAST SSL EOF: base * factor**attempt
+jitter = 0.2               # equal jitter fraction; 0 keeps the delay exact
 
 [search]
 procs = 28

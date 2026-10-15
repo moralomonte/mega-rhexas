@@ -52,6 +52,7 @@ def test_module_commands_print_help():
     _help(["-m", "rhexas", "reset-results"])
     _help(["-m", "rhexas", "dashboard"])
     _help(["-m", "rhexas", "worker"])
+    _help(["-m", "rhexas", "desktop"])
     _help(["-m", "rhexas", "worker-dashboard"])
     _help(["-m", "rhexas", "coord"])
     _help(["-m", "rhexas.coord"])

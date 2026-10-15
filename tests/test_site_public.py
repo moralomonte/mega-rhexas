@@ -79,17 +79,18 @@ def test_how_it_works_is_plain_and_has_the_placeholder():
 def test_account_pages_call_the_coordinator_contract():
     js = (SITE / "js" / "account.js").read_text(encoding="utf-8")
     for path in (
-        "/api/v1/account/signup",
-        "/api/v1/account/login",
-        "/api/v1/account/logout",
-        "/api/v1/account/me",
-        "/api/v1/account/devices",
-        "/api/v1/account/stats",
+        "/api/v1/signup",
+        "/api/v1/login",
+        "/api/v1/logout",
+        "/api/v1/me",
+        "/api/v1/me/devices",
+        "/api/v1/me/stats",
+        "/api/v1/device/approve",
         "/revoke",
     ):
         assert path in js
     assert 'credentials: "include"' in js
-    assert "TODO(account-api)" in js
+    assert "/api/v1/account/" not in js
     assert "invite_code" in js
     signup = (SITE / "signup.html").read_text(encoding="utf-8")
     assert 'data-page="signup"' in signup

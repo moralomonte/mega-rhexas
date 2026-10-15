@@ -16,7 +16,24 @@ Two different accounts have to search each batch. A second computer linked to th
 
 The search settings (period grid, SDE, SNR, and the rest) are the project's usual ones. The knobs below only change how hard your own computer works.
 
-## Windows
+## Just download and run
+
+On Windows you do not need git, Python, or a command prompt.
+
+1. Download **MegaRhexas-Setup** from the [latest release](https://github.com/moralomonte/mega-rhexas/releases/latest).
+2. Run it. If Windows says it protected your PC, that is SmartScreen reacting to an unsigned installer. Click **More info**, then **Run anyway**. The installer does not need an administrator password.
+3. Leave **Start Mega Rhexas when I sign in** unchecked unless you want that. It is off by default.
+4. Open **Mega Rhexas** from the Start menu. Your browser opens the dashboard. Eco, Live, and Turbo are on that page. Live is already selected.
+5. The first time, paste the invite token (`rhx_…`) into the box and choose **Save and start**. It is stored on this computer and the page does not show it again. **Sign in with megarhexas.com** is there for when browser sign-in is switched on; until then, pasting the token is the way in.
+6. Leave it running. The triskelion in the tray opens the dashboard, changes Eco / Live / Turbo, pauses, or quits. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
+
+The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and stops if the drive has under 5 GB free. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to paste it a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
+
+A newer version shows up as a link on the dashboard. Quit Mega Rhexas from the tray, then download the installer and run it. The app will not install it for you. Quit first so Windows can replace the program files.
+
+The installer is about 100 MB (about 400 MB once installed), because Python and the astronomy libraries are inside it. A Mac app is not built yet. Until it is, use the source checkout below.
+
+## Windows (from source)
 
 Install Python 3.11 or newer from [python.org](https://www.python.org/downloads/) and tick **Add python.exe to PATH**. Then, in a folder you don't mind keeping, for example `C:\rhexas`:
 
@@ -65,7 +82,7 @@ rhexas worker --token-file token.txt
 
 The first time, it also fetches the public TOI and confirmed-planet catalogs (small files) so a known planet is not labeled new. Those stay in `worker-cache/catalogs`.
 
-If MAST answers "slow down" (HTTP 429 or 503), the worker waits and retries. That backoff starts at 15 seconds and doubles, the same as a local download. The worker uses 2 download threads by default so a room full of friends does not stampede the archive.
+If MAST answers "slow down" (HTTP 429 or 503), the worker waits and retries. That backoff starts at 15 seconds and doubles, with a little random jitter so a room full of friends does not retry in lockstep. The same wait-and-retry covers the SSL EOF errors home connections see from the MAST download servers. A file that stopped halfway is continued, not started over. After that, any star that still has no file is tried once more, and any star that still has no measurement is tried once more before the results are sent. The worker uses 2 download threads by default.
 
 ## Make it gentler, or a bit faster
 

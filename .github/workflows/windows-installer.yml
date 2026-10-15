@@ -1,0 +1,40 @@
+name: Windows installer
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build the per-user installer
+        shell: pwsh
+        run: ./packaging/windows/build.ps1
+
+      - name: Attach the installer to the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $asset = @(Get-ChildItem packaging/windows/output/MegaRhexas-Setup-*.exe)[0].FullName
+          if (-not $asset) { throw "installer was not produced" }
+          $tag = $env:GITHUB_REF_NAME
+          $notes = "Windows installer for Mega Rhexas. Per-user, no admin. The file is not code-signed: SmartScreen will warn until it is signed. The app does not install updates by itself."
+          gh release view $tag
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber
+          } else {
+            gh release create $tag $asset --title $tag --notes $notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -122,9 +122,18 @@ def _static_bytes(name: str) -> bytes:
     return path.read_bytes()
 
 
-def make_handler(cache: Path, fallback: dict | None):
+class DashboardHooks:
+    """Optional desktop services. The worker dashboard runs without them."""
+
+    def __init__(self, setup=None, updates=None):
+        self.setup = setup
+        self.updates = updates
+
+
+def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | None = None):
     cache = Path(cache)
     fallback = dict(fallback or {})
+    services = services or DashboardHooks()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -149,23 +158,44 @@ def make_handler(cache: Path, fallback: dict | None):
 
         do_DELETE = do_PUT
 
+        def _json(self, code: int, payload) -> None:
+            self._send(code, dumps_safe(payload), "application/json; charset=utf-8")
+
         def _post(self):
             parts = urlsplit(self.path)
-            if (parts.path or "/") != "/api/mode":
-                self._drain()
-                self._try_send(405, b"read only", "text/plain; charset=utf-8")
+            path = parts.path or "/"
+            if path == "/api/mode":
+                self._post_mode()
                 return
+            if path == "/api/pause":
+                self._post_pause()
+                return
+            if path == "/api/setup/token":
+                self._post_token()
+                return
+            if path == "/api/setup/device/start":
+                self._post_device_start()
+                return
+            if path == "/api/setup/device/poll":
+                self._post_device_poll()
+                return
+            self._drain()
+            self._try_send(405, b"read only", "text/plain; charset=utf-8")
+
+        def _read_json(self, limit: int):
             ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-            raw = self._drain(limit=256)
+            raw = self._drain(limit=limit)
             if raw is None or ctype != "application/json":
-                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
-                return
+                return None
             try:
                 data = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
-                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
-                return
-            mode = data.get("mode") if isinstance(data, dict) else None
+                return None
+            return data if isinstance(data, dict) else None
+
+        def _post_mode(self):
+            data = self._read_json(256)
+            mode = data.get("mode") if data else None
             if mode not in PACE_MODES:
                 self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
                 return
@@ -174,7 +204,67 @@ def make_handler(cache: Path, fallback: dict | None):
             except Exception:
                 self._try_send(500, b"error", "text/plain; charset=utf-8")
                 return
-            self._send(200, dumps_safe({"ok": True, "requested": mode}), "application/json; charset=utf-8")
+            self._json(200, {"ok": True, "requested": mode})
+
+        def _post_pause(self):
+            data = self._read_json(256)
+            if data is None or "paused" not in data or not isinstance(data.get("paused"), bool):
+                self._try_send(400, b'{"error":"paused must be true or false"}', "application/json; charset=utf-8")
+                return
+            try:
+                paused = Store(cache).request_user_pause(data["paused"])
+            except Exception:
+                self._try_send(500, b"error", "text/plain; charset=utf-8")
+                return
+            self._json(200, {"ok": True, "paused": paused})
+
+        def _post_token(self):
+            gate = services.setup
+            if gate is None:
+                self._drain()
+                self._json(404, {"error": "This page cannot save a token."})
+                return
+            data = self._read_json(4096)
+            if data is None or "token" not in data:
+                self._json(400, {"error": "Paste the invite token from the person who invited you."})
+                return
+            try:
+                gate.save_pasted(data.get("token"))
+            except Exception as exc:
+                message = str(exc) if exc.__class__.__name__ == "TokenError" else "Could not save the token on this computer."
+                self._json(400, {"error": message})
+                return
+            self._json(200, {"ok": True})
+
+        def _post_device_start(self):
+            gate = services.setup
+            self._drain(limit=256)
+            if gate is None:
+                self._json(404, {"error": "Sign-in is not available on this page."})
+                return
+            try:
+                payload = gate.begin_device()
+            except Exception as exc:
+                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. Paste the invite token instead."
+                self._json(502, {"error": message})
+                return
+            payload = dict(payload)
+            payload["opened"] = _open_verification(payload.get("verification_uri"))
+            self._json(200, payload)
+
+        def _post_device_poll(self):
+            gate = services.setup
+            self._drain(limit=256)
+            if gate is None:
+                self._json(404, {"error": "Sign-in is not available on this page."})
+                return
+            try:
+                payload = gate.poll_device()
+            except Exception as exc:
+                message = str(exc) if exc.__class__.__name__ == "DeviceError" else "Could not reach megarhexas.com. Paste the invite token instead."
+                self._json(502, {"error": message})
+                return
+            self._json(200, payload)
 
         def _drain(self, limit: int = 4096):
             try:
@@ -197,6 +287,23 @@ def make_handler(cache: Path, fallback: dict | None):
                 query = parse_qs(parts.query)
                 mode = (query.get("mode") or ["live"])[0]
                 self._events(once="once" in query and "1" in query["once"], mode=mode)
+                return
+            if path == "/api/setup":
+                gate = services.setup
+                payload = gate.status() if gate is not None else {
+                    "needs_token": False,
+                    "signin": {"label": "Sign in with megarhexas.com"},
+                }
+                self._json(200, payload)
+                return
+            if path == "/api/update":
+                board = services.updates
+                if board is None:
+                    from rhexas import __version__
+                    payload = {"current": __version__, "offer": None}
+                else:
+                    payload = board.snapshot()
+                self._json(200, payload)
                 return
             if path == "/api/state":
                 body = dumps_safe(snapshot(cache, fallback=fallback))
@@ -324,6 +431,20 @@ def make_handler(cache: Path, fallback: dict | None):
     return Handler
 
 
+def _open_verification(uri) -> bool:
+    """Open the sign-in page from the app, not from a delayed page script.
+
+    A click handler that awaits the start call loses the user-gesture flag, so
+    ``window.open`` is blocked. ``webbrowser`` is not.
+    """
+    if not isinstance(uri, str) or not uri.startswith(("https://", "http://")):
+        return False
+    try:
+        return bool(webbrowser.open(uri))
+    except Exception:
+        return False
+
+
 def _open_browser(url: str) -> None:
     try:
         webbrowser.open(url)
@@ -348,10 +469,10 @@ def _polite() -> None:
 
 
 def launch_in_thread(cache: Path, *, host: str | None, port: int | None, open_browser: bool,
-                     fallback: dict | None = None) -> str:
+                     fallback: dict | None = None, services: DashboardHooks | None = None) -> str:
     """Start the dashboard beside the worker. Returns the URL opened in the browser."""
     bind_host, requested = resolve_bind(host, port)
-    httpd, chosen = bind_server(bind_host, requested, make_handler(cache, fallback))
+    httpd, chosen = bind_server(bind_host, requested, make_handler(cache, fallback, services))
     url = f"http://{page_host(bind_host)}:{chosen}/"
 
     def _run() -> None:
