@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05060f">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Volunteers' computers search public NASA TESS star data for planets passing in front of their stars. Invite-only beta. Candidates are unverified.">
+<meta property="og:title" content="Mega Rhexas">
+<meta property="og:description" content="Volunteers' computers search public NASA TESS star data for planets passing in front of their stars. Invite-only beta. Candidates are unverified.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://megarhexas.com/">
+<title>Mega Rhexas · Help look for planets</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="canonical" href="https://megarhexas.com/">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; form-action 'self'">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<canvas id="stars" aria-hidden="true"></canvas>
+<header class="site-header">
+  <a class="brand" href="/">
+    <img class="trisk spin" src="/img/triskelion.svg" width="42" height="42" alt="">
+    <span class="brand-name">Mega Rhexas<small>Public NASA TESS data</small></span>
+  </a>
+  <nav class="site-nav" aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/how-it-works">How it works</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a class="nav-join" href="/signup">Join</a>
+    <a href="/login" id="nav-session">Log in</a>
+  </nav>
+</header>
+<noscript><p class="noscript">Live counters need JavaScript. The rest of this page is readable without it.</p></noscript>
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <div class="sample-banner" id="sample-banner" hidden>
+      <strong>Sample preview.</strong> Counts and names on this page are placeholders, not live results.
+    </div>
+    <section class="hero">
+      <div>
+        <p class="kicker">Invite-only beta</p>
+        <h1>Help look for planets in public starlight.</h1>
+        <p class="lede">Volunteers’ computers search public NASA TESS star data for planets passing in front of their stars. Yours can help. It downloads a few hundred stars, looks for a repeating dip, sends back a tiny result, and deletes the big files.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="/signup">Join the search</a>
+          <a class="btn btn-ghost js-download" id="download" href="https://github.com/moralomonte/mega-rhexas/releases/latest">Download</a>
+        </div>
+        <p class="fine" id="download-note">The beta is invite-only for now. You need an invite code to create an account. Download opens the latest GitHub Release.</p>
+      </div>
+      <figure class="hero-art">
+        <svg viewBox="0 0 640 460" role="img" aria-labelledby="heroTitle heroDesc">
+          <title id="heroTitle">Illustration of a planet crossing a star</title>
+          <desc id="heroDesc">A glowing star with a small planet in front of it, and a brightness graph that dips and recovers. This is a drawing, not a real observation.</desc>
+          <defs>
+            <radialGradient id="starcore" cx="35%" cy="32%" r="70%">
+              <stop offset="0" stop-color="#fff"/>
+              <stop offset=".22" stop-color="#ffe7a3"/>
+              <stop offset=".55" stop-color="#7c5cff"/>
+              <stop offset="1" stop-color="#140c33"/>
+            </radialGradient>
+            <linearGradient id="curve" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#a5f3fc"/>
+              <stop offset=".45" stop-color="#c4b5fd"/>
+              <stop offset=".55" stop-color="#ffd166"/>
+              <stop offset="1" stop-color="#22d3ee"/>
+            </linearGradient>
+            <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="10" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g opacity=".55" fill="#fff">
+            <circle cx="86" cy="54" r="1.2"/>
+            <circle cx="140" cy="38" r="1"/>
+            <circle cx="310" cy="48" r="1.3"/>
+            <circle cx="470" cy="36" r="1"/>
+            <circle cx="560" cy="70" r="1.2"/>
+            <circle cx="520" cy="120" r=".9"/>
+          </g>
+          <circle cx="200" cy="156" r="108" fill="#7c5cff" opacity=".18" filter="url(#glow)"/>
+          <ellipse cx="200" cy="156" rx="132" ry="46" fill="none" stroke="rgba(165,243,252,.35)" stroke-width="1.25"/>
+          <circle cx="200" cy="156" r="64" fill="url(#starcore)" filter="url(#glow)"/>
+          <g class="planet">
+            <circle cx="200" cy="156" r="16" fill="#070814" stroke="#67e8f9" stroke-width="2.5"/>
+            <circle cx="194" cy="150" r="4" fill="#22d3ee" opacity=".8"/>
+          </g>
+          <g aria-hidden="true">
+            <line x1="48" y1="280" x2="600" y2="280" stroke="rgba(255,255,255,.08)"/>
+            <line x1="48" y1="314" x2="600" y2="314" stroke="rgba(255,255,255,.06)"/>
+            <line x1="48" y1="348" x2="600" y2="348" stroke="rgba(255,255,255,.06)"/>
+            <ellipse class="dip-glow" cx="348" cy="340" rx="42" ry="16" fill="#ffd166" opacity=".85"/>
+            <path fill="none" stroke="url(#curve)" stroke-width="3" stroke-linecap="round" d="M48 292 C90 286 120 300 156 292 C196 283 230 288 262 294 C300 302 322 332 348 346 C376 360 398 312 430 296 C470 276 520 288 592 290"/>
+            <rect class="plot-scan" x="0" y="268" width="2" height="92" fill="#ffd166"/>
+          </g>
+        </svg>
+        <figcaption>Illustration, not a real star. A planet crosses, and the star’s brightness dips a tiny bit.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" aria-labelledby="live-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="live-heading">The search right now</h2>
+          <p class="note" id="feed-when"></p>
+        </div>
+        <p class="status-pill" role="status"><span class="dot" id="feed-dot"></span><span id="feed-label">Connecting…</span></p>
+      </div>
+      <div class="live-grid">
+        <div class="card">
+          <h3 class="eyebrow">Agreed stars</h3>
+          <div class="ring-wrap">
+            <svg class="ring" viewBox="0 0 120 120" role="img" aria-labelledby="ringTitle">
+              <title id="ringTitle">Share of stars with two agreeing checks</title>
+              <circle class="ring-bg" cx="60" cy="60" r="50"></circle>
+              <circle class="seg wip" id="arc-wip" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"></circle>
+              <circle class="seg submitted" id="arc-sub" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"></circle>
+              <circle class="seg verified" id="arc-ok" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"></circle>
+              <text id="ring-pct" x="60" y="56" text-anchor="middle">–</text>
+              <text class="ring-sub" x="60" y="74" text-anchor="middle">agreed</text>
+            </svg>
+            <p class="progline" id="progline">Waiting for the public feed.</p>
+          </div>
+        </div>
+        <div class="card">
+          <h3 class="eyebrow">At a glance</h3>
+          <div class="stat-grid" id="stat-grid">
+            <article class="stat"><span>Stars agreed</span><b id="n-agreed">–</b><em>Two checks match</em></article>
+            <article class="stat"><span>Awaiting a second check</span><b id="n-await">–</b><em>One check so far</em></article>
+            <article class="stat"><span>Unverified candidates</span><b id="n-cands">–</b><em>Not confirmed planets</em></article>
+            <article class="stat"><span>Searching now</span><b id="n-online">–</b><em>Computers online</em></article>
+          </div>
+        </div>
+      </div>
+      <div class="card card-gap">
+        <h3 class="eyebrow">Sectors</h3>
+        <p class="note">TESS splits the sky into sectors. Each bar is that sector’s stars. A full bar is not a discovery. It means those stars have been checked.</p>
+        <div id="sectors"><p class="empty">Sector progress loads from the public stats feed.</p></div>
+        <ul class="legend">
+          <li><i class="swatch verified"></i>Agreed</li>
+          <li><i class="swatch submitted"></i>Awaiting a second check</li>
+          <li><i class="swatch wip"></i>In progress</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="facts-heading">
+      <h2 id="facts-heading">What this is</h2>
+      <div class="facts">
+        <article class="card fact">
+          <svg viewBox="0 0 72 72" aria-hidden="true">
+            <circle cx="36" cy="30" r="16" fill="#ffd166"/>
+            <circle cx="48" cy="30" r="6" fill="#05060f"/>
+            <path d="M8 58h56" stroke="#22d3ee" stroke-width="2" fill="none"/>
+            <path d="M8 54c10 0 14 2 22 2s12-8 20-8 8 6 14 6" stroke="#a5f3fc" stroke-width="2" fill="none"/>
+          </svg>
+          <h3>A tiny dip</h3>
+          <p>When a planet passes in front of its star, the star dims a tiny bit. That is a transit.</p>
+          <a href="/how-it-works#transit">How a transit works</a>
+        </article>
+        <article class="card fact">
+          <svg viewBox="0 0 72 72" aria-hidden="true">
+            <circle cx="18" cy="24" r="7" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M8 48c2-10 8-14 10-14s8 4 10 14" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <circle cx="54" cy="24" r="7" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <path d="M44 48c2-10 8-14 10-14s8 4 10 14" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <rect x="28" y="28" width="16" height="16" rx="4" fill="none" stroke="#ffd166" stroke-width="2"/>
+          </svg>
+          <h3>Two checks</h3>
+          <p>Two different people search each batch. It counts when they see the same dip.</p>
+          <a href="/how-it-works#two-checks">Why two people</a>
+        </article>
+        <article class="card fact">
+          <svg viewBox="0 0 72 72" aria-hidden="true">
+            <rect x="16" y="14" width="40" height="44" rx="6" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <path d="M26 32h20M26 42h12" stroke="#22d3ee" stroke-width="2"/>
+            <circle cx="50" cy="48" r="10" fill="#05060f" stroke="#ffd166" stroke-width="2"/>
+            <path d="M46 48h8M50 44v8" stroke="#ffd166" stroke-width="2"/>
+          </svg>
+          <h3>Unverified</h3>
+          <p>A candidate stays unverified until astronomers confirm it. This site does not announce a discovery.</p>
+          <a href="/how-it-works#candidates">What happens next</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="home-board-block" hidden aria-labelledby="preview-heading">
+      <div class="section-head">
+        <h2 id="preview-heading">Leaderboard</h2>
+        <a href="/leaderboard">Full list</a>
+      </div>
+      <p class="note">Names are account display names. The order is stars both checks agreed on. Candidates are unverified. There are no coins.</p>
+      <ol class="board" id="home-board"></ol>
+    </section>
+
+    <section class="section">
+      <div class="cta-band">
+        <div>
+          <h2>Join the search</h2>
+          <p class="lede">Create an account with your invite code, download the program, and link your computer.</p>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="/signup">Join the search</a>
+          <a class="btn btn-ghost js-download" href="https://github.com/moralomonte/mega-rhexas/releases/latest">Download</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-grid">
+    <div class="footer-brand">
+      <img class="trisk spin" src="/img/triskelion.svg" width="36" height="36" alt="">
+      <p>Volunteers’ computers search public NASA TESS star data for planets passing in front of their stars.</p>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="/how-it-works">How it works</a>
+      <a href="/leaderboard">Leaderboard</a>
+      <a href="/signup">Join the search</a>
+      <a href="/link-device">Link a device</a>
+      <a href="https://github.com/moralomonte/mega-rhexas">Source code</a>
+    </nav>
+  </div>
+  <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
+  <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
+  <p>The beta is invite-only for now. There are no coins and no crypto.</p>
+</footer>
+<script src="/js/common.js" defer></script>
+<script src="/js/stats.js" defer></script>
+<script src="/js/home.js" defer></script>
+</body>
+</html>

@@ -1,21 +1,24 @@
 """Browser sign-in for the desktop app.
 
-The coordinator owns the other half. This client only calls:
+Same wire format as :func:`rhexas.worker.login.login_device` (the coordinator's
+device flow), split into non-blocking start/poll steps for the setup screen:
 
-* ``POST {coordinator}/api/v1/device/start``
-* ``POST {coordinator}/api/v1/device/poll`` with ``{"device_code": "..."}``
-
-``start`` returns a ``device_code`` and a ``verification_uri``. The app opens
-that URI in the browser and polls until the response carries a ``token``.
-The server side is not implemented here. The setup screen calls this through
+* ``POST {coordinator}/api/v1/device/start`` with ``{"hostname": ...}`` returns
+  ``device_code``, ``user_code``, ``verification_url``, ``interval``, ``expires_in``.
+  The browser opens ``verification_url?code=<user_code>``.
+* ``POST {coordinator}/api/v1/device/poll`` with ``{"device_code": ...}`` returns
+  ``authorization_pending`` / ``slow_down`` (200), ``approved`` with the ``rhx_``
+  token once (200), or ``expired`` / ``denied`` / ``consumed`` (400 with JSON). The setup screen calls this through
 :class:`rhexas.desktop.setup.SetupGate`, which stores the token and never
 returns it to the page.
 """
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 
 class DeviceError(Exception):
@@ -32,7 +35,8 @@ class DeviceStart:
 
 
 class DevicePoll:
-    def __init__(self, status: str, token: str = "", message: str = ""):
+    def __init__(self, status: str, token: str = "", message: str = "", interval: float = 0.0):
+        self.interval = interval
         self.status = status
         self.token = token
         self.message = message
@@ -47,9 +51,13 @@ class DeviceLink:
         self.timeout = timeout
 
     def start(self) -> DeviceStart:
-        data = self._post("/api/v1/device/start", {})
+        host = (socket.gethostname() or "computer").strip()[:80]
+        data = self._post("/api/v1/device/start", {"hostname": host})
         code = str(data.get("device_code") or "").strip()
-        uri = str(data.get("verification_uri") or data.get("verification_uri_complete") or "").strip()
+        user_code = str(data.get("user_code") or "").strip()
+        uri = str(data.get("verification_url") or data.get("verification_uri") or "").strip()
+        if uri and user_code and "code=" not in uri:
+            uri = uri + ("&" if "?" in uri else "?") + "code=" + quote(user_code)
         if not code or not uri.startswith(("https://", "http://")):
             raise DeviceError("Sign-in from megarhexas.com did not start. Paste the invite token instead.")
         try:
@@ -60,7 +68,7 @@ class DeviceLink:
             expires = float(data.get("expires_in") or 600)
         except (TypeError, ValueError):
             expires = 600.0
-        return DeviceStart(code, uri, interval, expires, str(data.get("user_code") or ""))
+        return DeviceStart(code, uri, interval, expires, user_code)
 
     def poll(self, device_code: str) -> DevicePoll:
         data = self._post("/api/v1/device/poll", {"device_code": device_code})
@@ -68,7 +76,12 @@ class DeviceLink:
         status = str(data.get("status") or ("ready" if token else "pending")).strip() or "pending"
         if token:
             status = "ready"
-        return DevicePoll(status, token, str(data.get("error") or ""))
+        poll = DevicePoll(status, token, str(data.get("error") or ""))
+        try:
+            poll.interval = float(data.get("interval") or 0)
+        except (TypeError, ValueError):
+            poll.interval = 0.0
+        return poll
 
     def _post(self, path: str, payload: dict) -> dict:
         if not self.base.startswith(("https://", "http://")):
@@ -82,6 +95,13 @@ class DeviceLink:
             with self.opener(request, timeout=self.timeout) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code in (400, 403, 410):
+                try:
+                    body = json.loads(exc.read().decode("utf-8"))
+                except Exception:
+                    body = None
+                if isinstance(body, dict) and body.get("status"):
+                    return body
             if exc.code in (404, 405, 501):
                 raise DeviceError(
                     "Sign-in from megarhexas.com is not available yet. Paste the invite token instead."

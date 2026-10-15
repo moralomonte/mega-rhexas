@@ -1,8 +1,18 @@
 # Run a Mega Rhexas worker
 
-You were invited to the friends beta. Your computer downloads a few hundred TESS stars at a time, searches them for transits, uploads a small results file (usually well under a few megabytes), and deletes the big files. The server is **https://api.megarhexas.com**. That address is already the default. You need a personal token from the person who invited you. It starts with `rhx_`.
+You were invited to the friends beta. Your computer downloads a few hundred TESS stars at a time, searches them for transits, uploads a small results file (usually well under a few megabytes), and deletes the big files. The server is **https://api.megarhexas.com**. That address is already the default.
 
-Two different people search each batch. Your token and someone else's have to both be running, or batches sit waiting for the second copy. Please don't share your token or run a second copy of it: the check is "two different invites agreed."
+Sign up at **https://api.megarhexas.com/signup** (an invite code is required until the operator opens signup). Then, on the computer that will search:
+
+```bash
+rhexas worker --login
+```
+
+A browser opens to a page that says **Link this computer:** and the name of this machine. Approve it. The worker token is saved in your user data folder. The next time, `rhexas worker` is enough. There is nothing to paste.
+
+If you already have an invite token, it still works. It starts with `rhx_`. Put it in a file and pass `--token-file`. Do not put it in the command line if you can avoid it.
+
+Two different accounts have to search each batch. A second computer linked to the same account does not count as the other copy. Please don't share a token.
 
 The search settings (period grid, SDE, SNR, and the rest) are the project's usual ones. The knobs below only change how hard your own computer works.
 
@@ -35,9 +45,10 @@ py -3 -m venv .venv
 .venv\Scripts\python -m pip install -e .
 ```
 
-Put the token in `token.txt` (one line, nothing else) next to the checkout. In Notepad, save it and confirm the file is not named `token.txt.txt`.
+Link this PC (a browser window opens; approve it), or pass a token file if you were given an `rhx_` invite. In Notepad, save a token file as `token.txt` and confirm it is not named `token.txt.txt`.
 
 ```bat
+.venv\Scripts\rhexas worker --login
 .venv\Scripts\rhexas worker --token-file token.txt
 ```
 
@@ -54,6 +65,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -e .
+rhexas worker --login
+# or, if you were handed an invite token:
 printf '%s\n' 'rhx_paste_your_token_here' > token.txt
 chmod 600 token.txt
 rhexas worker --token-file token.txt

@@ -111,8 +111,8 @@ class WorkerConfig:
 
     Disk numbers here are the worker cache only. They do not change the
     pipeline's 100 GB free-space guard or 400 GB project cap.
-    ``coordinator_url`` is the invite-only API host. The apex domain is
-    reserved for the future public site.
+    ``coordinator_url`` is the invite-only API host. The public site is the
+    apex, megarhexas.com.
     """
 
     coordinator_url: str = "https://api.megarhexas.com"

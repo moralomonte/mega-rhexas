@@ -45,6 +45,14 @@ def add_subcommands(sub, parent: argparse.ArgumentParser | None = None) -> None:
     tokens.add_parser("list", help="List workers, without tokens")
     revoked = tokens.add_parser("revoke", help="Disable a worker token and drop their open lease")
     revoked.add_argument("name")
+    p = sub.add_parser("invite", parents=[parent], help="Create or revoke a signup invite code")
+    invites = p.add_subparsers(dest="invite_cmd", required=True)
+    created_invite = invites.add_parser("create", help="Print a signup code. It is shown once.")
+    created_invite.add_argument("--uses", type=int, default=1, help="How many accounts can use this code (default 1)")
+    created_invite.add_argument("--label", default="", help="Note shown in invite list, not the code")
+    invites.add_parser("list", help="List invite codes by id, without the secret")
+    revoked_invite = invites.add_parser("revoke", help="Disable an invite by id or by the code itself")
+    revoked_invite.add_argument("code")
     p = sub.add_parser("admin-token", parents=[parent], help="Rotate the status-page token")
     p.add_argument("--reset", action="store_true", help="Invalidate the current token and print a new one")
     sub.add_parser("status", parents=[parent], help="Print progress from the local database")
@@ -83,12 +91,17 @@ def execute(args) -> int:
                 if not store.admin_configured():
                     print("rhexas coord: no admin token yet. Run `rhexas coord init` first.", file=sys.stderr)
                     return 2
-                serve(store, args.host or coord.host, args.port or coord.port)
+                serve(
+                    store, args.host or coord.host, args.port or coord.port,
+                    accounts=coord.accounts, smtp=coord.smtp,
+                )
                 return 0
             if command == "enroll":
                 return _enroll(store, args)
             if command == "token":
                 return _token(store, args)
+            if command == "invite":
+                return _invite(store, args)
             if command == "admin-token":
                 return _admin_token(store, coord.db.parent / "admin.token", reset=args.reset)
             if command == "status":
@@ -126,7 +139,15 @@ def _init(path) -> int:
         else:
             print(f"database ready: {coord.db}")
             print(f"admin token already exists ({token_path} if init wrote it; otherwise admin-token --reset)")
-        print(f"listening config: http://{coord.host}:{coord.port}")
+            print(f"listening config: http://{coord.host}:{coord.port}")
+            if coord.accounts.invite_only:
+                print("Signup is invite-only. Create a code with `rhexas coord invite create`.")
+            else:
+                print("Signup is open.")
+            if coord.smtp.enabled():
+                print(f"Verification email is on ({coord.smtp.host}).")
+            else:
+                print("Verification email is off. Accounts work unverified.")
         return 0
     finally:
         store.close()
@@ -186,6 +207,31 @@ def _token(store: Store, args) -> int:
         print(f"revoked {args.name}")
         return 0
     print("rhexas coord: token needs create, list, or revoke", file=sys.stderr)
+    return 2
+
+
+def _invite(store: Store, args) -> int:
+    from . import identity
+    if args.invite_cmd == "create":
+        code = identity.create_invite(store, uses=args.uses, label=args.label)
+        print("Signup invite (shown once):")
+        print(code)
+        return 0
+    if args.invite_cmd == "list":
+        rows = identity.list_invites(store)
+        if not rows:
+            print("no invites yet")
+            return 0
+        for row in rows:
+            state = "revoked" if row["revoked_at"] else f"uses_left={row['uses_left']}"
+            label = row["label"] or "-"
+            print(f"{row['id']}\t{label}\t{state}\t{row['created_at']}")
+        return 0
+    if args.invite_cmd == "revoke":
+        identity.revoke_invite(store, args.code)
+        print("invite revoked")
+        return 0
+    print("rhexas coord: invite needs create, list, or revoke", file=sys.stderr)
     return 2
 
 

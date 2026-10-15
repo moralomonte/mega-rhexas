@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05060f">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Create a Mega Rhexas account. The beta is invite-only for now.">
+<meta property="og:title" content="Sign up · Mega Rhexas">
+<meta property="og:description" content="Create a Mega Rhexas account. The beta is invite-only for now.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://megarhexas.com/signup">
+<title>Sign up · Mega Rhexas</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="canonical" href="https://megarhexas.com/signup">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; form-action 'self'">
+</head>
+<body data-page="signup">
+<a class="skip" href="#main">Skip to content</a>
+<canvas id="stars" aria-hidden="true"></canvas>
+<header class="site-header">
+  <a class="brand" href="/">
+    <img class="trisk spin" src="/img/triskelion.svg" width="42" height="42" alt="">
+    <span class="brand-name">Mega Rhexas<small>Public NASA TESS data</small></span>
+  </a>
+  <nav class="site-nav" aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/how-it-works">How it works</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a class="nav-join" href="/signup">Join</a>
+    <a href="/login" id="nav-session">Log in</a>
+  </nav>
+</header>
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <div class="auth-shell">
+      <div>
+        <p class="kicker">Invite-only beta</p>
+        <h1>Create an account</h1>
+        <p class="lede">The beta is invite-only for now. An invite code is how a new account is opened.</p>
+        <p>Choose a display name. That is the name on the leaderboard. Your email stays off the board.</p>
+        <p>There are no coins and no crypto. Credit is a count of stars that two people agreed on.</p>
+        <p class="note">Already registered? <a href="/login">Log in</a>.</p>
+      </div>
+      <form class="card" id="signup-form" method="post" action="/signup">
+        <h2>Sign up</h2>
+        <label for="display_name">Display name</label>
+        <input id="display_name" name="display_name" autocomplete="nickname" required maxlength="40">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="email" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+        <label for="invite_code">Invite code</label>
+        <input id="invite_code" name="invite_code" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        <p class="alert error" id="form-alert" hidden tabindex="-1" role="alert"></p>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">Create account</button>
+        </div>
+        <noscript><p class="note">Creating an account needs JavaScript so the page can talk to the account service.</p></noscript>
+      </form>
+    </div>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-grid">
+    <div class="footer-brand">
+      <img class="trisk spin" src="/img/triskelion.svg" width="36" height="36" alt="">
+      <p>Volunteers’ computers search public NASA TESS star data for planets passing in front of their stars.</p>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="/how-it-works">How it works</a>
+      <a href="/leaderboard">Leaderboard</a>
+      <a href="/signup">Join the search</a>
+      <a href="/link-device">Link a device</a>
+      <a href="https://github.com/moralomonte/mega-rhexas">Source code</a>
+    </nav>
+  </div>
+  <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
+  <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
+  <p>The beta is invite-only for now. There are no coins and no crypto.</p>
+</footer>
+<script src="/js/common.js" defer></script>
+<script src="/js/account.js" defer></script>
+</body>
+</html>

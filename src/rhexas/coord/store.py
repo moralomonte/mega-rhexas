@@ -119,6 +119,75 @@ CREATE INDEX IF NOT EXISTS idx_assign_unit ON assignments(unit_id, generation, s
 CREATE INDEX IF NOT EXISTS idx_assign_worker ON assignments(worker_id, status);
 CREATE INDEX IF NOT EXISTS idx_units_project ON units(project, state);
 CREATE INDEX IF NOT EXISTS idx_contrib ON contributions(project, user_id, verified);
+
+-- Accounts. ``provider`` is password, legacy, or (later) google.
+-- trust_score and tier stay empty until Phase 4 scoring. There is no coin balance.
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY,
+    email TEXT,
+    email_key TEXT,
+    password_hash TEXT,
+    display_name TEXT NOT NULL,
+    display_key TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL DEFAULT 'password',
+    provider_sub TEXT,
+    email_verified_at TEXT,
+    created_at TEXT NOT NULL,
+    legacy INTEGER NOT NULL DEFAULT 0,
+    trust_score REAL,
+    tier TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email
+    ON accounts(email_key) WHERE email_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_provider_sub
+    ON accounts(provider, provider_sub) WHERE provider_sub IS NOT NULL;
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS invite_codes (
+    id INTEGER PRIMARY KEY,
+    code_hash TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    uses_left INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS device_grants (
+    id INTEGER PRIMARY KEY,
+    device_code_hash TEXT NOT NULL UNIQUE,
+    user_code_hash TEXT NOT NULL UNIQUE,
+    hostname TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    account_id INTEGER,
+    worker_id INTEGER,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    interval_s INTEGER NOT NULL,
+    last_poll_at TEXT,
+    delivery_token TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_device_status ON device_grants(status, expires_at);
+CREATE TABLE IF NOT EXISTS auth_attempts (
+    id INTEGER PRIMARY KEY,
+    action TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_attempts ON auth_attempts(action, bucket, at);
+CREATE TABLE IF NOT EXISTS email_tokens (
+    id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+);
 """
 
 
@@ -351,9 +420,12 @@ class Store:
         with self._tx() as conn:
             if conn.execute("SELECT 1 FROM workers WHERE name=?", (name,)).fetchone():
                 raise ValueError(f"worker {name} already exists")
+            now = iso(self.clock())
+            account_id = self._insert_legacy_account(conn, name, now, suffix_id=None)
             conn.execute(
-                "INSERT INTO workers (name, token_hash, created_at) VALUES (?, ?, ?)",
-                (name, hash_token(token), iso(self.clock())),
+                """INSERT INTO workers (name, token_hash, created_at, account_id, hostname, kind)
+                   VALUES (?, ?, ?, ?, NULL, 'legacy')""",
+                (name, hash_token(token), now, account_id),
             )
             self._event(conn, "info", f"invite created for {name}")
         return token
@@ -816,17 +888,24 @@ class Store:
         return [dict(row) for row in rows]
 
     def contributions(self, project: str | None = None) -> list[dict]:
-        """Append-only credit rows. Nothing in this process updates or deletes them."""
+        """Append-only credit rows. This process does not delete them or edit outcomes.
+
+        ``account_id`` is who gets the credit. ``verified`` stays 0 until another
+        account agrees. ``revoked`` is reserved so Phase 4 can drop pending credit
+        without deleting the row or minting a coin balance. Nothing here sets it.
+        """
         if project is not None:
             project = self._require_project(project)
             rows = self.conn.execute(
-                """SELECT user_id, project, unit_id, generation, outcome, verified, detail, created_at
+                """SELECT user_id, account_id, project, unit_id, generation, outcome,
+                          verified, revoked, detail, created_at
                    FROM contributions WHERE project=? ORDER BY id""",
                 (project,),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                """SELECT user_id, project, unit_id, generation, outcome, verified, detail, created_at
+                """SELECT user_id, account_id, project, unit_id, generation, outcome,
+                          verified, revoked, detail, created_at
                    FROM contributions ORDER BY id"""
             ).fetchall()
         return [dict(row) for row in rows]
@@ -919,7 +998,9 @@ class Store:
                 (unit["id"], unit["generation"]),
             ).fetchall()
             holders = {int(slot["worker_id"]) for slot in slots}
-            if worker_id in holders or len(slots) >= need:
+            # Two copies of one generation must be two accounts. A second device
+            # on the account that already holds this unit is not the other copy.
+            if len(slots) >= need or self._blocked_by_account(conn, worker_id, holders):
                 continue
             rank = (-len(slots), int(unit["id"]))
             if best is None or rank < best[0]:
@@ -991,11 +1072,11 @@ class Store:
     def _contribute(self, conn, user_id: int, unit, outcome: str, verified: int, detail: str, now) -> None:
         conn.execute(
             """INSERT INTO contributions
-                   (user_id, project, unit_id, generation, outcome, verified, detail, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (user_id, account_id, project, unit_id, generation, outcome, verified, detail, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                int(user_id), unit["project"], int(unit["id"]), int(unit["generation"]),
-                outcome, int(verified), detail, iso(now),
+                int(user_id), self._account_id(conn, user_id), unit["project"], int(unit["id"]),
+                int(unit["generation"]), outcome, int(verified), detail, iso(now),
             ),
         )
 
@@ -1008,6 +1089,7 @@ class Store:
                 "progress_done": "INTEGER",
                 "progress_total": "INTEGER",
             })
+            self._migrate_accounts()
             return
         if "project" not in names:
             self.conn.execute("ALTER TABLE units ADD COLUMN project TEXT NOT NULL DEFAULT 'exoplanets'")
@@ -1033,6 +1115,93 @@ class Store:
             "progress_done": "INTEGER",
             "progress_total": "INTEGER",
         })
+        self._migrate_accounts()
+
+    def _migrate_accounts(self) -> None:
+        """Attach legacy invites to accounts. Safe to run twice on a live database."""
+        self._add_columns("workers", {
+            "account_id": "INTEGER",
+            "hostname": "TEXT",
+            "kind": "TEXT NOT NULL DEFAULT 'legacy'",
+        })
+        self._add_columns("contributions", {
+            "account_id": "INTEGER",
+            "revoked": "INTEGER NOT NULL DEFAULT 0",
+        })
+        if "account_id" not in self._columns("workers"):
+            return
+        with self._tx() as conn:
+            pending = conn.execute(
+                "SELECT id, name, created_at FROM workers WHERE account_id IS NULL ORDER BY id"
+            ).fetchall()
+            for row in pending:
+                account_id = self._insert_legacy_account(
+                    conn, row["name"], row["created_at"], suffix_id=int(row["id"]),
+                )
+                conn.execute(
+                    "UPDATE workers SET account_id=?, kind='legacy' WHERE id=?",
+                    (account_id, row["id"]),
+                )
+            if "account_id" in self._columns("contributions"):
+                conn.execute(
+                    """UPDATE contributions
+                       SET account_id = (
+                           SELECT account_id FROM workers WHERE workers.id = contributions.user_id
+                       )
+                       WHERE account_id IS NULL"""
+                )
+        if "account_id" in self._columns("contributions"):
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_contrib_account ON contributions(account_id, revoked, verified)"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workers_account ON workers(account_id)"
+        )
+
+    def _insert_legacy_account(self, conn, name: str, created_at: str, suffix_id: int | None) -> int:
+        display, key = self._legacy_display(conn, name, suffix_id)
+        cur = conn.execute(
+            """INSERT INTO accounts (
+                   email, email_key, password_hash, display_name, display_key, provider,
+                   provider_sub, email_verified_at, created_at, legacy, trust_score, tier
+               ) VALUES (NULL, NULL, NULL, ?, ?, 'legacy', NULL, NULL, ?, 1, NULL, '')""",
+            (display, key, created_at),
+        )
+        return int(cur.lastrowid)
+
+    def _legacy_display(self, conn, name: str, suffix_id: int | None) -> tuple[str, str]:
+        key = name.casefold()
+        taken = conn.execute("SELECT 1 FROM accounts WHERE display_key=?", (key,)).fetchone()
+        if not taken:
+            return name, key
+        if suffix_id is None:
+            raise ValueError(f"worker {name} already exists")
+        display = f"{name}-{suffix_id}"
+        return display, display.casefold()
+
+    def _account_id(self, conn, worker_id: int) -> int | None:
+        if "account_id" not in self._columns("workers"):
+            return None
+        row = conn.execute("SELECT account_id FROM workers WHERE id=?", (int(worker_id),)).fetchone()
+        if row is None or row["account_id"] is None:
+            return None
+        return int(row["account_id"])
+
+    def _blocked_by_account(self, conn, worker_id: int, holders: set[int]) -> bool:
+        if worker_id in holders:
+            return True
+        mine = self._account_id(conn, worker_id)
+        if mine is None or not holders:
+            return False
+        marks = ",".join("?" for _ in holders)
+        rows = conn.execute(
+            f"SELECT account_id FROM workers WHERE id IN ({marks})",
+            tuple(holders),
+        ).fetchall()
+        for row in rows:
+            if row["account_id"] is not None and int(row["account_id"]) == mine:
+                return True
+        return False
 
     def _columns(self, table: str) -> set[str]:
         return {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}

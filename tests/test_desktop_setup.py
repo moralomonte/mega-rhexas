@@ -1,5 +1,6 @@
 """Desktop setup, token storage, and the update offer. No coordinator and no MAST."""
 import json
+import pytest
 import stat
 import threading
 import urllib.error
@@ -21,6 +22,14 @@ from rhexas.worker.loop import resolve_worker, run_worker, wait_until_running
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = "rhx_desktop_secret"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_worker_login_dir(tmp_path, monkeypatch):
+    """Keep rhexas.worker.login's shared token file inside the test's tmp dir."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+
 
 
 def test_app_data_paths_follow_the_platform(tmp_path):
@@ -342,3 +351,46 @@ def test_installer_is_per_user_and_startup_defaults_off():
     assert "[desktop]" in script
     assert "pythonw.exe" in script
     assert "lightkurve" in script
+
+
+class _Resp:
+    def __init__(self, body):
+        self.body = json.dumps(body).encode()
+    def read(self):
+        return self.body
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+def test_device_link_matches_the_coordinator_device_flow():
+    from rhexas.desktop.device import DeviceLink
+    sent = []
+
+    def opener(request, timeout=0):
+        sent.append((request.full_url, json.loads(request.data)))
+        if request.full_url.endswith("/start"):
+            return _Resp({"device_code": "dc", "user_code": "ABCD-EFGH",
+                          "verification_url": "https://api.megarhexas.com/link", "interval": 5, "expires_in": 600})
+        return _Resp({"status": "approved", "token": "rhx_abcdef"})
+
+    link = DeviceLink("https://api.megarhexas.com", opener=opener)
+    started = link.start()
+    assert started.verification_uri == "https://api.megarhexas.com/link?code=ABCD-EFGH"
+    assert sent[0][0] == "https://api.megarhexas.com/api/v1/device/start"
+    assert "hostname" in sent[0][1]
+    polled = link.poll("dc")
+    assert sent[1] == ("https://api.megarhexas.com/api/v1/device/poll", {"device_code": "dc"})
+    assert polled.token == "rhx_abcdef" and polled.status == "ready"
+
+
+def test_device_link_reads_expired_from_a_400_body():
+    import io
+    from rhexas.desktop.device import DeviceLink
+
+    def opener(request, timeout=0):
+        raise urllib.error.HTTPError(request.full_url, 400, "bad", {}, io.BytesIO(b'{"status": "expired", "error": "code expired"}'))
+
+    polled = DeviceLink("https://api.megarhexas.com", opener=opener).poll("dc")
+    assert polled.status == "expired" and not polled.token

@@ -23,3 +23,20 @@ max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 
 # Omit replicas to let the project handler decide. Exoplanets uses 2.
 # replicas = 1             # accept a single upload and skip the comparison
+
+[accounts]
+# invite: signup needs a code from `rhexas coord invite create` (the default).
+# open: anyone can create an account on megarhexas.com.
+signup = "invite"
+public_origin = "https://megarhexas.com"
+api_public_url = "https://api.megarhexas.com"
+cookie_secure = true
+session_days = 30
+
+# [smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = ""
+# password = ""
+# from = "Mega Rhexas <noreply@megarhexas.com>"
+# starttls = true

@@ -1,7 +1,19 @@
 # Installed at /etc/caddy/Caddyfile on the droplet (systemd + Caddy, no Docker).
-# Namecheap Advanced DNS: A record, host "api", value = this machine's IPv4.
-# Caddy asks Let's Encrypt for a certificate the first time someone visits.
-# Leave megarhexas.com itself out of this file.
+# Namecheap Advanced DNS, all pointing at this machine's IPv4:
+#   A  api  → api.megarhexas.com  (coordinator)
+#   A  @    → megarhexas.com      (public site)
+#   A  www  → www.megarhexas.com  (same public site)
+# Caddy asks Let's Encrypt for a certificate the first time someone visits each name.
+#
+# Optional global options must stay first if you add them:
+# {
+#     email you@example.com
+# }
+
+# The coordinator sends CORS headers so the public site can call the API
+# with credentials. Caddy does not proxy the apex to the coordinator.
+
+import /opt/mega-rhexas/deploy/Caddyfile.site
 
 api.megarhexas.com {
 	encode gzip

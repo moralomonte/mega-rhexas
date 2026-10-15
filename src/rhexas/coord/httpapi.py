@@ -74,23 +74,48 @@ def _set_cookie(token: str, max_age: int) -> tuple[str, str]:
 
 
 class App:
-    def __init__(self, store: Store, *, page: bytes | None = None, max_body: int = _MAX_BODY):
+    def __init__(self, store: Store, *, page: bytes | None = None, max_body: int = _MAX_BODY,
+                 accounts=None, smtp=None, mailer=None):
+        from .auth import SmtpMailer
+        from .settings import AccountsConfig
         self.store = store
         self.max_body = max_body
         self.page = page if page is not None else _load_page()
         self.favicon = _load_asset(_FAVICON)
+        self.accounts = accounts or AccountsConfig()
+        self.mailer = mailer if mailer is not None else SmtpMailer(smtp)
 
     def handle(self, method: str, path: str, query: str, headers: dict, body: bytes) -> Response:
+        hdrs = {k: v for k, v in headers.items()}
         try:
-            return self._route(method.upper(), path, parse_qs(query), {k: v for k, v in headers.items()}, body)
+            response = self._route(method.upper(), path, parse_qs(query), hdrs, body)
         except CoordError as exc:
-            return _error(exc.status, str(exc), _code(exc.status))
+            response = _error(exc.status, str(exc), _code(exc.status))
         except Exception:
             import traceback
             traceback.print_exc()
-            return _error(500, "internal error", "internal")
+            response = _error(500, "internal error", "internal")
+        return self._with_cors(hdrs, response)
+
+    def _with_cors(self, headers: dict, response: Response) -> Response:
+        origin = ""
+        for key, value in headers.items():
+            if key.lower() == "origin":
+                origin = value.strip()
+                break
+        if origin and self.accounts.origin_allowed(origin):
+            response.headers.append(("Access-Control-Allow-Origin", origin))
+            response.headers.append(("Access-Control-Allow-Credentials", "true"))
+            response.headers.append(("Vary", "Origin"))
+        return response
 
     def _route(self, method: str, path: str, query: dict, headers: dict, body: bytes) -> Response:
+        if method == "OPTIONS":
+            return Response(204, b"", "text/plain", [
+                ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+                ("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept"),
+                ("Access-Control-Max-Age", "600"),
+            ])
         if method == "GET" and path in ("/healthz", "/api/v1/health"):
             return _json(200, {"ok": True})
         if method == "GET" and path in ("/", "/index.html"):
@@ -101,6 +126,10 @@ class App:
             return self._login(body)
         if method == "POST" and path == "/logout":
             return Response(204, b"", "text/plain", [_set_cookie("", 0)])
+        from .routes_account import account_route
+        account = account_route(self, method, path, query, headers, body)
+        if account is not None:
+            return account
         if method == "GET" and path == "/api/v1/projects":
             return _json(200, {"projects": self.store.projects_public()})
         task = _task_path(path)
@@ -231,9 +260,12 @@ def _code(status: int) -> str:
     return {
         400: "bad_request",
         401: "unauthorized",
+        403: "forbidden",
         404: "not_found",
         409: "conflict",
         413: "too_large",
+        415: "unsupported",
+        429: "rate_limited",
     }.get(status, "error")
 
 

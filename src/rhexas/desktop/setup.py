@@ -28,6 +28,15 @@ class SetupGate:
         self._lock = threading.Lock()
         self._device_code = ""
         self._interval = 5.0
+        if not read_token(self.app_dir):
+            # A computer already linked with ``rhexas worker --login`` keeps that token.
+            try:
+                from rhexas.worker.login import load_saved_token
+                saved = load_saved_token()
+                if saved:
+                    write_token(self.app_dir, saved)
+            except (OSError, TokenError):
+                pass
         if read_token(self.app_dir):
             self.ready.set()
 
@@ -74,6 +83,12 @@ class SetupGate:
         if result.token:
             try:
                 self.save_pasted(result.token)
+                try:
+                    # Same place ``rhexas worker --login`` stores it, so the CLI worker finds it too.
+                    from rhexas.worker.login import save_worker_token
+                    save_worker_token(result.token)
+                except OSError:
+                    pass
             except TokenError:
                 return {
                     "status": "error",
@@ -82,7 +97,7 @@ class SetupGate:
             return {"status": "ready"}
         status = result.status or "pending"
         if status == "slow_down":
-            interval = min(float(interval) * 2, 60)
+            interval = min(float(getattr(result, "interval", 0) or float(interval) + 5), 60)
             with self._lock:
                 self._interval = interval
         if status in _WAITING:

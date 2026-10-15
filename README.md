@@ -296,33 +296,38 @@ cached at `dashboard/sky_cache_sNNNN.json`.
 
 ## Friends beta
 
-An invite-only coordinator hands batches of about 500 TIC IDs to friends' computers,
+The coordinator hands batches of about 500 TIC IDs to friends' computers,
 which run the same download, search, and filter code. Each exoplanet batch is
-searched twice. The coordinator keeps a result only when the two top hits agree
-on period, SDE, and depth. It is a small Python process with a SQLite file,
-meant for one Ubuntu VPS (or, later, a home server). The public name is
-`https://api.megarhexas.com`. The apex `megarhexas.com` is reserved for the
-future public site.
+searched twice, by two different accounts. The coordinator keeps a result only
+when the two top hits agree on period, SDE, and depth. It is a small Python
+process with a SQLite file, meant for one Ubuntu VPS (or, later, a home
+server). The public name is `https://api.megarhexas.com`. The apex
+`megarhexas.com` is the public site in `site/`; its pages call that API with a session cookie.
 
 Every unit and result carries a `project` (`exoplanets` today). Routes are
 `/api/v1/projects/{project}/tasks/...`; `/api/v1/work/...` is the same API for
 exoplanets. Exoplanet comparison lives in a project handler, so a later science
-can register its own. Each result is tied to the worker's stable id, and an
-append-only contributions log records who, project, unit, outcome, a verified
-flag, and the time. A future leaderboard should score verified rows. Redundant
-assignment is that handler's `replicas` (exoplanets uses 2; the generic handler
-uses 1). `replicas` in `coord.toml` overrides it. Accounts, teams, and other
-sciences are not in this beta.
+can register its own. Credit is an append-only contributions log: account,
+project, unit, outcome, a verified flag, and the time. Verified stays 0 until
+another account agrees. A public leaderboard reads those rows by display name.
+Redundant assignment is that handler's `replicas` (exoplanets uses 2; the
+generic handler uses 1). `replicas` in `coord.toml` overrides it. Signup is
+invite-only until `accounts.signup` is `open`. Teams and other sciences are
+not in this beta. There are no coins.
 
 ```bash
+rhexas worker --login
 rhexas worker --token-file token.txt
 rhexas worker --token-file token.txt --dashboard
 rhexas worker-dashboard
 rhexas coord init
 rhexas coord enroll --sector 107 --fetch
+rhexas coord invite create
 rhexas coord token create ada
 rhexas coord serve
 ```
+
+`rhexas worker --login` is the device flow: the browser opens, you approve this computer, and the token is stored for the next run. An installer can call `rhexas.worker.login.link_this_computer`. `--token-file` still overrides that saved token.
 
 `rhexas worker --dashboard` runs the worker and a live page for **this** machine, then opens a browser. `rhexas worker-dashboard` attaches to a worker that is already running. Both bind to `127.0.0.1` and port `8080`. If `8080` is taken, the next free port is used. The page does not call the coordinator, and it never shows the invite token.
 
@@ -353,10 +358,11 @@ src/rhexas/             importable package and the rhexas CLI
 src/rhexas/coord/       friends-beta coordinator (SQLite, status page)
 src/rhexas/worker/      friends-beta worker loop and the local worker dashboard
 deploy/                 Dockerfile, Caddy, systemd unit, example coord.toml
+site/                   public website for megarhexas.com
 src/*.ps1               thin wrappers around the CLI
 dashboard/              SSE server and static UI
 tests/                  offline tests, including coordinator and worker with no MAST
-DEPLOY.md               droplet setup for api.megarhexas.com
+DEPLOY.md               droplet setup for api.megarhexas.com and the public site
 FRIENDS.md              how a friend installs the worker
 ```
 
