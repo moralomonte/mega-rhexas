@@ -210,6 +210,76 @@ def fold_curve(time_values, flux_values, period, t0, bins: int = FOLD_BINS) -> t
     return centers, medians
 
 
+def _hours_pack(hours, flux, bins: int = 48):
+    """Binned hours/flux pairs in the shape the mission-control charts read."""
+    import numpy as np
+
+    x = np.asarray(hours, dtype=float)
+    y = np.asarray(flux, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if x.size < 3:
+        return None
+    order = np.argsort(x)
+    x, y = x[order], y[order]
+    edges = np.linspace(float(x[0]), float(x[-1]), bins + 1)
+    if edges[-1] == edges[0]:
+        return None
+    idx = np.digitize(x, edges) - 1
+    xb: list[float] = []
+    yb: list[float] = []
+    for i in range(bins):
+        sel = y[idx == i]
+        if sel.size == 0:
+            continue
+        xb.append(round(float((edges[i] + edges[i + 1]) / 2), 3))
+        yb.append(round(float(np.median(sel)), 6))
+    if len(xb) < 3:
+        return None
+    return [xb, yb, xb, yb]
+
+
+def vet_views(time_values, flux_values, period, t0, duration) -> dict:
+    """Odd, even, and secondary folds in hours. Cheap; the light curve is already in memory."""
+    import numpy as np
+
+    try:
+        period_f = float(period)
+        t0_f = float(t0)
+    except (TypeError, ValueError):
+        return {}
+    if not math.isfinite(period_f) or not math.isfinite(t0_f) or period_f <= 0:
+        return {}
+    try:
+        dur = float(duration)
+    except (TypeError, ValueError):
+        dur = 0.1
+    if not math.isfinite(dur) or dur <= 0:
+        dur = 0.1
+    t = np.asarray(time_values, dtype=float)
+    y = np.asarray(flux_values, dtype=float)
+    if t.shape != y.shape or t.size < 8:
+        return {}
+    mask = np.isfinite(t) & np.isfinite(y)
+    t, y = t[mask], y[mask]
+    if t.size < 8:
+        return {}
+    phase = np.mod(t - t0_f, period_f) / period_f
+    phase = np.where(phase > 0.5, phase - 1.0, phase)
+    hours = phase * period_f * 24.0
+    n_orbit = np.round((t - t0_f) / period_f)
+    half = min(0.5, max(4.0 * dur / period_f, 0.02))
+    window = np.abs(phase) < half
+    odd = _hours_pack(hours[window & (n_orbit % 2 == 1)], y[window & (n_orbit % 2 == 1)])
+    even = _hours_pack(hours[window & (n_orbit % 2 == 0)], y[window & (n_orbit % 2 == 0)])
+    around_half = np.mod(t - t0_f, period_f) - 0.5 * period_f
+    hours2 = around_half * 24.0
+    span = min(0.5 * period_f, max(4.0 * dur, 0.02 * period_f))
+    sec_m = np.abs(around_half) < span
+    secondary = _hours_pack(hours2[sec_m], y[sec_m])
+    return {"odd": odd, "even": even, "secondary": secondary}
+
+
 def _finite(value):
     try:
         number = float(value)
@@ -479,6 +549,59 @@ def _child_conn(path: str) -> sqlite3.Connection:
     return _CHILD["conn"]
 
 
+_HIST_BINS = 60
+_VIEW_CAP = 40
+_SKY_CAP = 1500
+
+
+def _bump_hist(conn: sqlite3.Connection, sde, snr) -> None:
+    hist = _read_kv(conn, "hist")
+    if not isinstance(hist, dict):
+        hist = {}
+    sde_c = [int(v or 0) for v in list(hist.get("sde") or [])]
+    snr_c = [int(v or 0) for v in list(hist.get("snr") or [])]
+    sde_c = (sde_c + [0] * _HIST_BINS)[:_HIST_BINS]
+    snr_c = (snr_c + [0] * _HIST_BINS)[:_HIST_BINS]
+
+    def bump(counts, value, span: float) -> None:
+        number = _finite(value)
+        if number is None:
+            return
+        clamped = min(span - 1e-6, max(0.0, number))
+        counts[int(clamped / span * _HIST_BINS)] += 1
+
+    bump(sde_c, sde, 30.0)
+    bump(snr_c, snr, 60.0)
+    _write_kv(conn, "hist", {"sde": sde_c, "snr": snr_c})
+
+
+def _note_sky(conn: sqlite3.Connection, tic, ra, dec, tmag, flag: int) -> None:
+    if tic is None or _finite(ra) is None or _finite(dec) is None:
+        return
+    sky = _read_kv(conn, "sky")
+    if not isinstance(sky, list):
+        sky = []
+    mag = _finite(tmag)
+    point = [int(tic), round(float(ra), 5), round(float(dec), 5), round(mag, 2) if mag is not None else None, int(flag)]
+    sky = [item for item in sky if not (isinstance(item, list) and item and item[0] == int(tic))]
+    sky.append(point)
+    if len(sky) > _SKY_CAP:
+        sky = sky[-_SKY_CAP:]
+    _write_kv(conn, "sky", sky)
+
+
+def _store_view(conn: sqlite3.Connection, tic: int, view: dict) -> None:
+    views = _read_kv(conn, "views")
+    if not isinstance(views, dict):
+        views = {}
+    views[str(int(tic))] = view
+    if len(views) > _VIEW_CAP:
+        ordered = sorted(views.items(), key=lambda item: float((item[1] or {}).get("at") or 0))
+        for key, _item in ordered[: len(views) - _VIEW_CAP]:
+            views.pop(key, None)
+    _write_kv(conn, "views", views)
+
+
 def publish_star(spec: dict, row: dict, time_values, flux_values, *, processing: bool) -> None:
     """Write the star a search process is on, and keep a fold if the numeric cuts pass.
 
@@ -512,16 +635,39 @@ def publish_star(spec: dict, row: dict, time_values, flux_values, *, processing:
         "flux": flux,
         "phase": phase,
         "folded": folded,
+        "duration": _finite(row.get("duration")),
+        "ra": _finite(row.get("ra")),
+        "dec": _finite(row.get("dec")),
+        "tmag": _finite(row.get("tmag")),
+        "n_transits": _finite(row.get("n_transits")),
+        "odd_even_sigma": _finite(row.get("odd_even_sigma")),
+        "sec_sigma": _finite(row.get("sec_sigma")),
+        "pgram": None,
         "project": spec.get("project") or "exoplanets",
         "sector": int(spec.get("sector") or 0),
         "unit_id": int(spec.get("unit_id") or 0),
         "at": time.time(),
     }
+    pgram_p = row.get("_pgram_p")
+    pgram_w = row.get("_pgram_w")
+    if isinstance(pgram_p, list) and isinstance(pgram_w, list) and len(pgram_p) == len(pgram_w) and pgram_p:
+        current["pgram"] = [pgram_p, pgram_w]
+    curves = {}
+    if not processing and not row.get("error") and times:
+        try:
+            curves = vet_views(time_values, flux_values, row.get("period"), row.get("t0"), row.get("duration"))
+        except Exception:
+            curves = {}
     conn = _child_conn(str(path))
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
             _write_kv(conn, "current", current)
+            if not processing:
+                _bump_hist(conn, current.get("sde"), current.get("snr"))
+            _note_sky(conn, tic, current.get("ra"), current.get("dec"), current.get("tmag"), 2 if passed else 1)
+            if tic is not None and not processing and (phase or current.get("pgram")):
+                _store_view(conn, tic, {**current, **curves})
             if passed and tic is not None and phase:
                 conn.execute(
                     """INSERT INTO candidates (
@@ -704,6 +850,9 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         },
         "log_tail": log_tail,
         "log_size": log_size,
+        "hist": kv.get("hist") if isinstance(kv.get("hist"), dict) else None,
+        "sky": kv.get("sky") if isinstance(kv.get("sky"), list) else [],
+        "views": kv.get("views") if isinstance(kv.get("views"), dict) else {},
     }
     return scrub(payload)
 

@@ -308,11 +308,11 @@ rhexas worker-dashboard --dashboard-host 0.0.0.0
 
 `--dashboard-host` is opt-in. Leave it unset and the page is only reachable on this computer. Set it (for example `0.0.0.0`, or a LAN address) when another machine on your network should open the page.
 
-The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page only reads those. It shows the batch in progress (project, sector, unit id, stars done and total, ETA, throughput), the light curve of the star being searched and the folded curve when a period is found, this worker's hits with period, depth, and SNR, lifetime counts, cache use against `--max-cache-gb`, CPU and the process and thread counts, whether the coordinator connection is up, and a console tail of the worker log. Updates arrive over server-sent events, with polling if that stream drops.
+The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page only reads those. It is the same mission-control screen as `rhexas dashboard` (same layout, colors, triskelion, light-curve scan, sky map, histogram cycle, and console). The numbers are this worker's batch: stars done and total, ETA, throughput, cache use against `--max-cache-gb`, CPU, and whether the coordinator connection is up. Pixel movies and survey cutouts stay on the sector page, because the worker cache does not keep those files. Updates arrive over server-sent events.
 
-Hits are labeled **candidates, unverified**. They are not confirmed planets. Lifetime counts are stars searched, batches submitted, batches the coordinator agreed, batches it verified, and contributions still pending versus verified. Those contribution states are there for a future account. This beta has no coins.
+Hits are labeled **candidates, unverified**. They are not confirmed planets. The three chips are verified contributions, pending contributions, and batches submitted. Those states are there for a future account. This beta has no coins.
 
-The sector mission-control page (`rhexas dashboard`) is a different server. It reads `results/sNNNN/` for a local pipeline run. The worker page reads only the worker cache.
+`rhexas dashboard` is still the sector pipeline server. It reads `results/sNNNN/`. The worker page reads only the worker cache.
 
 Setup for the server is [DEPLOY.md](DEPLOY.md). Setup for a friend's PC is [FRIENDS.md](FRIENDS.md).
 The worker's disk cap and process count are separate from the pipeline defaults above.
