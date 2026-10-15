@@ -2,7 +2,7 @@
 
 This is the friends-beta server. It does not download light curves and it does not run the transit search. Friends' computers do that. The server only hands out batches of about 500 TIC IDs, stores the small result files, and keeps a batch when two different people agree.
 
-The public address is **https://api.megarhexas.com**. The domain `megarhexas.com` is registered at Namecheap, and DNS stays at Namecheap for now. The apex (`megarhexas.com` with no subdomain) is reserved for the future public site. This droplet serves only `api`.
+The coordinator's public address is **https://api.megarhexas.com**. The same droplet also serves the public website at **https://megarhexas.com** and **https://www.megarhexas.com** from the `site/` folder. The domain `megarhexas.com` is registered at Namecheap, and DNS stays at Namecheap for now.
 
 One small machine is enough: a DigitalOcean Basic droplet, about $6/month, **1 GB RAM / 1 vCPU / 25 GB SSD**, Ubuntu. The same files run later on a home server or another host. Copy the database and the workers keep using the same URL.
 
@@ -31,14 +31,19 @@ DNS is at Namecheap (Namecheap BasicDNS), not at DigitalOcean.
    - Host: **`api`**
    - Value: `DROPLET_IP`
    - TTL: Automatic
-5. The apex stays free for the public site. The host on this record is `api`, so the name that resolves is `api.megarhexas.com`. Leave any parking or redirect Namecheap already has on `@` (the apex) as it is, and do not add an A record whose host is `@` pointing at this droplet.
+5. Add the public website on the same address. These two records serve `site/` (the static pages). Remove any Namecheap parking or URL redirect already sitting on `@`, or the apex will not reach this droplet.
+   - Type: **A Record**, Host: **`@`**, Value: `DROPLET_IP`, TTL: Automatic
+   - Type: **A Record**, Host: **`www`**, Value: `DROPLET_IP`, TTL: Automatic
+   The `api` record from the previous step stays. All three names point at this droplet. Caddy chooses the site from the hostname.
 6. Save. Check from your computer:
 
 ```bash
 dig +short api.megarhexas.com
+dig +short megarhexas.com
+dig +short www.megarhexas.com
 ```
 
-It should print `DROPLET_IP`. Namecheap usually updates in a few minutes. Sometimes it takes an hour.
+Each one should print `DROPLET_IP`. Namecheap usually updates in a few minutes. Sometimes it takes an hour.
 
 ## 3. Log in and install the program
 
@@ -129,7 +134,7 @@ sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
 
 ## 8. HTTPS with Caddy
 
-Caddy obtains a Let's Encrypt certificate for `api.megarhexas.com` by itself, once the A record points here and ports 80 and 443 are open.
+Caddy obtains Let's Encrypt certificates for `api.megarhexas.com`, `megarhexas.com`, and `www.megarhexas.com` by itself, once those A records point here and ports 80 and 443 are open.
 
 ```bash
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
@@ -161,7 +166,11 @@ ufw enable
 
 Visit **https://api.megarhexas.com**. The page asks for the admin token from step 4. Worker tokens do not open it: the page lists unpublished candidate stars. After login you should see sector progress, who is online, candidates both copies agreed on, and a console of claims, agreements, and expired leases. It refreshes every two seconds.
 
-If the browser says the certificate is missing, `dig +short api.megarhexas.com` is the first check, then `journalctl -u caddy -n 50`. Let's Encrypt will not issue a certificate until the name resolves to this machine.
+Visit **https://megarhexas.com**. That is the public site: home, how it works, the leaderboard, and the account pages. **https://www.megarhexas.com** serves the same files. The pages call `https://api.megarhexas.com` for `GET /api/v1/public/stats` and for the account routes. Caddy only serves files for the apex; it does not proxy them to the coordinator.
+
+`deploy/Caddyfile.host` imports `deploy/Caddyfile.site`. The import path is `/opt/mega-rhexas/deploy/Caddyfile.site`, so the snippet stays in the git checkout. Do not copy the site files somewhere else unless you also change `root` in that snippet. The root is `/opt/mega-rhexas/site`.
+
+If the browser says the certificate is missing, `dig +short` for that hostname is the first check, then `journalctl -u caddy -n 50`. Let's Encrypt will not issue a certificate until the name resolves to this machine. A certificate error on the apex alone usually means the `@` or `www` record is still parking, or Caddy was reloaded before DNS updated. Caddy retries.
 
 ## 9. What you will see once friends are running
 
@@ -196,13 +205,14 @@ sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
 cd /opt/mega-rhexas
 git pull
 systemctl restart rhexas-coord
+systemctl reload caddy
 ```
 
-The database stays in `/var/lib/rhexas`. A pull does not touch it.
+The database stays in `/var/lib/rhexas`. A pull does not touch it. Caddy reads the public site from disk, so the reload is what picks up a changed `deploy/Caddyfile.site`. The HTML and CSS update as soon as `git pull` finishes, even before the reload.
 
 ## 12. Move to a home server or another host
 
-Stop the service (`systemctl stop rhexas-coord`). Copy `/var/lib/rhexas` to the new machine. Install Ubuntu 24.04, Python 3, and Caddy the same way, with the same `/opt/mega-rhexas` checkout and the same systemd unit. At Namecheap, change the `api` A record to the new public IP. Workers keep `https://api.megarhexas.com` and the same invite tokens, because the tokens live in the sqlite file. Caddy will ask Let's Encrypt for a new certificate after DNS points at the new machine.
+Stop the service (`systemctl stop rhexas-coord`). Copy `/var/lib/rhexas` to the new machine. Install Ubuntu 24.04, Python 3, and Caddy the same way, with the same `/opt/mega-rhexas` checkout and the same systemd unit. At Namecheap, change the `api`, `@`, and `www` A records to the new public IP. Workers keep `https://api.megarhexas.com` and the same invite tokens, because the tokens live in the sqlite file. The public site keeps `https://megarhexas.com`. Caddy will ask Let's Encrypt for new certificates after DNS points at the new machine.
 
 Give the home connection a stable address (a DHCP reservation, or a small VPS in front) so the A record does not go stale. The coordinator itself has no DigitalOcean-specific code.
 
@@ -219,7 +229,7 @@ docker compose run --rm coord --config /var/lib/rhexas/coord.toml token create a
 docker compose up -d
 ```
 
-`deploy/Caddyfile` defaults to `api.megarhexas.com`. Ports 80 and 443 are published. The coordinator is only reachable through Caddy.
+`deploy/Caddyfile` defaults to `api.megarhexas.com`. Ports 80 and 443 are published. The coordinator is only reachable through Caddy. Compose does not serve the public site. The apex and `www` are the systemd path in `deploy/Caddyfile.site`.
 
 ## What stays open for later
 

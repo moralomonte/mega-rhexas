@@ -275,8 +275,8 @@ which run the same download, search, and filter code. Each exoplanet batch is
 searched twice. The coordinator keeps a result only when the two top hits agree
 on period, SDE, and depth. It is a small Python process with a SQLite file,
 meant for one Ubuntu VPS (or, later, a home server). The public name is
-`https://api.megarhexas.com`. The apex `megarhexas.com` is reserved for the
-future public site.
+`https://api.megarhexas.com`. The apex `megarhexas.com` is the public site in
+`site/`.
 
 Every unit and result carries a `project` (`exoplanets` today). Routes are
 `/api/v1/projects/{project}/tasks/...`; `/api/v1/work/...` is the same API for
@@ -327,10 +327,11 @@ src/rhexas/             importable package and the rhexas CLI
 src/rhexas/coord/       friends-beta coordinator (SQLite, status page)
 src/rhexas/worker/      friends-beta worker loop and the local worker dashboard
 deploy/                 Dockerfile, Caddy, systemd unit, example coord.toml
+site/                   public website for megarhexas.com
 src/*.ps1               thin wrappers around the CLI
 dashboard/              SSE server and static UI
 tests/                  offline tests, including coordinator and worker with no MAST
-DEPLOY.md               droplet setup for api.megarhexas.com
+DEPLOY.md               droplet setup for api.megarhexas.com and the public site
 FRIENDS.md              how a friend installs the worker
 ```
 
