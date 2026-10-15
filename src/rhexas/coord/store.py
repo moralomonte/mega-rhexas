@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_units_project ON units(project, state);
 CREATE INDEX IF NOT EXISTS idx_contrib ON contributions(project, user_id, verified);
 
 -- Accounts. ``provider`` is password, legacy, or (later) google.
--- trust_score and tier stay empty until Phase 4 scoring. There is no coin balance.
+-- trust_score and tier stay empty until Phase 4 scoring.
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY,
     email TEXT,
@@ -913,7 +913,7 @@ class Store:
 
         ``account_id`` is who gets the credit. ``verified`` stays 0 until another
         account agrees. ``revoked`` is reserved so Phase 4 can drop pending credit
-        without deleting the row or minting a coin balance. Nothing here sets it.
+        without deleting the row. Nothing here sets it.
         """
         if project is not None:
             project = self._require_project(project)

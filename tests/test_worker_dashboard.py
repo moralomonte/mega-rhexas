@@ -436,7 +436,7 @@ def test_page_reuses_the_mission_control_screen():
         assert marker in text
         assert marker in original
     assert "candidates, unverified" in text
-    assert "No coins" in text
+    assert "coin" not in text.lower()
     assert "discovery" not in text.lower()
     assert "passes vetting" not in text
     assert "★ NEW" not in text
@@ -444,7 +444,7 @@ def test_page_reuses_the_mission_control_screen():
     assert "/api/cutout" not in text
     assert text.find('id="con"') < text.find('id="this-worker"')
     assert "This worker" in text
-    assert "Pending until the coordinator agrees. Verified means it agreed. No coins in this beta." in text
+    assert "Pending until the coordinator agrees. Verified means it agreed." in text
     assert "GB cap" in text
     assert "/api/mode" in text
     assert "localStorage.mode" not in text

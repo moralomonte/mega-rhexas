@@ -87,7 +87,7 @@ footer{{margin-top:16px;color:var(--mut);font-size:12px}}
 <div><h1>Mega Rhexas <small>{_esc(title)}</small></h1></div>
 </a>
 {body}
-<footer>Batches are kept when two different accounts agree. Pending credit is not a coin.</footer>
+<footer>Batches are kept when two different accounts agree.</footer>
 </div>
 <script>
 (() => {{
@@ -238,7 +238,7 @@ def account_page(*, account: dict, devices: list[dict], stats: dict, note: str =
 <div class="stat"><span>Batches verified</span><b>{int(stats.get('batches_verified') or 0)}</b></div>
 <div class="stat"><span>Batches pending</span><b>{int(stats.get('batches_pending') or 0)}</b></div>
 </div>
-<p class="note">Pending until another account agrees on the same batch. Revoking a device drops its open lease. There are no coins.</p>
+<p class="note">Pending until another account agrees on the same batch. Revoking a device drops its open lease.</p>
 <h2>Computers</h2>
 <table>
 <tr><th>Computer</th><th></th><th></th><th></th></tr>

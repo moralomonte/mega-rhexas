@@ -7,7 +7,7 @@ so those tokens still work and still count as different people.
 Credit stays a list of contribution rows. Verified stays 0 until a different
 account agrees. Phase 4 can set ``revoked`` on a pending row and can fill
 ``accounts.tier`` and ``accounts.trust_score``. This module does not keep a
-point balance and does not mint coins.
+point balance.
 """
 from __future__ import annotations
 
