@@ -70,7 +70,18 @@ canvas{width:100%;display:block}
 .hero .chips{display:flex;gap:6px;margin-top:2px}.chip{font-size:11px;padding:2px 8px;border-radius:999px}.cp{background:#34d39922;color:#6ee7b7}.cu{background:#ffd16622;color:#ffd166}.cf{background:#f8717122;color:#fca5a5}
 .hall{font-size:11px;color:var(--mut);margin-top:3px}.hero.glow{box-shadow:0 0 40px rgba(255,209,102,.8),inset 0 0 20px rgba(255,209,102,.25)}
 .banner{margin-top:10px;font-size:12px;color:var(--warn)}
-.pnew{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #2a2f55;border-radius:12px;background:#0d1024}.pnew b#p_new{font-size:30px;color:#ffd166;display:block;line-height:1.1}.pnew .chips{display:flex;flex-direction:column;gap:4px}.chip{font-size:11px;padding:2px 8px;border-radius:9px;white-space:nowrap}.cp{background:#10392c;color:#6ee7b7}.cu{background:#3a3010;color:#fcd34d}.cf{background:#2a2150;color:#c4b5fd}.sig{font-weight:700;color:#cbd5ff;font-size:13px}.vx{text-align:center;margin-top:2px}.vc canvas{width:100%}</style></head><body><canvas id="stars"></canvas>
+.pnew{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:10px 12px;border:1px solid #2a2f55;border-radius:12px;background:#0d1024}.pnew b#p_new{font-size:30px;color:#ffd166;display:block;line-height:1.1}.pnew .chips{display:flex;flex-direction:column;gap:4px}.chip{font-size:11px;padding:2px 8px;border-radius:9px;white-space:nowrap}.cp{background:#10392c;color:#6ee7b7}.cu{background:#3a3010;color:#fcd34d}.cf{background:#2a2150;color:#c4b5fd}.sig{font-weight:700;color:#cbd5ff;font-size:13px}.vx{text-align:center;margin-top:2px}.vc canvas{width:100%}
+.worker-bottom{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:start}
+@media(max-width:900px){.worker-bottom{grid-template-columns:1fr}}
+.life{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.life div{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:12px;padding:8px 10px}
+.life b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.life span{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+.note{font-size:12px;color:var(--mut);margin:10px 0 0}
+.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .6s ease}
+#wcpu{background:rgba(255,255,255,.03);border-radius:8px}
+</style></head><body><canvas id="stars"></canvas>
 <div class="wrap">
 <header><div class="logo"><svg class="trisk" xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 721 721"><defs><linearGradient id="tgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5f3fc"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
 <filter id="gll" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g filter="url(#gll)"><g transform="translate(0.000000,681.000000) scale(0.100000,-0.100000)" fill="url(#tgl)"> <path d="M4595 6673 c-134 -33 -210 -57 -280 -88 -55 -24 -180 -86 -207 -103 -183 -115 -350 -262 -473 -417 -26 -33 -51 -62 -55 -65 -15 -10 -119 -178 -155 -250 -20 -41 -41 -83 -46 -92 -25 -50 -91 -254 -119 -373 -62 -263 -63 -763 -1 -1048 5 -23 17 -78 26 -122 9 -44 24 -106 31 -137 22 -86 21 -425 -1 -521 -99 -430 -305 -737 -646 -964 -50 -33 -231 -123 -248 -123 -6 0 -25 -6 -43 -14 -165 -69 -452 -97 -622 -61 -66 15 -89 20 -191 46 -22 6 -44 14 -49 20 -6 5 -17 9 -26 9 -28 0 -207 96 -278 149 -111 82 -239 230 -278 321 -3 8 -12 29 -19 45 -176 402 -4 846 400 1035 149 70 363 93 480 53 153 -53 267 -182 281 -320 15 -136 -27 -244 -111 -290 -68 -37 -115 -27 -223 46 -77 53 -150 68 -233 51 -93 -20 -184 -111 -194 -195 -9 -72 0 -154 22 -196 19 -35 98 -120 123 -132 8 -4 29 -16 45 -27 32 -21 40 -25 120 -60 146 -64 361 -72 490 -20 300 122 466 338 507 663 59 468 -255 902 -742 1023 -102 26 -391 26 -495 0 -109 -26 -177 -47 -208 -62 -16 -8 -37 -14 -47 -14 -9 0 -23 -7 -30 -15 -7 -8 -17 -15 -23 -15 -21 0 -100 -44 -207 -115 -143 -96 -366 -345 -415 -465 -4 -8 -11 -22 -16 -30 -11 -18 -14 -26 -49 -120 -118 -320 -120 -632 -5 -949 121 -334 391 -627 735 -796 52 -25 108 -53 123 -61 16 -8 33 -14 39 -14 5 0 24 -6 41 -13 63 -27 213 -66 357 -93 127 -23 434 -24 533 0 38 9 80 16 94 16 14 0 46 7 72 14 25 8 73 23 106 32 104 29 313 112 365 145 8 5 22 12 30 15 25 10 34 14 55 27 11 7 43 25 70 41 162 94 395 267 506 376 50 49 160 143 194 166 22 15 53 37 70 49 28 21 77 49 182 103 140 73 416 132 613 132 143 0 348 -32 428 -66 18 -8 41 -14 50 -14 10 0 27 -7 38 -15 10 -8 25 -15 33 -15 13 0 117 -50 176 -84 159 -91 339 -259 441 -411 116 -173 197 -415 208 -625 8 -164 -14 -338 -55 -430 -6 -14 -18 -41 -26 -60 -8 -19 -19 -42 -24 -50 -5 -8 -12 -22 -16 -30 -40 -90 -242 -282 -333 -316 -8 -3 -23 -10 -32 -15 -149 -79 -406 -88 -583 -21 -87 34 -99 39 -138 66 -21 14 -41 26 -45 26 -4 0 -32 22 -62 48 -206 176 -290 384 -231 570 30 93 130 222 172 222 7 0 20 6 28 13 32 27 125 41 177 27 102 -29 139 -90 130 -220 -5 -87 8 -168 32 -192 7 -7 12 -18 12 -24 0 -14 67 -69 117 -97 42 -23 171 -24 216 -1 152 79 210 265 158 510 -93 437 -507 668 -961 537 -303 -88 -542 -350 -624 -685 -24 -98 -22 -331 3 -429 73 -280 233 -513 476 -694 90 -67 90 -67 195 -120 41 -20 87 -43 102 -51 14 -8 31 -14 38 -14 7 0 26 -6 43 -14 18 -8 43 -17 57 -19 14 -3 43 -10 65 -16 122 -31 235 -43 340 -38 150 8 324 41 387 73 14 8 33 14 41 14 14 0 52 16 97 42 8 4 22 11 30 14 8 3 22 10 30 15 8 5 24 13 35 18 11 5 37 21 58 35 21 14 41 26 45 26 36 1 288 259 361 370 79 121 173 338 192 445 5 27 13 61 18 75 48 130 30 555 -31 750 -6 19 -15 51 -19 70 -7 36 -23 84 -45 135 -7 17 -22 55 -34 85 -80 200 -227 409 -411 585 -87 83 -288 245 -304 245 -4 0 -24 13 -44 28 -20 16 -43 32 -51 36 -8 3 -42 22 -75 41 -81 47 -213 111 -370 179 -17 7 -45 17 -62 20 -18 4 -35 12 -38 17 -4 5 -15 9 -25 9 -11 0 -34 6 -52 14 -18 8 -60 21 -93 30 -105 29 -247 90 -320 137 -16 10 -37 22 -45 26 -78 35 -298 236 -382 348 -75 99 -105 149 -179 297 -52 104 -103 304 -119 468 -12 122 6 374 29 419 6 11 11 32 11 48 1 15 7 39 15 53 8 14 14 33 15 42 0 17 50 135 71 168 5 8 14 26 20 40 17 40 141 200 212 271 146 150 357 277 512 309 22 5 53 13 68 19 45 17 281 14 346 -5 176 -51 306 -127 407 -236 43 -46 134 -180 134 -197 0 -5 6 -22 14 -38 42 -84 50 -135 50 -303 0 -177 -18 -264 -75 -360 -5 -8 -12 -22 -16 -30 -29 -67 -125 -158 -212 -201 -62 -31 -72 -34 -171 -34 -101 0 -108 1 -168 34 -101 55 -162 139 -162 223 0 75 42 123 155 179 112 55 165 134 165 247 0 253 -260 351 -505 192 -16 -11 -36 -23 -43 -26 -7 -4 -27 -18 -45 -33 -272 -223 -351 -565 -201 -874 8 -16 14 -33 14 -38 0 -33 153 -208 240 -273 273 -203 594 -239 930 -103 41 17 82 36 91 44 8 7 19 13 23 13 4 0 42 26 84 59 245 187 388 448 437 801 28 201 5 464 -51 597 -8 17 -14 38 -14 46 0 9 -6 28 -14 44 -8 15 -31 62 -52 103 -105 212 -296 417 -499 536 -27 16 -59 34 -70 41 -11 7 -27 15 -35 18 -8 4 -28 12 -45 19 -89 39 -174 67 -277 91 -92 21 -476 20 -563 -2z"/> </g></g></svg><h1>Mega Rhexas <small>This worker · candidates, unverified</small></h1></div>
@@ -105,6 +116,28 @@ canvas{width:100%;display:block}
 
 <section class="card s8"><h2>★ Candidates, unverified <span class="r kv" id="cand_kv"></span></h2><div class="cands" id="cands"><div class="empty">No candidates yet. A hit that passes the numeric cuts shows up here as candidates, unverified.</div></div></section>
 <section class="card s4"><h2>Known planets &amp; TOIs recovered</h2><div class="cands" id="known" style="grid-template-columns:1fr"><div class="empty">Recoveries of known planets show up here. They prove the search works.</div></div></section><section class="card s12"><h2>Console <span class="r tools"><input id="flt" placeholder="filter (e.g. TIC, error)"><button class="btn" id="dbg">verbose</button><button class="btn on" id="auto">auto-scroll</button><button class="btn" id="pause">pause</button><button class="btn" id="clr">clear</button><button class="btn" id="expand">expand ▾</button></span></h2><div class="console compact" id="con"></div></section>
+<section class="card s12" id="this-worker"><h2>This worker</h2>
+<div class="worker-bottom">
+<div>
+<div class="life">
+<div><span>Stars searched</span><b id="l_stars">0</b></div>
+<div><span>Batches submitted</span><b id="l_sub">0</b></div>
+<div><span>Batches agreed</span><b id="l_agr">0</b></div>
+<div><span>Batches verified</span><b id="l_ver">0</b></div>
+<div><span>Contributions pending</span><b id="l_pend">0</b></div>
+<div><span>Contributions verified</span><b id="l_cver">0</b></div>
+</div>
+<p class="note">Pending until the coordinator agrees. Verified means it agreed. No coins in this beta.</p>
+</div>
+<div>
+<div class="kv" id="res_kv"></div>
+<div class="bar" title="Cache size against the cap"><i id="cbar"></i></div>
+<div class="kv" id="cache_kv"></div>
+<canvas id="wcpu" height="70" style="margin-top:8px"></canvas>
+<div class="kv" id="conn_kv" style="margin-top:6px"></div>
+</div>
+</div>
+</section>
 
 </div></div>
 <div class="toast" id="toast"></div><div id="modal"><div class="box" id="mbox"></div></div><div id="lightbox" onclick="this.style.display='none'"><img id="lbimg"></div>
@@ -141,7 +174,7 @@ const ok=s.searched-s.errors;setRing('r_ca',ok>0?Math.min(1,s.passed/ok*10):0,ok
 const si={Starting:0,Downloading:0,Searching:1,Filtering:2,Done:4}[s.stage]??0;[0,1,2,3].forEach(i=>{$('st'+i).className='step'+(i<si?' done':i==si?' on':'')});
 $('pipe').textContent=s.coord_line||'';
 $('banner').textContent=s.banner||'';
-const nw=Date.now();if(!window._cpuT||nw-_cpuT>=2000){window._cpuT=nw;CPU.push(s.cpu);if(CPU.length>150)CPU.shift();}plot($('cpuc'),[{x:CPU.map((_,i)=>i),y:CPU,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%',x0:0,x1:149})}
+const nw=Date.now();if(!window._cpuT||nw-_cpuT>=2000){window._cpuT=nw;CPU.push(s.cpu);if(CPU.length>150)CPU.shift();}plot($('cpuc'),[{x:CPU.map((_,i)=>i),y:CPU,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%',x0:0,x1:149});paintWorker(s)}
 function aitoff(ra,dec){let l=(ra>180?ra-360:ra)*Math.PI/180,b=dec*Math.PI/180;l=-l;const a=Math.acos(Math.cos(b)*Math.cos(l/2));const s=a?Math.sin(a)/a:1;return[2*Math.cos(b)*Math.sin(l/2)/s,Math.sin(b)/s]}
 const SKYON=Object.assign({dl:1,se:1,kn:1,np:1,nu:1,nf:1,cx:1},JSON.parse(localStorage.skyOn||'{}')),SKYA={};{const m=location.hash.match(/skyoff=([\w,]+)/);if(m)m[1].split(',').forEach(k=>SKYON[k]=0)}for(const k in SKYON)SKYA[k]=SKYON[k]?1:0;
 document.querySelectorAll('#skyleg span').forEach(s=>{const k=s.dataset.k;s.classList.toggle('off',!SKYON[k]);s.onclick=()=>{SKYON[k]=SKYON[k]?0:1;s.classList.toggle('off',!SKYON[k]);localStorage.skyOn=JSON.stringify(SKYON)}});
@@ -379,4 +412,16 @@ if(m!==HLAST){HLAST=m;$('hb_sde').classList.toggle('on',m=='sde');$('hb_snr').cl
 $('hist_kv').innerHTML=`<b>${fmt(r[0])}</b> stars \u00b7 <b>${fmt(r[1])}</b> above the ${m.toUpperCase()} \u2265 ${r[2]} threshold`+(HPIN?' \u00b7 <span style="color:#ffd166">pinned</span> (click again to resume)':' \u00b7 auto-cycling')}
 function hpin(m){HPIN=HPIN===m?null:m;HT0=performance.now();HLAST=-1;drawHist()}
 $('hb_sde').onclick=()=>hpin('sde');$('hb_snr').onclick=()=>hpin('snr');
-setInterval(drawHist,70);</script></body></html>
+setInterval(drawHist,70);
+function cacheText(n){if(n==null)return '–';if(n<1e6)return (n/1e3).toFixed(0)+' KB';if(n<1e9)return (n/1e6).toFixed(1)+' MB';return (n/1e9).toFixed(2)+' GB'}
+function paintWorker(s){const w=s&&s.worker_panel;if(!w||!$('l_stars'))return;const n=v=>(+v||0).toLocaleString();
+$('l_stars').textContent=n(w.stars_searched);$('l_sub').textContent=n(w.batches_submitted);$('l_agr').textContent=n(w.batches_agreed);$('l_ver').textContent=n(w.batches_verified);$('l_pend').textContent=n(w.contributions_pending);$('l_cver').textContent=n(w.contributions_verified);
+$('res_kv').textContent=(w.procs??'–')+' procs · '+(w.threads??'–')+' threads · '+(w.priority||'–')+' priority'+(w.pid?' · pid '+w.pid:'')+(w.alive?'':' · worker not running');
+const cap=w.max_cache_gb?w.max_cache_gb*1e9:0,used=+w.cache_bytes||0;const bar=$('cbar');bar.style.width=cap?Math.min(100,100*used/cap)+'%':'0%';bar.style.background=cap&&used>cap?'var(--warn)':'';
+$('cache_kv').textContent=cacheText(used)+(w.max_cache_gb!=null?' of '+w.max_cache_gb+' GB cap':'');
+let ys=CPU.filter(v=>v!=null&&!isNaN(v)),xs=ys.map((_,i)=>i);
+if(ys.length===1){xs=[0,1];ys=[ys[0],ys[0]]}
+plot($('wcpu'),[{x:xs,y:ys,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%'});
+const link=w.ok===true?'coordinator connected':w.ok===false?'coordinator unreachable':'coordinator not checked yet';
+$('conn_kv').textContent=link+(w.url?' · '+w.url:'')+(w.detail?' · '+w.detail:'')}
+</script></body></html>

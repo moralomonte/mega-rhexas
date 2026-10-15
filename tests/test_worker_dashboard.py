@@ -441,6 +441,10 @@ def test_page_reuses_the_mission_control_screen():
     assert "★ NEW" not in text
     assert "getImageData" not in text
     assert "/api/cutout" not in text
+    assert text.find('id="con"') < text.find('id="this-worker"')
+    assert "This worker" in text
+    assert "Pending until the coordinator agrees. Verified means it agreed. No coins in this beta." in text
+    assert "GB cap" in text
 
 
 def test_mission_events_follow_the_worker_snapshot(tmp_path):
@@ -458,6 +462,27 @@ def test_mission_events_follow_the_worker_snapshot(tmp_path):
     state = mission_state(snap)
     assert state["stage"] == "Starting"
     assert state["new_counts"]["total"] == 1
+    panel = mission_state({
+        "lifetime": {
+            "stars_searched": 390, "batches_submitted": 2, "batches_agreed": 1,
+            "batches_verified": 1, "contributions_pending": 1, "contributions_verified": 1,
+        },
+        "resources": {
+            "procs": 4, "threads": 2, "priority": "low", "pid": 12, "worker_alive": True,
+            "cache_bytes": 2_600_000, "max_cache_gb": 20, "cpu_percent": 15,
+        },
+        "connection": {"ok": True, "url": "https://coord.example/v1", "detail": "heartbeat ok"},
+        "batch": {"stage": "searching"},
+    })["worker_panel"]
+    assert panel["stars_searched"] == 390
+    assert panel["batches_submitted"] == 2
+    assert panel["batches_agreed"] == 1
+    assert panel["batches_verified"] == 1
+    assert panel["contributions_pending"] == 1
+    assert panel["contributions_verified"] == 1
+    assert panel["procs"] == 4 and panel["threads"] == 2 and panel["priority"] == "low"
+    assert panel["max_cache_gb"] == 20
+    assert panel["ok"] is True
     assert "coordinator" in state["coord_line"]
     assert "discovery" not in json.dumps(state).lower()
     lc = mission_lc(snap["current_star"])
