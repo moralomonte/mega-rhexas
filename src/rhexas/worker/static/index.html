@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="/img/triskelion.svg">
+<title>Mega Rhexas · This worker</title>
+<style>
+:root{--bg:#05060f;--glass:rgba(255,255,255,.045);--bd:rgba(255,255,255,.09);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--c3:#f472b6;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--gold:#ffd166}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+#stars{position:fixed;inset:0;z-index:-1}
+.wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+header{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:12px}
+.trisk{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 8px #818cf866);transition:filter .4s}
+.trisk.spin{animation:trspin 12s linear infinite}
+.logo:hover .trisk{filter:drop-shadow(0 0 14px #a5b4fcaa)}
+@keyframes trspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.trisk{animation:none!important}.step.on::after{animation:none!important}}
+h1{font-size:20px;margin:0;letter-spacing:.3px}
+h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
+.pill{padding:6px 14px;border-radius:999px;font-weight:600;font-size:13px;border:1px solid var(--bd);background:var(--glass);display:flex;gap:8px;align-items:center}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mut);box-shadow:0 0 10px var(--mut)}
+.dot.on{background:var(--ok);box-shadow:0 0 10px var(--ok);animation:pulse 1.6s infinite}
+.dot.wait{background:var(--warn);box-shadow:0 0 10px var(--warn)}
+.dot.bad{background:var(--err);box-shadow:0 0 10px var(--err)}
+@keyframes pulse{50%{opacity:.35}}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
+.stat{background:var(--glass);border:1px solid var(--bd);border-radius:14px;padding:7px 14px;min-width:96px;backdrop-filter:blur(10px)}
+.stat b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;margin-top:16px}
+.card{background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:20px;padding:16px 18px;backdrop-filter:blur(14px);box-shadow:0 10px 40px rgba(0,0,0,.35);min-width:0}
+.card h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:1.4px;color:var(--mut);font-weight:600;display:flex;align-items:center;gap:8px}
+.card h2 .r{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500}
+.s4{grid-column:span 4}.s5{grid-column:span 5}.s7{grid-column:span 7}.s8{grid-column:span 8}.s12{grid-column:span 12}
+@media(max-width:1100px){.grid{grid-template-columns:minmax(0,1fr)}.s4,.s5,.s7,.s8,.s12{grid-column:1/-1}}
+.kv{font-size:12px;color:var(--mut)}.kv b{color:var(--tx);font-weight:600}
+.now{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+.now .tic{font-size:22px;font-weight:700;background:linear-gradient(90deg,#fff,var(--c2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.tag{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid rgba(255,209,102,.45);color:#111;background:var(--gold);font-weight:700}
+.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .6s ease}
+.steps{display:flex;gap:6px;margin-top:12px}
+.step{flex:1;height:6px;border-radius:4px;background:rgba(255,255,255,.08);position:relative;overflow:hidden}
+.step.on::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,var(--c1),var(--c2));animation:sh 2s linear infinite;background-size:200% 100%}
+.step.done{background:var(--ok)}
+@keyframes sh{to{background-position:-200% 0}}
+.stepl{display:flex;gap:6px;font-size:11px;color:var(--mut);margin-top:4px}
+.stepl div{flex:1;text-align:center}
+canvas{width:100%;display:block}
+.plots{display:grid;grid-template-columns:1.4fr .8fr;gap:12px}
+@media(max-width:700px){.plots{grid-template-columns:1fr}.wrap{padding:10px}.stats{margin-left:0;width:100%}.stat{min-width:0;flex:1}}
+.cands{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;max-height:560px;overflow:auto;padding:4px}
+.cc{border-radius:16px;padding:12px;background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.25)}
+.cc h3{margin:0;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cc .m{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 8px;margin-top:8px;font-size:12px}
+.cc .m div span{display:block;color:var(--mut);font-size:10px;text-transform:uppercase}
+.mini{height:72px;margin-top:6px}
+.empty{color:var(--mut);text-align:center;padding:28px 10px;font-size:13px}
+.life{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.life div{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:12px;padding:8px 10px}
+.life b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.life span{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+.note{font-size:12px;color:var(--mut);margin-top:10px}
+.console{background:#03040a;border:1px solid var(--bd);border-radius:14px;height:280px;overflow:auto;font:12.5px/1.55 "Cascadia Code",Consolas,monospace;padding:10px 12px}
+.console .l{white-space:pre-wrap;word-break:break-word;color:#cdd5ff}
+.tools{display:flex;gap:8px;align-items:center}
+.btn{background:var(--glass);border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:5px 11px;font:inherit;font-size:12px;cursor:pointer}
+.btn.on{background:#7c5cff33;border-color:#7c5cff}
+.foot{margin-top:14px;font-size:12px;color:var(--mut)}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="wrap">
+<header>
+  <div class="logo">
+    <img class="trisk" id="logo" src="/img/triskelion.svg" alt="">
+    <h1>Mega Rhexas <small id="sub">This computer · candidates, unverified</small></h1>
+  </div>
+  <div class="pill"><span class="dot" id="dot"></span><span id="stage">Connecting…</span></div>
+  <div class="pill" id="proj">Project –</div>
+  <div class="stats">
+    <div class="stat"><span id="done_l">Stars</span><b id="s_done">–</b></div>
+    <div class="stat"><span id="rate_l">Stars/sec</span><b id="s_rate">–</b></div>
+    <div class="stat"><span>ETA</span><b id="s_eta">–</b></div>
+    <div class="stat"><span>Cache</span><b id="s_cache">–</b></div>
+    <div class="stat"><span>CPU</span><b id="s_cpu">–</b></div>
+    <div class="stat"><span>Procs</span><b id="s_procs">–</b></div>
+  </div>
+</header>
+<p class="note" id="banner"></p>
+<div class="grid">
+  <section class="card s4">
+    <h2>Current batch <span class="r kv" id="batch_r"></span></h2>
+    <div class="kv" id="batch_kv">Waiting for a batch.</div>
+    <div class="bar" title="Progress in this batch"><i id="bar"></i></div>
+    <div class="kv" id="batch_nums"></div>
+    <div class="steps"><div class="step" id="st0"></div><div class="step" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
+    <div class="stepl"><div>Download</div><div>BLS search</div><div>Filter</div><div>Upload</div></div>
+  </section>
+  <section class="card s8">
+    <h2>Now processing <span class="r kv" id="star_r"></span></h2>
+    <div class="now"><span class="tic" id="lc_tic">Waiting for a star…</span><span class="tag" id="lc_tag" hidden>candidates, unverified</span></div>
+    <div class="plots">
+      <div>
+        <div class="kv">Light curve of the star in progress</div>
+        <canvas id="lcc" height="180"></canvas>
+      </div>
+      <div>
+        <div class="kv">Folded at the best period</div>
+        <canvas id="fdc" height="180"></canvas>
+      </div>
+    </div>
+  </section>
+  <section class="card s8">
+    <h2>Candidates, unverified <span class="r kv" id="cand_n"></span></h2>
+    <div class="cands" id="cands"><div class="empty">No candidates yet. A hit that passes the numeric cuts shows up here as candidates, unverified.</div></div>
+    <p class="note">These are search hits on this computer. They are not confirmed planets, and another worker still has to agree before the coordinator keeps a batch.</p>
+  </section>
+  <section class="card s4">
+    <h2>This worker</h2>
+    <div class="life">
+      <div><span>Stars searched</span><b id="l_stars">0</b></div>
+      <div><span>Batches submitted</span><b id="l_sub">0</b></div>
+      <div><span>Batches agreed</span><b id="l_agr">0</b></div>
+      <div><span>Batches verified</span><b id="l_ver">0</b></div>
+      <div><span>Contributions pending</span><b id="l_pend">0</b></div>
+      <div><span>Contributions verified</span><b id="l_cver">0</b></div>
+    </div>
+    <p class="note">Pending until the coordinator agrees. Verified means it agreed. No coins in this beta.</p>
+    <div class="kv" id="res_kv" style="margin-top:8px"></div>
+    <div class="bar" title="Cache size against the cap"><i id="cbar"></i></div>
+    <div class="kv" id="cache_kv"></div>
+    <canvas id="cpuc" height="70" style="margin-top:8px"></canvas>
+    <div class="kv" id="conn_kv" style="margin-top:6px"></div>
+  </section>
+  <section class="card s12">
+    <h2>Console <span class="r tools"><button class="btn on" id="auto">auto-scroll</button><button class="btn" id="pause">pause</button></span></h2>
+    <div class="console" id="con"></div>
+  </section>
+</div>
+<p class="foot">This page only reads files in the worker cache on this computer. It does not contact the coordinator, and the invite is not shown here.</p>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+(() => {
+  const c = $("stars"), x = c.getContext("2d");
+  let S = [];
+  function rs(){
+    c.width = innerWidth; c.height = innerHeight;
+    S = Array.from({length: 140}, () => ({x: Math.random()*c.width, y: Math.random()*c.height, r: Math.random()*1.3, a: Math.random(), s: .002+Math.random()*.01}));
+  }
+  rs(); addEventListener("resize", rs);
+  function frame(){
+    const g = x.createRadialGradient(c.width*.8, 0, 0, c.width*.8, 0, c.width);
+    g.addColorStop(0, "#1a1040"); g.addColorStop(.5, "#070818"); g.addColorStop(1, "#04050c");
+    x.fillStyle = g; x.fillRect(0, 0, c.width, c.height);
+    for (const s of S){
+      if (!reduce) s.a += s.s;
+      x.globalAlpha = .3 + .7*Math.abs(Math.sin(s.a));
+      x.fillStyle = "#fff"; x.beginPath(); x.arc(s.x, s.y, s.r, 0, 7); x.fill();
+    }
+    x.globalAlpha = 1;
+    if (!reduce) requestAnimationFrame(frame);
+  }
+  frame();
+})();
+function esc(s){return String(s ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));}
+function num(v, d){return v == null || v === "" || Number.isNaN(+v) ? "–" : (+v).toFixed(d);}
+function eta(min){
+  if (min == null || min === "") return "–";
+  if (min < 1) return "<1 min";
+  if (min > 90) return (min/60).toFixed(1) + " h";
+  return Math.round(min) + " min";
+}
+function bytes(n){
+  if (n == null) return "–";
+  if (n < 1e6) return (n/1e3).toFixed(0) + " KB";
+  if (n < 1e9) return (n/1e6).toFixed(1) + " MB";
+  return (n/1e9).toFixed(2) + " GB";
+}
+function ppm(d){return d == null ? "–" : Math.round(d*1e6).toLocaleString() + " ppm";}
+function setup(cv){
+  const w = cv.clientWidth || 300, h = +cv.getAttribute("height");
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  cv.style.height = h + "px"; cv.width = w*dpr; cv.height = h*dpr;
+  const x = cv.getContext("2d"); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [x, w, h];
+}
+function extent(ys){
+  const s = ys.filter(v => Number.isFinite(v)).slice().sort((a,b) => a-b);
+  if (!s.length) return [0, 1];
+  let lo = s[Math.floor(s.length*.02)], hi = s[Math.max(0, Math.ceil(s.length*.98)-1)];
+  if (hi === lo){ hi += 1e-3; lo -= 1e-3; }
+  const pad = (hi-lo)*.12; return [lo-pad, hi+pad];
+}
+function plot(cv, xs, ys, opt){
+  const [x, w, h] = setup(cv);
+  x.clearRect(0, 0, w, h);
+  if (!xs || !xs.length){
+    x.fillStyle = "#8b93b8"; x.font = "12px Segoe UI";
+    x.fillText(opt.empty || "no curve yet", 12, h/2);
+    return;
+  }
+  const P = {l: 46, r: 8, t: 8, b: 22};
+  const x0 = opt.x0 ?? Math.min(...xs), x1 = opt.x1 ?? Math.max(...xs);
+  const [y0, y1] = opt.y0 != null ? [opt.y0, opt.y1] : extent(ys);
+  const X = v => P.l + (w-P.l-P.r) * ((v-x0) / ((x1-x0) || 1));
+  const Y = v => h-P.b - (h-P.t-P.b) * ((v-y0) / ((y1-y0) || 1));
+  x.strokeStyle = "rgba(255,255,255,.06)"; x.fillStyle = "#6b7398"; x.font = "10px Segoe UI";
+  for (let i = 0; i <= 3; i++){
+    const v = y0 + (y1-y0)*i/3, yy = Y(v);
+    x.beginPath(); x.moveTo(P.l, yy); x.lineTo(w-P.r, yy); x.stroke();
+    x.fillText(opt.yf ? opt.yf(v) : v.toFixed(4), 2, yy+3);
+  }
+  x.save(); x.beginPath(); x.rect(P.l, P.t, w-P.l-P.r, h-P.t-P.b); x.clip();
+  x.strokeStyle = opt.c || "#22d3ee"; x.lineWidth = opt.lw || 1.4;
+  x.shadowColor = opt.c || "#22d3ee"; x.shadowBlur = opt.glow ?? 8;
+  x.beginPath();
+  xs.forEach((v,i) => i ? x.lineTo(X(v), Y(ys[i])) : x.moveTo(X(v), Y(ys[i])));
+  x.stroke();
+  if (opt.mark != null){
+    x.shadowBlur = 0; x.setLineDash([4,4]); x.strokeStyle = opt.markc || "#ffd166";
+    x.beginPath(); x.moveTo(X(opt.mark), P.t); x.lineTo(X(opt.mark), h-P.b); x.stroke();
+  }
+  x.restore();
+}
+const STAGES = ["claimed","downloading","downloaded","searching","searched","filtering","filtered","uploading","uploaded","waiting"];
+function stepIndex(stage){
+  if (stage === "uploaded") return 4;
+  if (stage === "uploading" || stage === "filtered") return 3;
+  if (stage === "filtering" || stage === "searched") return 2;
+  if (stage === "searching" || stage === "downloaded") return 1;
+  if (stage === "downloading" || stage === "claimed") return 0;
+  return -1;
+}
+const CPU = [];
+let logSize = -1, paused = false, pin = true, cardSig = "";
+$("pause").onclick = () => { paused = !paused; $("pause").classList.toggle("on", paused); $("pause").textContent = paused ? "paused" : "pause"; };
+$("auto").onclick = () => { pin = !pin; $("auto").classList.toggle("on", pin); };
+function drawCards(list){
+  const root = $("cands");
+  if (!list.length){
+    root.innerHTML = '<div class="empty">No candidates yet. A hit that passes the numeric cuts shows up here as candidates, unverified.</div>';
+    return;
+  }
+  root.innerHTML = list.map((c,i) => `<article class="cc"><h3>TIC ${Number(c.tic)||0} <span class="tag">${esc(c.label || "candidates, unverified")}</span></h3>
+    <div class="m"><div><span>Period</span><b>${esc(num(c.period,4))} d</b></div><div><span>Depth</span><b>${esc(ppm(c.depth))}</b></div><div><span>SNR</span><b>${esc(num(c.snr,1))}</b></div></div>
+    <canvas class="mini" data-i="${i}" height="72"></canvas>
+    <div class="kv">SDE ${esc(num(c.sde,1))} · sector ${Number(c.sector)||0} · unit ${Number(c.unit_id)||0}</div></article>`).join("");
+  root.querySelectorAll("canvas").forEach(cv => {
+    const c = list[+cv.dataset.i];
+    plot(cv, c.phase || [], c.folded || [], {c:"#ffd166", glow:6, lw:1.3, x0:-0.5, x1:0.5, mark:0, empty:"no folded curve stored", yf:v => v.toFixed(3)});
+  });
+}
+function render(s){
+  s = s || {};
+  const b = s.batch || {};
+  const star = s.current_star || {};
+  const life = s.lifetime || {};
+  const res = s.resources || {};
+  const conn = s.connection || {};
+  const stage = b.stage || (res.worker_alive ? "idle" : "no worker");
+  $("stage").textContent = stage;
+  $("logo").classList.toggle("spin", /download|search/i.test(stage) && !reduce);
+  const dot = $("dot");
+  dot.className = "dot" + (conn.ok === true ? " on" : conn.ok === false ? " bad" : " wait");
+  const project = b.project || "–";
+  $("proj").textContent = "Project " + project;
+  const total = +b.stars_total || 0, done = +b.stars_done || 0;
+  const kind = b.progress_kind === "files" ? "Files" : "Stars";
+  $("done_l").textContent = kind;
+  $("s_done").textContent = total ? done.toLocaleString() + " / " + total.toLocaleString() : (done ? done.toLocaleString() : "–");
+  $("rate_l").textContent = b.progress_kind === "files" ? "Files/sec" : "Stars/sec";
+  $("s_rate").textContent = b.per_s == null ? "–" : (+b.per_s).toFixed(2);
+  $("s_eta").textContent = eta(b.eta_min);
+  $("s_cache").textContent = bytes(res.cache_bytes);
+  $("s_cpu").textContent = res.cpu_percent == null ? "–" : Math.round(res.cpu_percent) + "%";
+  $("s_procs").textContent = (res.procs ?? "–") + "×" + (res.threads ?? "–");
+  const alive = !!res.worker_alive;
+  $("banner").textContent = alive ? "" : "No worker process is attached to this cache right now. Leave `rhexas worker` running and this page will follow it.";
+  $("batch_r").textContent = b.sector ? "sector " + b.sector : "";
+  const bits = [];
+  if (b.unit_id) bits.push("unit " + b.unit_id);
+  if (b.assignment_id) bits.push("assignment " + b.assignment_id);
+  if (b.active === false && stage !== "uploaded") bits.push("not leased");
+  $("batch_kv").textContent = bits.length ? bits.join(" · ") + " · " + project : "Waiting for a batch from the coordinator.";
+  const frac = total ? Math.max(0, Math.min(1, done/total)) : 0;
+  $("bar").style.width = (frac*100) + "%";
+  $("batch_nums").textContent = (b.per_s == null ? "" : (+b.per_s).toFixed(2) + " " + kind.toLowerCase() + "/s · ") + "ETA " + eta(b.eta_min);
+  const si = stepIndex(stage);
+  for (let i = 0; i < 4; i++) $("st"+i).className = "step" + (i < si ? " done" : i === si ? " on" : "");
+  const tic = star.tic;
+  $("lc_tic").textContent = tic ? "TIC " + tic : "Waiting for a star…";
+  const showTag = star.status === "done" && star.period != null && !star.error;
+  $("lc_tag").hidden = !showTag;
+  const meta = [];
+  if (star.status) meta.push(star.status);
+  if (star.period != null) meta.push("P " + num(star.period, 4) + " d");
+  if (star.depth != null) meta.push(ppm(star.depth));
+  if (star.snr != null) meta.push("SNR " + num(star.snr, 1));
+  if (star.sde != null) meta.push("SDE " + num(star.sde, 1));
+  if (star.error) meta.push(star.error);
+  $("star_r").textContent = meta.join(" · ");
+  plot($("lcc"), star.time || [], star.flux || [], {c:"#22d3ee", empty: star.tic ? "reading this star…" : "no star yet", yf:v => v.toFixed(4)});
+  plot($("fdc"), star.phase || [], star.folded || [], {c:"#f472b6", x0:-0.5, x1:0.5, mark:0, empty:"folded curve appears when the search finishes", yf:v => v.toFixed(4)});
+  const list = s.candidates || [];
+  $("cand_n").textContent = list.length ? list.length + " on this worker" : "";
+  const sig = JSON.stringify(list.map(c => [c.tic, c.unit_id, c.sector, c.period, c.snr, (c.phase||[]).length]));
+  if (sig !== cardSig){ cardSig = sig; drawCards(list); }
+  $("l_stars").textContent = (life.stars_searched||0).toLocaleString();
+  $("l_sub").textContent = life.batches_submitted||0;
+  $("l_agr").textContent = life.batches_agreed||0;
+  $("l_ver").textContent = life.batches_verified||0;
+  $("l_pend").textContent = life.contributions_pending||0;
+  $("l_cver").textContent = life.contributions_verified||0;
+  $("res_kv").textContent = (res.procs ?? "–") + " procs · " + (res.threads ?? "–") + " threads · " + (res.priority || "–") + " priority"
+    + (res.pid ? " · pid " + res.pid : "") + (alive ? "" : " · worker not running");
+  const cap = res.max_cache_gb ? res.max_cache_gb * 1e9 : 0;
+  const used = res.cache_bytes || 0;
+  $("cbar").style.width = cap ? Math.min(100, 100*used/cap) + "%" : "0%";
+  $("cbar").style.background = cap && used > cap ? "var(--warn)" : "";
+  $("cache_kv").textContent = bytes(used) + (res.max_cache_gb ? " of " + res.max_cache_gb + " GB cap" : "");
+  if (res.cpu_percent != null){
+    CPU.push(+res.cpu_percent);
+    if (CPU.length > 120) CPU.shift();
+  }
+  plot($("cpuc"), CPU.map((_,i) => i), CPU, {c:"#22d3ee", glow:8, lw:1.5, y0:0, y1:100, x0:0, x1:119, yf:v => Math.round(v)+"%", empty:"CPU"});
+  const link = conn.ok === true ? "coordinator connected" : conn.ok === false ? "coordinator unreachable" : "coordinator not checked yet";
+  $("conn_kv").textContent = link + (conn.url ? " · " + conn.url : "") + (conn.detail ? " · " + conn.detail : "");
+  if (!paused && s.log_size !== logSize){
+    logSize = s.log_size;
+    const lines = s.log_tail || [];
+    $("con").innerHTML = lines.map(line => `<div class="l">${esc(line)}</div>`).join("") || '<div class="l">log is empty</div>';
+    if (pin) $("con").scrollTop = $("con").scrollHeight;
+  }
+}
+function poll(){
+  fetch("/api/state").then(r => r.json()).then(render).catch(() => {});
+}
+poll();
+let es, fell = false;
+function fallBack(){
+  if (fell) return;
+  fell = true;
+  try { es.close(); } catch (e) {}
+  setInterval(poll, 2000);
+}
+try {
+  es = new EventSource("/events");
+  es.onmessage = ev => { try { render(JSON.parse(ev.data)); } catch (e) {} };
+  es.onerror = fallBack;
+} catch (e) {
+  fallBack();
+}
+</script>
+</body>
+</html>

@@ -290,11 +290,29 @@ sciences are not in this beta.
 
 ```bash
 rhexas worker --token-file token.txt
+rhexas worker --token-file token.txt --dashboard
+rhexas worker-dashboard
 rhexas coord init
 rhexas coord enroll --sector 107 --fetch
 rhexas coord token create ada
 rhexas coord serve
 ```
+
+`rhexas worker --dashboard` runs the worker and a live page for **this** machine, then opens a browser. `rhexas worker-dashboard` attaches to a worker that is already running. Both bind to `127.0.0.1` and port `8080`. If `8080` is taken, the next free port is used. The page does not call the coordinator, and it never shows the invite token.
+
+```bash
+rhexas worker --token-file token.txt --dashboard --dashboard-port 8093
+rhexas worker-dashboard --no-browser
+rhexas worker-dashboard --dashboard-host 0.0.0.0
+```
+
+`--dashboard-host` is opt-in. Leave it unset and the page is only reachable on this computer. Set it (for example `0.0.0.0`, or a LAN address) when another machine on your network should open the page.
+
+The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page only reads those. It shows the batch in progress (project, sector, unit id, stars done and total, ETA, throughput), the light curve of the star being searched and the folded curve when a period is found, this worker's hits with period, depth, and SNR, lifetime counts, cache use against `--max-cache-gb`, CPU and the process and thread counts, whether the coordinator connection is up, and a console tail of the worker log. Updates arrive over server-sent events, with polling if that stream drops.
+
+Hits are labeled **candidates, unverified**. They are not confirmed planets. Lifetime counts are stars searched, batches submitted, batches the coordinator agreed, batches it verified, and contributions still pending versus verified. Those contribution states are there for a future account. This beta has no coins.
+
+The sector mission-control page (`rhexas dashboard`) is a different server. It reads `results/sNNNN/` for a local pipeline run. The worker page reads only the worker cache.
 
 Setup for the server is [DEPLOY.md](DEPLOY.md). Setup for a friend's PC is [FRIENDS.md](FRIENDS.md).
 The worker's disk cap and process count are separate from the pipeline defaults above.
@@ -307,7 +325,7 @@ pyproject.toml          package metadata and pinned dependencies
 rhexas.toml             config, including dashboard sector ports and the coordinator URL
 src/rhexas/             importable package and the rhexas CLI
 src/rhexas/coord/       friends-beta coordinator (SQLite, status page)
-src/rhexas/worker/      friends-beta worker loop
+src/rhexas/worker/      friends-beta worker loop and the local worker dashboard
 deploy/                 Dockerfile, Caddy, systemd unit, example coord.toml
 src/*.ps1               thin wrappers around the CLI
 dashboard/              SSE server and static UI

@@ -10,7 +10,7 @@ import csv
 import time
 import warnings
 from glob import glob
-from multiprocessing import Pool
+from multiprocessing import Pool, get_context
 from pathlib import Path
 
 import numpy as np
@@ -23,11 +23,30 @@ FIELDS = ["tic", "file", "period", "t0", "duration", "depth", "depth_err", "snr"
 
 # Workers inherit this via the pool initializer (spawn-safe on Windows).
 _ACTIVE: SearchConfig | None = None
+# Optional local-dashboard payload. None for a normal ``rhexas search`` (no extra I/O).
+_LIVE: dict | None = None
 
 
-def _pool_init(search: SearchConfig) -> None:
-    global _ACTIVE
+def _pool_init(search: SearchConfig, live: dict | None = None) -> None:
+    global _ACTIVE, _LIVE
     _ACTIVE = search
+    _LIVE = live
+
+
+def _installed_live():
+    """Dashboard payload installed in this process by the pool initializer."""
+    return _LIVE
+
+
+def _publish_live(row: dict, t, y, *, processing: bool) -> None:
+    """Tell a worker dashboard which star this process is on. Never fails the search."""
+    if not _LIVE:
+        return
+    try:
+        from rhexas.worker.live import publish_star
+        publish_star(_LIVE, row, t, y, processing=processing)
+    except Exception:
+        return
 
 
 def bls_metrics(t, y, dy, search: SearchConfig | None = None) -> dict:
@@ -64,6 +83,7 @@ def analyze(path):
     import lightkurve as lk
     s = _ACTIVE or SearchConfig()
     row = {"file": Path(path).name}
+    t = y = None
     try:
         lc = lk.read(path, flux_column="pdcsap_flux", quality_bitmask="default")
         row["tic"] = int(lc.meta.get("TICID") or lc.meta.get("OBJECT", "0").split()[-1])
@@ -74,9 +94,13 @@ def analyze(path):
         t = lc.time.value
         y = lc.flux.value
         dy = lc.flux_err.value
+        _publish_live(row, t, y, processing=True)
         row.update(bls_metrics(t, y, dy, s))
     except Exception as e:
         row["error"] = str(e)[:200]
+        _publish_live(row, t, y, processing=False)
+        return row
+    _publish_live(row, t, y, processing=False)
     return row
 
 
@@ -94,7 +118,7 @@ def list_lightcurves(cfg: Config, *, tics: set[int] | None, limit: int) -> list[
 
 
 def run(cfg: Config, *, procs: int | None = None, limit: int = 0, out: str = "bls_raw.csv",
-        tics: set[int] | None = None) -> int:
+        tics: set[int] | None = None, live: dict | None = None, on_row=None) -> int:
     warnings.filterwarnings("ignore")
     procs = cfg.search.procs if procs is None else procs
     cfg.sector_results.mkdir(parents=True, exist_ok=True)
@@ -114,12 +138,24 @@ def run(cfg: Config, *, procs: int | None = None, limit: int = 0, out: str = "bl
         print("search finished", flush=True)
         return 0
     t0 = time.time()
-    with open(dest, "a", newline="") as f, Pool(procs, initializer=_pool_init, initargs=(cfg.search,)) as pool:
+    # A normal search keeps the platform default (fork on Linux). The worker
+    # dashboard path uses spawn so this process's open log and sqlite handles
+    # are not inherited; forking with a sqlite connection open can corrupt it.
+    if live is None:
+        pool = Pool(procs, initializer=_pool_init, initargs=(cfg.search,))
+    else:
+        pool = get_context("spawn").Pool(procs, initializer=_pool_init, initargs=(cfg.search, live))
+    with open(dest, "a", newline="") as f, pool:
         w = csv.DictWriter(f, FIELDS)
         if new:
             w.writeheader()
         for k, row in enumerate(pool.imap_unordered(analyze, todo, chunksize=4), 1):
             w.writerow(row)
+            if on_row is not None:
+                try:
+                    on_row(k, len(todo), row, time.time() - t0)
+                except Exception:
+                    pass
             if k % 100 == 0 or k == len(todo):
                 f.flush()
                 el = time.time() - t0

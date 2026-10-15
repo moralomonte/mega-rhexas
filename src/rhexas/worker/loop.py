@@ -202,17 +202,12 @@ def default_download(cfg: Config, tics) -> int:
     return code
 
 
-def default_search(cfg: Config, tics, procs: int) -> int:
-    from rhexas.search import run
-    return run(cfg, procs=procs, tics=set(tics))
-
-
 def default_filter(cfg: Config, tics) -> int:
     from rhexas.filter import run
     return run(cfg, plots=0, tics=set(tics))
 
 
-def start_heartbeat(client, assignment_id: int, interval: float):
+def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None):
     """Ping the coordinator until the returned event is set. ``interval <= 0`` disables it."""
     if interval <= 0:
         return None
@@ -225,9 +220,52 @@ def start_heartbeat(client, assignment_id: int, interval: float):
                 client.heartbeat(assignment_id)
             except Exception as exc:
                 print(f"heartbeat failed: {exc}", flush=True)
+                if on_result is not None:
+                    try:
+                        on_result(False, "heartbeat failed")
+                    except Exception:
+                        pass
+                continue
+            if on_result is not None:
+                try:
+                    on_result(True, "connected")
+                except Exception:
+                    pass
 
     threading.Thread(target=loop, name="rhexas-heartbeat", daemon=True).start()
     return stop
+
+
+class _Quiet:
+    """Stand-in when the local dashboard file cannot be opened. Every call is a no-op."""
+
+    def __getattr__(self, name):
+        def _noop(*args, **kwargs):
+            return None
+        return _noop
+
+
+def _live_call(live, name: str, *args, **kwargs):
+    """Dashboard writes must not fail a batch."""
+    fn = getattr(live, name, None)
+    if fn is None:
+        return None
+    try:
+        return fn(*args, **kwargs)
+    except Exception:
+        return None
+
+
+class _SearchHooks:
+    """Parent-only. The pool receives a plain dict, not this closure."""
+
+    current = None
+
+
+def default_search(cfg: Config, tics, procs: int) -> int:
+    from rhexas.search import run
+    hooks = _SearchHooks.current or {}
+    return run(cfg, procs=procs, tics=set(tics), live=hooks.get("live"), on_row=hooks.get("on_row"))
 
 
 def _next_assignment(client, cache: Path):
@@ -260,8 +298,32 @@ def _advance(path: Path, state: dict, stage: str) -> dict:
     return state
 
 
-def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt) -> None:
+def _watch_downloads(live, folder: Path, total: int, stop: threading.Event) -> None:
+    """Count FITS files already on disk so the dashboard can move during a download."""
+    started = time.time()
+    while not stop.is_set():
+        try:
+            found = sum(1 for path in Path(folder).glob("*lc.fits") if path.is_file())
+        except OSError:
+            found = 0
+        if stop.is_set():
+            return
+        elapsed = time.time() - started
+        rate = (found / elapsed) if elapsed >= 1 and found else None
+        eta = ((total - found) / rate / 60.0) if rate else None
+        _live_call(
+            live, "update_batch", stage="downloading", progress_kind="files",
+            stars_done=min(found, total), stars_total=total,
+            per_s=round(rate, 3) if rate else None,
+            eta_min=round(eta, 1) if eta is not None else None,
+        )
+        if stop.wait(2.0):
+            return
+
+
+def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
+    live = live or _Quiet()
     path = _state_path(cache)
     state = _read_state(path) or {**assignment, "stage": "claimed"}
     if state.get("assignment_id") != assignment["assignment_id"]:
@@ -269,28 +331,119 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
     ucfg = unit_config(cfg, assignment, cache)
     tics = [int(tic) for tic in assignment["tics"]]
     tic_set = set(tics)
+    n_tics = int(assignment.get("n_tics") or len(tics))
     stage = state.get("stage") or "claimed"
+    _live_call(live, "begin_batch", assignment, stage)
     if stage == "claimed":
-        ensure_space(cache, cfg)
-        download(ucfg, tic_set)
+        _live_call(
+            live, "update_batch", stage="downloading", progress_kind="files",
+            stars_done=0, stars_total=n_tics, per_s=None, eta_min=None,
+        )
+        stop_watch = threading.Event()
+        watch = threading.Thread(
+            target=_watch_downloads, args=(live, ucfg.sector_data, n_tics, stop_watch),
+            name="rhexas-download-watch", daemon=True,
+        )
+        watch.start()
+        try:
+            ensure_space(cache, cfg)
+            download(ucfg, tic_set)
+        finally:
+            stop_watch.set()
+            watch.join(timeout=2.0)
         state = _advance(path, state, "downloaded")
         stage = "downloaded"
     if stage == "downloaded":
-        search(ucfg, tic_set, ucfg.search.procs)
+        _live_call(
+            live, "update_batch", stage="searching", progress_kind="stars",
+            stars_total=n_tics, per_s=None, eta_min=None,
+        )
+        spec = None
+        try:
+            from .live import live_spec
+            spec = live_spec(cache, cfg.filt, assignment)
+        except Exception:
+            spec = None
+
+        def on_row(k, todo, row, elapsed):
+            done = (n_tics - todo) + k if todo <= n_tics else k
+            rate = (k / elapsed) if elapsed > 0 else 0.0
+            eta = ((todo - k) / rate / 60.0) if rate > 0 else None
+            _live_call(
+                live, "update_batch", stage="searching", progress_kind="stars",
+                stars_done=done, stars_total=n_tics,
+                per_s=round(rate, 3) if rate else None,
+                eta_min=round(eta, 1) if eta is not None else None,
+            )
+
+        _SearchHooks.current = {"live": spec, "on_row": on_row}
+        try:
+            search(ucfg, tic_set, ucfg.search.procs)
+        finally:
+            _SearchHooks.current = None
         state = _advance(path, state, "searched")
         stage = "searched"
+        _live_call(
+            live, "update_batch", stage="searched", progress_kind="stars",
+            stars_done=n_tics, stars_total=n_tics, eta_min=0,
+        )
     if stage == "searched":
+        _live_call(live, "update_batch", stage="filtering", progress_kind="stars", eta_min=0, per_s=None)
         filt(ucfg, tic_set)
         state = _advance(path, state, "filtered")
         stage = "filtered"
     if stage == "filtered":
         stars = read_stars(ucfg.sector_results, tics)
         candidates = read_candidates(ucfg.sector_results)
-        client.submit(assignment["assignment_id"], stars, candidates)
+        _live_call(live, "record_candidates", assignment, candidates)
+        _live_call(live, "update_batch", stage="uploading", progress_kind="stars", eta_min=0, per_s=None)
+        result = client.submit(assignment["assignment_id"], stars, candidates)
+        _live_call(live, "note_submit", result if isinstance(result, dict) else {}, len(stars))
         delete_lightcurves(ucfg.sector_data, tic_set)
         shutil.rmtree(ucfg.results_root, ignore_errors=True)
         _clear_state(path)
         enforce_cache_cap(cache / "data", int(cfg.worker.max_cache_gb * 1e9))
+        _live_call(
+            live, "update_batch", stage="uploaded", active=False, progress_kind="stars",
+            stars_done=n_tics, stars_total=n_tics, eta_min=0, per_s=None,
+        )
+
+
+def _open_local(cfg: Config, cache: Path):
+    """Dashboard state and a redacted log. The worker keeps going if either cannot be opened."""
+    old_out, old_err = sys.stdout, sys.stderr
+    try:
+        from .live import Store, Tee, WorkerLog
+        live = Store(cache)
+    except Exception as exc:
+        print(f"local dashboard state disabled: {exc}", flush=True)
+        return _Quiet(), None, old_out, old_err
+    log = None
+    try:
+        log = WorkerLog(cache)
+        sys.stdout = Tee(old_out, log)
+        sys.stderr = Tee(old_err, log)
+    except Exception:
+        log = None
+    _live_call(
+        live, "set_worker",
+        pid=os.getpid(), procs=cfg.worker.procs, threads=cfg.worker.threads,
+        priority=cfg.worker.priority, max_cache_gb=cfg.worker.max_cache_gb,
+        coordinator_url=cfg.worker.coordinator_url,
+    )
+    _live_call(live, "set_connection", None, "connecting")
+    return live, log, old_out, old_err
+
+
+def _close_local(live, log, old_out, old_err) -> None:
+    _live_call(live, "set_pid", 0)
+    sys.stdout = old_out
+    sys.stderr = old_err
+    if log is not None:
+        try:
+            log.close()
+        except Exception:
+            pass
 
 
 def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, search=None, filt=None,
@@ -304,79 +457,93 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
     download = download or default_download
     search = search or default_search
     filt = filt or default_filter
-    try:
-        apply_priority(cfg.worker.priority)
-        print(f"process priority: {cfg.worker.priority}", flush=True)
-    except Exception as exc:
-        print(f"could not set process priority ({exc}); continuing", flush=True)
     cache = cache_dir(cfg)
     cache.mkdir(parents=True, exist_ok=True)
-    print(
-        f"coordinator {cfg.worker.coordinator_url}  procs={cfg.worker.procs}  "
-        f"threads={cfg.worker.threads}  cache={cache}",
-        flush=True,
-    )
-    attempt = 0
-    while True:
+    live, log, old_out, old_err = _open_local(cfg, cache)
+    try:
         try:
-            assignment = _next_assignment(client, cache)
-            attempt = 0
-        except ProtocolError as exc:
-            print(f"coordinator rejected the request ({exc.status}): {exc}", flush=True)
-            if once:
-                return 1
-            sleeper(backoff_s(attempt))
-            attempt += 1
-            continue
+            apply_priority(cfg.worker.priority)
+            print(f"process priority: {cfg.worker.priority}", flush=True)
         except Exception as exc:
-            print(f"coordinator unreachable: {exc}", flush=True)
-            if once:
-                return 1
-            sleeper(backoff_s(attempt))
-            attempt += 1
-            continue
-        if assignment is None:
-            print("no work right now", flush=True)
-            if once:
-                return 0
-            sleeper(cfg.worker.poll_s)
-            continue
+            print(f"could not set process priority ({exc}); continuing", flush=True)
         print(
-            f"unit {assignment['assignment_id']} sector {assignment['sector']} "
-            f"({assignment['n_tics']} stars) stage {assignment.get('stage')}",
+            f"coordinator {cfg.worker.coordinator_url}  procs={cfg.worker.procs}  "
+            f"threads={cfg.worker.threads}  cache={cache}",
             flush=True,
         )
-        stop = start_heartbeat(client, assignment["assignment_id"], heartbeat_s)
-        try:
-            run_unit(cfg, cache, client, assignment, download=download, search=search, filt=filt)
-        except ProtocolError as exc:
-            if stop is not None:
-                stop.set()
-            if exc.status == 409:
-                print(f"unit {assignment['assignment_id']} is no longer ours ({exc}); dropping local files", flush=True)
-                discard_local(cache, assignment)
-                _clear_state(_state_path(cache))
+        attempt = 0
+        while True:
+            try:
+                assignment = _next_assignment(client, cache)
+                attempt = 0
+            except ProtocolError as exc:
+                print(f"coordinator rejected the request ({exc.status}): {exc}", flush=True)
+                _live_call(live, "set_connection", False, f"rejected ({exc.status})")
+                if once:
+                    return 1
+                sleeper(backoff_s(attempt))
+                attempt += 1
+                continue
+            except Exception as exc:
+                print(f"coordinator unreachable: {exc}", flush=True)
+                _live_call(live, "set_connection", False, "unreachable")
+                if once:
+                    return 1
+                sleeper(backoff_s(attempt))
+                attempt += 1
+                continue
+            _live_call(live, "set_connection", True, "connected")
+            if assignment is None:
+                print("no work right now", flush=True)
+                _live_call(live, "mark_waiting")
                 if once:
                     return 0
+                sleeper(cfg.worker.poll_s)
                 continue
-            print(f"upload failed ({exc.status}): {exc}", flush=True)
-            if once:
-                return 1
-            sleeper(cfg.worker.poll_s)
-            continue
-        except Exception as exc:
+            print(
+                f"unit {assignment['assignment_id']} sector {assignment['sector']} "
+                f"({assignment['n_tics']} stars) stage {assignment.get('stage')}",
+                flush=True,
+            )
+            stop = start_heartbeat(
+                client, assignment["assignment_id"], heartbeat_s,
+                on_result=lambda ok, detail: _live_call(live, "set_connection", ok, detail),
+            )
+            try:
+                run_unit(cfg, cache, client, assignment, download=download, search=search, filt=filt, live=live)
+            except ProtocolError as exc:
+                if stop is not None:
+                    stop.set()
+                if exc.status == 409:
+                    print(f"unit {assignment['assignment_id']} is no longer ours ({exc}); dropping local files", flush=True)
+                    discard_local(cache, assignment)
+                    _clear_state(_state_path(cache))
+                    _live_call(live, "update_batch", stage="released", active=False)
+                    if once:
+                        return 0
+                    continue
+                print(f"upload failed ({exc.status}): {exc}", flush=True)
+                _live_call(live, "set_connection", False, f"upload rejected ({exc.status})")
+                if once:
+                    return 1
+                sleeper(cfg.worker.poll_s)
+                continue
+            except Exception as exc:
+                if stop is not None:
+                    stop.set()
+                print(f"unit {assignment['assignment_id']} failed: {exc}", flush=True)
+                _live_call(live, "update_batch", stage="error", active=True)
+                if once:
+                    return 1
+                sleeper(cfg.worker.poll_s)
+                continue
             if stop is not None:
                 stop.set()
-            print(f"unit {assignment['assignment_id']} failed: {exc}", flush=True)
+            print(f"unit {assignment['assignment_id']} uploaded; light curves deleted", flush=True)
             if once:
-                return 1
-            sleeper(cfg.worker.poll_s)
-            continue
-        if stop is not None:
-            stop.set()
-        print(f"unit {assignment['assignment_id']} uploaded; light curves deleted", flush=True)
-        if once:
-            return 0
+                return 0
+    finally:
+        _close_local(live, log, old_out, old_err)
 
 
 def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None, procs=None, threads=None,
@@ -441,10 +608,22 @@ def run_from_args(cfg: Config, args) -> int:
         poll_s=getattr(args, "poll_seconds", None),
         cache_dir_value=getattr(args, "cache_dir", None),
     )
-    if not load_token(cfg):
-        print("rhexas worker: set a token with --token-file, --token, or RHEXAS_WORKER_TOKEN", file=sys.stderr)
-        return 2
     try:
+        if not load_token(cfg):
+            print("rhexas worker: set a token with --token-file, --token, or RHEXAS_WORKER_TOKEN", file=sys.stderr)
+            return 2
+        if getattr(args, "dashboard", False):
+            from .dashboard import fallback_resources, launch_in_thread
+            try:
+                launch_in_thread(
+                    cache_dir(cfg),
+                    host=getattr(args, "dashboard_host", None),
+                    port=getattr(args, "dashboard_port", None),
+                    open_browser=not getattr(args, "no_browser", False),
+                    fallback=fallback_resources(cfg),
+                )
+            except (OSError, ValueError) as exc:
+                print(f"rhexas worker: dashboard did not start ({exc})", file=sys.stderr)
         return run_worker(cfg, once=bool(getattr(args, "once", False)))
     except KeyboardInterrupt:
         print("\nstopped. The lease is still yours until it expires; run the same command to resume.", flush=True)

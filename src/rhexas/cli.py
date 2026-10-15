@@ -1,4 +1,4 @@
-"""``rhexas`` command line: download, search, filter, vet, multisector, run, rerun, queue, dashboard, worker, coord."""
+"""``rhexas`` command line: download, search, filter, vet, multisector, run, rerun, queue, dashboard, worker, worker-dashboard, coord."""
 from __future__ import annotations
 
 import argparse
@@ -139,12 +139,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--poll-seconds", type=float, default=None, help="Wait between empty claims (default 60)")
     p.add_argument("--cache-dir", default=None, help="Where this worker keeps temporary light curves")
     p.add_argument("--once", action="store_true", help="Process one batch (or exit if the queue is empty) and stop")
+    p.add_argument("--dashboard", action="store_true", help="Also serve the local live dashboard and open it in a browser")
+    _dashboard_flags(p)
+
+    p = sub.add_parser("worker-dashboard", help="Open a local dashboard for a worker that is already running")
+    p.add_argument("--config", default=None, help="TOML config (default: discover rhexas.toml)")
+    p.add_argument("--root", default=None, help="Project root. The worker cache is created under it.")
+    p.add_argument("--coordinator", default=None, help="Shown on the page until the worker writes its own URL. This command does not connect.")
+    p.add_argument("--procs", type=int, default=None, help="Shown until the worker publishes its own process count")
+    p.add_argument("--threads", type=int, default=None, help="Shown until the worker publishes its own download threads")
+    p.add_argument("--priority", default=None, choices=["idle", "low", "normal"])
+    p.add_argument("--max-cache-gb", type=float, default=None, dest="max_cache_gb", help="Cache cap drawn on the page until the worker publishes its own")
+    p.add_argument("--cache-dir", default=None, help="Worker cache to attach to (default worker-cache)")
+    _dashboard_flags(p)
 
     from .coord.cli import add_subcommands, config_parent
     parent = config_parent()
     p = sub.add_parser("coord", parents=[parent], help="Friends-beta coordinator: init, enroll, tokens, serve")
     add_subcommands(p.add_subparsers(dest="coord_cmd", required=True), parent)
     return parser
+
+
+def _dashboard_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--dashboard-port", type=int, default=None, help="Dashboard port (default 8080). If it is busy, the next free port is used.")
+    parser.add_argument(
+        "--dashboard-host", default=None,
+        help="Dashboard bind address (default 127.0.0.1, this machine only). Set an address such as 0.0.0.0 to allow your LAN.",
+    )
+    parser.add_argument("--no-browser", action="store_true", help="Do not open a browser")
 
 
 def _overrides(args) -> dict:
@@ -264,6 +286,9 @@ def _dispatch(args, cfg: Config) -> int:
     if cmd == "worker":
         from .worker.loop import run_from_args
         return run_from_args(cfg, args)
+    if cmd == "worker-dashboard":
+        from .worker.dashboard import run_attached
+        return run_attached(cfg, args)
     if cmd == "dashboard":
         from .dashboard_cmd import launch, launch_all, stop
         if args.stop:

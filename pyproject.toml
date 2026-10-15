@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mega-rhexas"
 version = "1.0.0"
-description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and an invite-only friends-beta coordinator and worker."
+description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and an invite-only friends-beta coordinator, worker, and local worker dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
@@ -32,6 +32,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "rhexas.coord" = ["*.html", "*.svg"]
+"rhexas.worker" = ["static/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
