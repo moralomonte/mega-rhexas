@@ -706,16 +706,17 @@ def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None
 def load_token(cfg: Config) -> str:
     if cfg.worker.token.strip():
         return cfg.worker.token.strip()
-    if not cfg.worker.token_file.strip():
-        return ""
-    path = Path(cfg.worker.token_file).expanduser()
-    if not path.is_absolute():
-        path = cfg.root / path
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            return line
-    raise ValueError(f"no token in {path}")
+    if cfg.worker.token_file.strip():
+        path = Path(cfg.worker.token_file).expanduser()
+        if not path.is_absolute():
+            path = cfg.root / path
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                return line
+        raise ValueError(f"no token in {path}")
+    from .login import load_saved_token
+    return load_saved_token()
 
 
 def run_from_args(cfg: Config, args) -> int:
@@ -733,8 +734,24 @@ def run_from_args(cfg: Config, args) -> int:
         cache_dir_value=getattr(args, "cache_dir", None),
     )
     try:
+        if getattr(args, "login", False):
+            from .login import DeviceLoginError, link_this_computer, token_path
+            try:
+                token = link_this_computer(
+                    cfg.worker.coordinator_url,
+                    open_browser=not getattr(args, "no_browser", False),
+                    on_verification_url=lambda url: print(f"Approve this computer: {url}", flush=True),
+                )
+            except (DeviceLoginError, OSError, TimeoutError) as exc:
+                print(f"rhexas worker: {exc}", file=sys.stderr)
+                return 2
+            print(f"Saved this computer's token to {token_path()}", flush=True)
+            cfg = replace(cfg, worker=replace(cfg.worker, token=token, token_file=""))
         if not load_token(cfg):
-            print("rhexas worker: set a token with --token-file, --token, or RHEXAS_WORKER_TOKEN", file=sys.stderr)
+            print(
+                "rhexas worker: set a token with --login, --token-file, --token, or RHEXAS_WORKER_TOKEN",
+                file=sys.stderr,
+            )
             return 2
         if getattr(args, "dashboard", False):
             from .dashboard import fallback_resources, launch_in_thread

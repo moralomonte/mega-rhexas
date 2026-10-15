@@ -9,8 +9,8 @@ from .httpapi import App, _MAX_BODY, _error
 from .store import Store
 
 
-def make_server(store: Store, host: str, port: int) -> ThreadingHTTPServer:
-    app = App(store)
+def make_server(store: Store, host: str, port: int, *, accounts=None, smtp=None, mailer=None) -> ThreadingHTTPServer:
+    app = App(store, accounts=accounts, smtp=smtp, mailer=mailer)
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -20,6 +20,9 @@ def make_server(store: Store, host: str, port: int) -> ThreadingHTTPServer:
             self._handle()
 
         def do_POST(self):
+            self._handle()
+
+        def do_OPTIONS(self):
             self._handle()
 
         def log_message(self, fmt, *args):
@@ -56,8 +59,8 @@ def make_server(store: Store, host: str, port: int) -> ThreadingHTTPServer:
     return httpd
 
 
-def serve(store: Store, host: str, port: int) -> None:
-    httpd = make_server(store, host, port)
+def serve(store: Store, host: str, port: int, *, accounts=None, smtp=None, mailer=None) -> None:
+    httpd = make_server(store, host, port, accounts=accounts, smtp=smtp, mailer=mailer)
     bound_host, bound_port = httpd.server_address[:2]
     print(f"Mega Rhexas coordinator on http://{bound_host}:{bound_port}", flush=True)
     print(f"database {store.path}", flush=True)
