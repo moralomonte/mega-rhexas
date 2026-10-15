@@ -2,7 +2,7 @@
 (function (root) {
   var MR = root.MR || (root.MR = {});
   MR.API = "https://api.megarhexas.com";
-  MR.config = { signup: "invite", copies_required: 2 };
+  MR.config = { signup: "open", copies_required: 1 };
   MR.configReady = false;
   MR.RELEASES = "https://github.com/moralomonte/mega-rhexas/releases/latest";
   MR.GH_RELEASE_API = "https://api.github.com/repos/moralomonte/mega-rhexas/releases/latest";
