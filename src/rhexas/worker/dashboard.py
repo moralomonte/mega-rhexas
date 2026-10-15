@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .live import LOG_NAME, redact, read_log_tail, snapshot
+from .live import LOG_NAME, PACE_MODES, Store, redact, read_log_tail, snapshot
 from .present import (
     cycle_star,
     detail_payload,
@@ -139,10 +139,56 @@ def make_handler(cache: Path, fallback: dict | None):
                 self._try_send(500, b"error", "text/plain; charset=utf-8")
 
         def do_POST(self):
+            try:
+                self._post()
+            except Exception:
+                self._try_send(500, b"error", "text/plain; charset=utf-8")
+
+        def do_PUT(self):
             self._try_send(405, b"read only", "text/plain; charset=utf-8")
 
-        do_PUT = do_POST
-        do_DELETE = do_POST
+        do_DELETE = do_PUT
+
+        def _post(self):
+            parts = urlsplit(self.path)
+            if (parts.path or "/") != "/api/mode":
+                self._drain()
+                self._try_send(405, b"read only", "text/plain; charset=utf-8")
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            raw = self._drain(limit=256)
+            if raw is None or ctype != "application/json":
+                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
+                return
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
+                return
+            mode = data.get("mode") if isinstance(data, dict) else None
+            if mode not in PACE_MODES:
+                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
+                return
+            try:
+                Store(cache).request_mode(mode)
+            except Exception:
+                self._try_send(500, b"error", "text/plain; charset=utf-8")
+                return
+            self._send(200, dumps_safe({"ok": True, "requested": mode}), "application/json; charset=utf-8")
+
+        def _drain(self, limit: int = 4096):
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None
+            if length < 0:
+                return None
+            if length > limit:
+                self.rfile.read(length)
+                return None
+            if length == 0:
+                return b""
+            return self.rfile.read(length)
 
         def _get(self):
             parts = urlsplit(self.path)
@@ -217,8 +263,14 @@ def make_handler(cache: Path, fallback: dict | None):
                     if not sent_snapshot:
                         # The snapshot stays the first event so existing clients can poll one JSON object.
                         self.wfile.write(b"data: " + dumps_safe(snap) + b"\n\n")
-                        self._ev("mode", mode_event(mode))
                         sent_snapshot = True
+                    resources = snap.get("resources") if isinstance(snap.get("resources"), dict) else {}
+                    applied = str(resources.get("mode") or mode or "live")
+                    if applied not in PACE_MODES:
+                        applied = "live"
+                    if applied != seen.get("mode"):
+                        self._ev("mode", mode_event(applied))
+                        seen["mode"] = applied
                     self._ev("state", mission_state(snap))
                     lines, _size = read_log_tail(cache, limit=400)
                     fresh = fresh_logs(seen_logs, lines)

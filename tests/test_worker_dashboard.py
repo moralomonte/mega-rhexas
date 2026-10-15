@@ -18,6 +18,7 @@ from rhexas.worker.live import (
     Store,
     fold_curve,
     numeric_pass,
+    pace_settings,
     public_coordinator_url,
     publish_star,
     snapshot,
@@ -445,6 +446,8 @@ def test_page_reuses_the_mission_control_screen():
     assert "This worker" in text
     assert "Pending until the coordinator agrees. Verified means it agreed. No coins in this beta." in text
     assert "GB cap" in text
+    assert "/api/mode" in text
+    assert "localStorage.mode" not in text
 
 
 def test_mission_events_follow_the_worker_snapshot(tmp_path):
@@ -506,3 +509,18 @@ def test_mission_events_follow_the_worker_snapshot(tmp_path):
         "secondary_max_sigma", "max_duration_fraction",
     )}
     assert numeric_pass(_passing_row(), limits)
+
+
+def test_pace_settings_follow_the_started_load():
+    base = {"procs": 2, "threads": 2, "priority": "low"}
+    assert pace_settings("live", base) == {
+        "mode": "live", "procs": 2, "threads": 2, "priority": "low", "paused": False,
+    }
+    assert pace_settings("eco", base) == {
+        "mode": "eco", "procs": 1, "threads": 1, "priority": "idle", "paused": True,
+    }
+    turbo = pace_settings("turbo", base)
+    assert turbo["mode"] == "turbo" and turbo["paused"] is False
+    assert turbo["procs"] == 4 and turbo["threads"] == 4 and turbo["priority"] == "normal"
+    assert pace_settings("nope", base)["mode"] == "live"
+    assert pace_settings("turbo", {"procs": 8, "threads": 8, "priority": "low"})["procs"] == 8

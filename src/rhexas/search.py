@@ -161,48 +161,132 @@ def list_lightcurves(cfg: Config, *, tics: set[int] | None, limit: int) -> list[
     return files
 
 
+def _open_pool(procs: int, cfg: Config, live):
+    """One pool. Spawn when a dashboard payload is installed, so sqlite is not forked."""
+    procs = max(1, int(procs))
+    if live is None:
+        return Pool(procs, initializer=_pool_init, initargs=(cfg.search,))
+    return get_context("spawn").Pool(procs, initializer=_pool_init, initargs=(cfg.search, live))
+
+
+def _close_pool(pool) -> None:
+    if pool is None:
+        return
+    try:
+        pool.close()
+        pool.join()
+    except Exception:
+        try:
+            pool.terminate()
+            pool.join()
+        except Exception:
+            pass
+
+
+def _apply_pool_priority(priority, current):
+    if not priority or priority == current:
+        return current
+    try:
+        from rhexas.worker.priority import apply_priority
+        apply_priority(str(priority))
+    except Exception:
+        return current
+    return str(priority)
+
+
+def _write_star(handle, writer, row, on_row, done: int, total: int, started: float) -> int:
+    writer.writerow(row)
+    done += 1
+    if on_row is not None:
+        try:
+            on_row(done, total, row, time.time() - started)
+        except Exception:
+            pass
+    if done % 100 == 0 or done == total:
+        handle.flush()
+        elapsed = time.time() - started
+        rate = done / elapsed if elapsed else 0.0
+        left = (total - done) / rate / 60.0 if rate else 0.0
+        print(
+            f"{time.strftime('%H:%M:%S')} {done}/{total} stars  {rate:.2f}/s  ETA {left:.0f} min",
+            flush=True,
+        )
+    return done
+
+
 def run(cfg: Config, *, procs: int | None = None, limit: int = 0, out: str = "bls_raw.csv",
-        tics: set[int] | None = None, live: dict | None = None, on_row=None) -> int:
+        tics: set[int] | None = None, live: dict | None = None, on_row=None, pace=None) -> int:
     warnings.filterwarnings("ignore")
     procs = cfg.search.procs if procs is None else procs
     cfg.sector_results.mkdir(parents=True, exist_ok=True)
     dest = Path(out) if Path(out).is_absolute() else cfg.sector_results / out
-    done = set()
+    done_names = set()
     if dest.exists():
-        with open(dest, newline="") as f:
-            done = {r["file"] for r in csv.DictReader(f)}
+        with open(dest, newline="") as handle:
+            done_names = {row["file"] for row in csv.DictReader(handle)}
     files = list_lightcurves(cfg, tics=tics, limit=limit)
-    todo = [f for f in files if Path(f).name not in done]
-    print(f"{len(files)} files, {len(done)} done, {len(todo)} to do", flush=True)
+    todo = [path for path in files if Path(path).name not in done_names]
+    print(f"{len(files)} files, {len(done_names)} done, {len(todo)} to do", flush=True)
     new = not dest.exists()
     if not todo:
         if new:
-            with open(dest, "w", newline="") as f:
-                csv.DictWriter(f, FIELDS).writeheader()
+            with open(dest, "w", newline="") as handle:
+                csv.DictWriter(handle, FIELDS).writeheader()
         print("search finished", flush=True)
         return 0
-    t0 = time.time()
-    # A normal search keeps the platform default (fork on Linux). The worker
-    # dashboard path uses spawn so this process's open log and sqlite handles
-    # are not inherited; forking with a sqlite connection open can corrupt it.
-    if live is None:
-        pool = Pool(procs, initializer=_pool_init, initargs=(cfg.search,))
-    else:
-        pool = get_context("spawn").Pool(procs, initializer=_pool_init, initargs=(cfg.search, live))
-    with open(dest, "a", newline="") as f, pool:
-        w = csv.DictWriter(f, FIELDS)
-        if new:
-            w.writeheader()
-        for k, row in enumerate(pool.imap_unordered(analyze, todo, chunksize=4), 1):
-            w.writerow(row)
-            if on_row is not None:
+    started = time.time()
+    total = len(todo)
+    # A normal search keeps one pool for the whole batch. A worker pace callback
+    # is checked between waves, and a new pool is opened only when the load changed.
+    if pace is None:
+        pool = _open_pool(procs, cfg, live)
+        with open(dest, "a", newline="") as handle, pool:
+            writer = csv.DictWriter(handle, FIELDS)
+            if new:
+                writer.writeheader()
+            finished = 0
+            for row in pool.imap_unordered(analyze, todo, chunksize=4):
+                finished = _write_star(handle, writer, row, on_row, finished, total, started)
+        print("search finished", flush=True)
+        return 0
+    pending = list(todo)
+    pool = None
+    pool_procs = None
+    pool_priority = None
+    finished = 0
+    try:
+        with open(dest, "a", newline="") as handle:
+            writer = csv.DictWriter(handle, FIELDS)
+            if new:
+                writer.writeheader()
+            while pending:
                 try:
-                    on_row(k, len(todo), row, time.time() - t0)
+                    directive = pace() or {}
                 except Exception:
-                    pass
-            if k % 100 == 0 or k == len(todo):
-                f.flush()
-                el = time.time() - t0
-                print(f"{time.strftime('%H:%M:%S')} {k}/{len(todo)} stars  {k/el:.2f}/s  ETA {(len(todo)-k)/(k/el)/60:.0f} min", flush=True)
+                    directive = {}
+                if not isinstance(directive, dict):
+                    directive = {}
+                if directive.get("paused"):
+                    _close_pool(pool)
+                    pool = None
+                    pool_procs = None
+                    time.sleep(0.4)
+                    continue
+                try:
+                    want = max(1, int(directive.get("procs") or procs))
+                except (TypeError, ValueError):
+                    want = max(1, int(procs))
+                priority = directive.get("priority")
+                if pool is None or want != pool_procs or (priority and priority != pool_priority):
+                    _close_pool(pool)
+                    pool_priority = _apply_pool_priority(priority, pool_priority)
+                    pool = _open_pool(want, cfg, live)
+                    pool_procs = want
+                wave = pending[:pool_procs]
+                pending = pending[pool_procs:]
+                for row in pool.imap_unordered(analyze, wave, chunksize=1):
+                    finished = _write_star(handle, writer, row, on_row, finished, total, started)
+    finally:
+        _close_pool(pool)
     print("search finished", flush=True)
     return 0

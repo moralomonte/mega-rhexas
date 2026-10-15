@@ -64,6 +64,41 @@ _EMPTY_LIFE = {
 
 _SAMPLE = {"path": "", "at": 0.0, "cache_bytes": 0, "cpu_percent": None}
 
+PACE_MODES = ("eco", "live", "turbo")
+
+
+def pace_settings(mode: str, baseline: dict | None) -> dict:
+    """Load for one speed, relative to the settings the worker was started with.
+
+    eco pauses between stars, keeps the leased batch, and drops to one idle
+    process. live is that started load. turbo raises it and uses normal priority.
+    Any other name is live. The numbers are chosen here, not taken from the browser.
+    """
+    base = baseline if isinstance(baseline, dict) else {}
+    try:
+        procs = max(1, int(base.get("procs") or 1))
+    except (TypeError, ValueError):
+        procs = 1
+    try:
+        threads = max(1, int(base.get("threads") or 1))
+    except (TypeError, ValueError):
+        threads = 1
+    priority = str(base.get("priority") or "low").lower()
+    if priority not in ("idle", "low", "normal"):
+        priority = "low"
+    name = mode if mode in PACE_MODES else "live"
+    if name == "eco":
+        return {"mode": "eco", "procs": 1, "threads": 1, "priority": "idle", "paused": True}
+    if name == "turbo":
+        return {
+            "mode": "turbo",
+            "procs": min(8, max(procs * 2, procs + 1)),
+            "threads": min(8, max(threads * 2, threads + 1)),
+            "priority": "normal",
+            "paused": False,
+        }
+    return {"mode": "live", "procs": procs, "threads": threads, "priority": priority, "paused": False}
+
 
 def redact(text: str) -> str:
     """Replace invite tokens. Tokens are ``rhx_`` plus URL-safe characters."""
@@ -356,6 +391,12 @@ class Store:
     def set_worker(self, *, pid: int, procs: int, threads: int, priority: str, max_cache_gb: float,
                    coordinator_url: str) -> None:
         with self._locked() as conn:
+            previous = _read_kv(conn, "worker") or {}
+            if not isinstance(previous, dict):
+                previous = {}
+            stored = previous.get("baseline")
+            if not isinstance(stored, dict):
+                stored = {"procs": int(procs), "threads": int(threads), "priority": str(priority)}
             _write_kv(conn, "worker", {
                 "pid": int(pid),
                 "procs": int(procs),
@@ -363,7 +404,48 @@ class Store:
                 "priority": str(priority),
                 "max_cache_gb": float(max_cache_gb),
                 "coordinator_url": public_coordinator_url(coordinator_url),
+                "baseline": {
+                    "procs": int(stored.get("procs") or procs),
+                    "threads": int(stored.get("threads") or threads),
+                    "priority": str(stored.get("priority") or priority),
+                },
+                "mode": "live",
+                "paused": False,
             })
+
+    def request_mode(self, mode: str) -> str:
+        """Remember a speed. Only eco, live, or turbo are stored."""
+        if mode not in PACE_MODES:
+            raise ValueError("mode must be eco, live, or turbo")
+        with self._locked() as conn:
+            _write_kv(conn, "control", {"mode": mode, "at": time.time()})
+        return mode
+
+    def requested_mode(self) -> str:
+        with self._locked() as conn:
+            row = _read_kv(conn, "control")
+        if isinstance(row, dict) and row.get("mode") in PACE_MODES:
+            return str(row["mode"])
+        return "live"
+
+    def baseline(self) -> dict:
+        with self._locked() as conn:
+            worker = _read_kv(conn, "worker") or {}
+        stored = worker.get("baseline") if isinstance(worker, dict) else None
+        return stored if isinstance(stored, dict) else {}
+
+    def publish_pace(self, settings: dict) -> None:
+        """Record the load the worker is actually using. The baseline stays put."""
+        with self._locked() as conn:
+            worker = _read_kv(conn, "worker") or {}
+            if not isinstance(worker, dict):
+                worker = {}
+            worker["procs"] = int(settings["procs"])
+            worker["threads"] = int(settings["threads"])
+            worker["priority"] = str(settings["priority"])
+            worker["mode"] = str(settings["mode"]) if settings.get("mode") in PACE_MODES else "live"
+            worker["paused"] = bool(settings.get("paused"))
+            _write_kv(conn, "worker", worker)
 
     def set_pid(self, pid: int) -> None:
         with self._locked() as conn:
@@ -847,6 +929,8 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
             "cpu_percent": cpu,
             "pid": worker.get("pid") or 0,
             "worker_alive": _worker_alive(worker.get("pid")),
+            "mode": worker.get("mode") if worker.get("mode") in PACE_MODES else "live",
+            "paused": bool(worker.get("paused")),
         },
         "log_tail": log_tail,
         "log_size": log_size,

@@ -273,7 +273,74 @@ class _SearchHooks:
 def default_search(cfg: Config, tics, procs: int) -> int:
     from rhexas.search import run
     hooks = _SearchHooks.current or {}
-    return run(cfg, procs=procs, tics=set(tics), live=hooks.get("live"), on_row=hooks.get("on_row"))
+    return run(
+        cfg, procs=procs, tics=set(tics), live=hooks.get("live"),
+        on_row=hooks.get("on_row"), pace=hooks.get("pace"),
+    )
+
+
+def current_pace(cfg: Config, live, memory: dict) -> dict:
+    """Read the dashboard's requested speed and publish the load now in effect."""
+    from .live import pace_settings
+    baseline = {
+        "procs": cfg.worker.procs,
+        "threads": cfg.worker.threads,
+        "priority": cfg.worker.priority,
+    }
+    stored = _live_call(live, "baseline")
+    if isinstance(stored, dict) and stored.get("procs"):
+        baseline = stored
+    requested = _live_call(live, "requested_mode") or "live"
+    settings = pace_settings(str(requested), baseline)
+    _live_call(live, "publish_pace", settings)
+    signature = (
+        settings["mode"], settings["procs"], settings["threads"],
+        settings["priority"], settings["paused"],
+    )
+    if signature != memory.get("sig"):
+        memory["sig"] = signature
+        if settings["paused"]:
+            print("pace eco: paused between stars; this batch stays leased", flush=True)
+        else:
+            print(
+                f"pace {settings['mode']}: procs={settings['procs']}  "
+                f"threads={settings['threads']}  priority={settings['priority']}",
+                flush=True,
+            )
+    if settings["priority"] != memory.get("priority"):
+        try:
+            apply_priority(settings["priority"])
+        except Exception as exc:
+            print(f"could not set process priority ({exc}); continuing", flush=True)
+        memory["priority"] = settings["priority"]
+    return settings
+
+
+def wait_until_running(cfg: Config, live, memory: dict, sleeper) -> dict:
+    """Hold here while eco is selected. The caller keeps the lease."""
+    while True:
+        settings = current_pace(cfg, live, memory)
+        if not settings["paused"]:
+            return settings
+        sleeper(0.4)
+
+
+def _with_pace(ucfg: Config, settings: dict) -> Config:
+    return replace(
+        ucfg,
+        download=replace(ucfg.download, threads=int(settings["threads"])),
+        search=replace(ucfg.search, procs=int(settings["procs"])),
+    )
+
+
+def _paced_sleep(cfg: Config, live, memory: dict, sleeper, seconds: float) -> None:
+    deadline = time.monotonic() + float(seconds)
+    while True:
+        current_pace(cfg, live, memory)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        sleeper(left if left < 0.5 else 0.5)
 
 
 def _next_assignment(client, cache: Path):
@@ -349,7 +416,7 @@ def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, prog
 
 
 def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None,
-             progress: HeartbeatProgress | None = None) -> None:
+             progress: HeartbeatProgress | None = None, pace_memory=None, sleeper=None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
     live = live or _Quiet()
     path = _state_path(cache)
@@ -361,8 +428,12 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
     tic_set = set(tics)
     n_tics = int(assignment.get("n_tics") or len(tics))
     stage = state.get("stage") or "claimed"
+    memory = pace_memory if isinstance(pace_memory, dict) else {}
+    pause_sleep = sleeper or time.sleep
     _live_call(live, "begin_batch", assignment, stage)
     if stage == "claimed":
+        settings = wait_until_running(cfg, live, memory, pause_sleep)
+        ucfg = _with_pace(ucfg, settings)
         _live_call(
             live, "update_batch", stage="downloading", progress_kind="files",
             stars_done=0, stars_total=n_tics, per_s=None, eta_min=None,
@@ -410,9 +481,14 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
                 eta_min=round(eta, 1) if eta is not None else None,
             )
 
-        _SearchHooks.current = {"live": spec, "on_row": on_row}
+        def pace():
+            return current_pace(cfg, live, memory)
+
+        settings = wait_until_running(cfg, live, memory, pause_sleep)
+        ucfg = _with_pace(ucfg, settings)
+        _SearchHooks.current = {"live": spec, "on_row": on_row, "pace": pace}
         try:
-            search(ucfg, tic_set, ucfg.search.procs)
+            search(ucfg, tic_set, int(settings["procs"]))
         finally:
             _SearchHooks.current = None
         state = _advance(path, state, "searched")
@@ -511,6 +587,8 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             f"threads={cfg.worker.threads}  cache={cache}",
             flush=True,
         )
+        pace_memory: dict = {}
+        current_pace(cfg, live, pace_memory)
         attempt = 0
         while True:
             try:
@@ -521,7 +599,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "set_connection", False, f"rejected ({exc.status})")
                 if once:
                     return 1
-                sleeper(backoff_s(attempt))
+                _paced_sleep(cfg, live, pace_memory, sleeper, backoff_s(attempt))
                 attempt += 1
                 continue
             except Exception as exc:
@@ -529,7 +607,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "set_connection", False, "unreachable")
                 if once:
                     return 1
-                sleeper(backoff_s(attempt))
+                _paced_sleep(cfg, live, pace_memory, sleeper, backoff_s(attempt))
                 attempt += 1
                 continue
             _live_call(live, "set_connection", True, "connected")
@@ -538,7 +616,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "mark_waiting")
                 if once:
                     return 0
-                sleeper(cfg.worker.poll_s)
+                _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)
                 continue
             print(
                 f"unit {assignment['assignment_id']} sector {assignment['sector']} "
@@ -555,6 +633,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 run_unit(
                     cfg, cache, client, assignment,
                     download=download, search=search, filt=filt, live=live, progress=beat,
+                    pace_memory=pace_memory, sleeper=sleeper,
                 )
             except ProtocolError as exc:
                 if stop is not None:
@@ -571,7 +650,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "set_connection", False, f"upload rejected ({exc.status})")
                 if once:
                     return 1
-                sleeper(cfg.worker.poll_s)
+                _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)
                 continue
             except Exception as exc:
                 if stop is not None:
@@ -580,7 +659,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "update_batch", stage="error", active=True)
                 if once:
                     return 1
-                sleeper(cfg.worker.poll_s)
+                _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)
                 continue
             if stop is not None:
                 stop.set()
