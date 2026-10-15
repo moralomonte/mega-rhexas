@@ -182,12 +182,19 @@ class App:
         if worker is None:
             return _error(401, "unauthorized", "unauthorized")
         if method == "GET" and action == "current":
-            return _json(200, {"assignment": self.store.current(worker["id"])})
+            leases = self.store.leases(worker["id"])
+            return _json(200, {
+                "assignment": leases[0] if leases else None,
+                "assignments": leases,
+            })
         if method != "POST":
             return _error(404, "not found", "not_found")
         payload = _payload(body or b"{}")
         if action == "claim":
-            assignment = self.store.claim(worker["id"], project=project)
+            # ``prefetch`` asks for the second lease. Omitted, claim stays one lease.
+            assignment = self.store.claim(
+                worker["id"], project=project, prefetch=payload.get("prefetch") is True,
+            )
             if assignment is None:
                 return _json(200, {"assignment": None, "retry_after_s": 60})
             return _json(200, {"assignment": assignment})

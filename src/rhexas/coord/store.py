@@ -121,7 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_units_project ON units(project, state);
 CREATE INDEX IF NOT EXISTS idx_contrib ON contributions(project, user_id, verified);
 
 -- Accounts. ``provider`` is password, legacy, or (later) google.
--- trust_score and tier stay empty until Phase 4 scoring. There is no coin balance.
+-- trust_score and tier stay empty until Phase 4 scoring.
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY,
     email TEXT,
@@ -252,6 +252,11 @@ def format_ago(when: str | None, now: datetime) -> str:
     days = seconds // 86400
     unit = "day" if days == 1 else "days"
     return f"{days} {unit} ago"
+
+
+# The batch being searched, plus one prefetch download. A plain claim stays
+# idempotent; the worker asks for the extra slot explicitly.
+MAX_WORKER_LEASES = 2
 
 
 def activity_line(sector: int, unit_id: int, phase: str | None, done, total) -> str:
@@ -493,15 +498,25 @@ class Store:
             self._event(conn, "info", f"enrolled {project} sector {sector}: {stars} stars in {len(chunks)} units")
         return {"project": project, "sector": sector, "stars": stars, "units": len(chunks), "unit_size": size}
 
-    def claim(self, worker_id: int, project: str = DEFAULT_PROJECT) -> dict | None:
+    def claim(self, worker_id: int, project: str = DEFAULT_PROJECT, *, prefetch: bool = False) -> dict | None:
+        """Lease one batch. With ``prefetch``, a worker may hold a second lease.
+
+        A call without ``prefetch`` still returns the batch already leased, so a
+        worker from before download-ahead does not pick up an extra unit. The
+        second lease follows the same unit rules: two copies come from two
+        accounts, and a unit that already has a copy is chosen first.
+        """
         project = self._require_project(project)
         with self._tx() as conn:
             now = self.clock()
             self._expire(conn, now)
             self._touch(conn, worker_id, now)
-            live = self._live_lease(conn, worker_id)
-            if live is not None:
-                return live
+            live = self._live_leases(conn, worker_id)
+            limit = MAX_WORKER_LEASES if prefetch else 1
+            if len(live) >= limit:
+                if prefetch:
+                    return None
+                return live[0] if live else None
             chosen = self._pick_unit(conn, worker_id, project)
             if chosen is None:
                 return None
@@ -534,11 +549,16 @@ class Store:
             )
 
     def current(self, worker_id: int) -> dict | None:
+        rows = self.leases(worker_id)
+        return rows[0] if rows else None
+
+    def leases(self, worker_id: int) -> list[dict]:
+        """Live leases, oldest first. The oldest is the batch being searched."""
         with self._tx() as conn:
             now = self.clock()
             self._expire(conn, now)
             self._touch(conn, worker_id, now)
-            return self._live_lease(conn, worker_id)
+            return self._live_leases(conn, worker_id)
 
     def heartbeat(self, worker_id: int, assignment_id: int, project: str | None = None, progress=None) -> dict:
         """Extend a lease. ``progress`` is optional, so workers from before that field still check in."""
@@ -818,9 +838,10 @@ class Store:
                FROM assignments a
                JOIN units u ON u.id = a.unit_id
                WHERE a.status='leased' AND a.expires_at >= ?
-               ORDER BY a.leased_at DESC""",
+               ORDER BY a.id ASC""",
             (iso(now),),
         ):
+            # Oldest lease: the batch being searched. A newer one is only the prefetch slot.
             leases.setdefault(int(row["worker_id"]), row)
         out = []
         for row in bases:
@@ -892,7 +913,7 @@ class Store:
 
         ``account_id`` is who gets the credit. ``verified`` stays 0 until another
         account agrees. ``revoked`` is reserved so Phase 4 can drop pending credit
-        without deleting the row or minting a coin balance. Nothing here sets it.
+        without deleting the row. Nothing here sets it.
         """
         if project is not None:
             project = self._require_project(project)
@@ -1009,28 +1030,34 @@ class Store:
             return None
         return best[1], best[2]
 
-    def _live_lease(self, conn, worker_id: int) -> dict | None:
-        row = conn.execute(
+    def _live_leases(self, conn, worker_id: int) -> list[dict]:
+        rows = conn.execute(
             """SELECT a.id, a.unit_id, a.generation, a.leased_at, a.expires_at,
                       u.project, u.sector, u.payload_json, u.n_tics
                FROM assignments a JOIN units u ON u.id = a.unit_id
-               WHERE a.worker_id=? AND a.status='leased'""",
+               WHERE a.worker_id=? AND a.status='leased'
+               ORDER BY a.id ASC""",
             (worker_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._assignment_body(
-            assignment_id=int(row["id"]),
-            unit_id=int(row["unit_id"]),
-            project=row["project"],
-            generation=int(row["generation"]),
-            sector=int(row["sector"]),
-            payload_json=row["payload_json"],
-            n_tics=int(row["n_tics"]),
-            worker_id=worker_id,
-            leased_at=row["leased_at"],
-            expires_at=row["expires_at"],
-        )
+        ).fetchall()
+        return [
+            self._assignment_body(
+                assignment_id=int(row["id"]),
+                unit_id=int(row["unit_id"]),
+                project=row["project"],
+                generation=int(row["generation"]),
+                sector=int(row["sector"]),
+                payload_json=row["payload_json"],
+                n_tics=int(row["n_tics"]),
+                worker_id=worker_id,
+                leased_at=row["leased_at"],
+                expires_at=row["expires_at"],
+            )
+            for row in rows
+        ]
+
+    def _live_lease(self, conn, worker_id: int) -> dict | None:
+        rows = self._live_leases(conn, worker_id)
+        return rows[0] if rows else None
 
     def _assignment_body(
         self, *, assignment_id, unit_id, project, generation, sector,

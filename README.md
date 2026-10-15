@@ -313,7 +313,7 @@ another account agrees. A public leaderboard reads those rows by display name.
 Redundant assignment is that handler's `replicas` (exoplanets uses 2; the
 generic handler uses 1). `replicas` in `coord.toml` overrides it. Signup is
 invite-only until `accounts.signup` is `open`. Teams and other sciences are
-not in this beta. There are no coins.
+not in this beta.
 
 ```bash
 rhexas worker --login
@@ -341,7 +341,7 @@ rhexas worker-dashboard --dashboard-host 0.0.0.0
 
 The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page is the same mission-control screen as `rhexas dashboard`. The speed buttons write one small row back: `eco`, `live`, or `turbo`. The worker reads that row between stars. Eco pauses there and drops to one idle process, and the leased batch stays. Live is the procs, threads, and priority the worker was started with. Turbo raises that load and uses normal priority. The highlighted button is the mode the worker is actually running. The request carries only the mode name, so opening the page on the LAN with `--dashboard-host` does not reveal the invite. Pixel movies and survey cutouts stay on the sector page, because the worker cache does not keep those files. Updates arrive over server-sent events.
 
-Hits are labeled **candidates, unverified**. They are not confirmed planets. The three chips are verified contributions, pending contributions, and batches submitted. Those states are there for a future account. This beta has no coins.
+Hits are labeled **candidates, unverified**. They are not confirmed planets. The three chips are verified contributions, pending contributions, and batches submitted. Those states are there for a future account.
 
 `rhexas dashboard` is still the sector pipeline server. It reads `results/sNNNN/`. The worker page reads only the worker cache.
 

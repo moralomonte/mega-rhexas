@@ -118,9 +118,9 @@ canvas{width:100%;display:block}
 <div data-setup="signin"><button class="btn alt" id="setup-signin" type="button">Sign in with megarhexas.com</button></div>
 </form>
 </div>
-<div class="grid"><section class="card s3"><h2>Current batch</h2>
+<div class="grid"><section class="card s3"><h2>Current batch <span class="r kv" id="next_line"></span></h2>
 <div class="rings"><div class="ring" id="r_dl"></div><div class="ring" id="r_se"></div><div class="ring" id="r_ca"></div></div><div class="pnew"><div><div class="kv">Candidates, unverified</div><b id="p_new">–</b></div><div class="chips"><span class="chip cp">verified <b id="p_p">0</b></span><span class="chip cu">pending <b id="p_u">0</b></span><span class="chip cf">submitted <b id="p_f">0</b></span></div></div>
-<div class="kv" style="margin-top:8px">No coins in this beta. Pending until the coordinator agrees. Verified means it agreed.</div><div class="steps"><div class="step" id="st0"></div><div class="step" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
+<div class="kv" style="margin-top:8px">Pending until the coordinator agrees. Verified means it agreed.</div><div class="steps"><div class="step" id="st0"></div><div class="step" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
 <div class="stepl"><div>Download</div><div>BLS search</div><div>Filter</div><div>Upload</div></div>
 <div style="margin-top:12px"><canvas id="cpuc" height="70"></canvas><div class="kv" style="margin-top:4px">CPU history (all cores) · <span id="pipe"></span></div></div>
 </section><section class="card s5"><h2>Sky map · searched stars <span class="r legend" id="skyleg"><span data-k="dl"><i style="background:#3b4470"></i>downloaded</span><span data-k="se"><i style="background:#6d8cff"></i>searched</span><span data-k="kn"><i style="background:#22d3ee"></i>known planet/TOI</span><span data-k="np"><i style="background:#34d399;box-shadow:0 0 6px #34d399"></i>new · promising</span><span data-k="nu"><i style="background:#ffd166;box-shadow:0 0 6px #ffd166"></i>new · unvetted/CTOI</span><span data-k="nf"><i style="background:#f87171"></i>new · false positive</span><span data-k="cx"><i style="background:none;border:1.5px solid #fff;width:7px;height:7px"></i>current star</span></span></h2><canvas id="sky" height="330"></canvas></section>
@@ -151,7 +151,7 @@ canvas{width:100%;display:block}
 <div><span>Contributions pending</span><b id="l_pend">0</b></div>
 <div><span>Contributions verified</span><b id="l_cver">0</b></div>
 </div>
-<p class="note">Pending until the coordinator agrees. Verified means it agreed. No coins in this beta.</p>
+<p class="note">Pending until the coordinator agrees. Verified means it agreed.</p>
 </div>
 <div>
 <div class="kv" id="res_kv"></div>
@@ -198,6 +198,7 @@ const ok=s.searched-s.errors;setRing('r_ca',ok>0?Math.min(1,s.passed/ok*10):0,ok
 const si={Starting:0,Downloading:0,Searching:1,Filtering:2,Done:4}[s.stage]??0;[0,1,2,3].forEach(i=>{$('st'+i).className='step'+(i<si?' done':i==si?' on':'')});
 $('pipe').textContent=s.coord_line||'';
 $('banner').textContent=s.banner||'';
+if($('next_line'))$('next_line').textContent=s.next_line||'';
 const nw=Date.now();if(!window._cpuT||nw-_cpuT>=2000){window._cpuT=nw;CPU.push(s.cpu);if(CPU.length>150)CPU.shift();}plot($('cpuc'),[{x:CPU.map((_,i)=>i),y:CPU,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%',x0:0,x1:149});paintWorker(s)}
 function aitoff(ra,dec){let l=(ra>180?ra-360:ra)*Math.PI/180,b=dec*Math.PI/180;l=-l;const a=Math.acos(Math.cos(b)*Math.cos(l/2));const s=a?Math.sin(a)/a:1;return[2*Math.cos(b)*Math.sin(l/2)/s,Math.sin(b)/s]}
 const SKYON=Object.assign({dl:1,se:1,kn:1,np:1,nu:1,nf:1,cx:1},JSON.parse(localStorage.skyOn||'{}')),SKYA={};{const m=location.hash.match(/skyoff=([\w,]+)/);if(m)m[1].split(',').forEach(k=>SKYON[k]=0)}for(const k in SKYON)SKYA[k]=SKYON[k]?1:0;

@@ -3,10 +3,15 @@
 The scientific settings (period grid, SDE, SNR, durations) are the pipeline's.
 This module only changes where the files go, how many processes run, and the
 worker cache limits.
+
+With prefetch on, the next batch's light curves download while this batch is
+searching. ``state.json`` is the batch in front. ``next.json`` is the one
+already leased and downloading. A restart reads both.
 """
 from __future__ import annotations
 
 import csv
+import inspect
 import json
 import os
 import shutil
@@ -18,13 +23,16 @@ from pathlib import Path
 
 from rhexas.config import Config
 
-from .cache import delete_lightcurves, enforce_cache_cap
+from .cache import delete_lightcurves, directory_bytes, enforce_cache_cap
 from .client import CoordinatorClient, ProtocolError
 from .priority import apply_priority
 
 # One worker process. Download threads read these; they are not thread-locals.
 _stop_event: threading.Event | None = None
 _hold_fn = None
+_hold_local = threading.local()
+# Used only when this cache has no light curves yet to average. A SPOC 2-min file is about this size.
+PREFETCH_CURVE_BYTES = 2_000_000
 
 
 class WorkerStopped(Exception):
@@ -187,6 +195,10 @@ def _state_path(cache: Path) -> Path:
     return Path(cache) / "state.json"
 
 
+def _next_path(cache: Path) -> Path:
+    return Path(cache) / "next.json"
+
+
 def _read_state(path: Path) -> dict | None:
     if not path.is_file():
         return None
@@ -199,7 +211,9 @@ def _read_state(path: Path) -> dict | None:
 
 def _write_state(path: Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state), encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _clear_state(path: Path) -> None:
@@ -219,7 +233,10 @@ def discard_local(cache: Path, state: dict) -> None:
 
 def default_download(cfg: Config, tics) -> int:
     from rhexas.download import run
-    code = run(cfg, threads=cfg.download.threads, tics=set(tics), hold=_hold_fn)
+    hold = getattr(_hold_local, "fn", None)
+    if hold is None:
+        hold = _hold_fn
+    code = run(cfg, threads=cfg.download.threads, tics=set(tics), hold=hold)
     if code == 2:
         raise RuntimeError("disk limit stopped the download")
     return code
@@ -230,11 +247,33 @@ def default_filter(cfg: Config, tics) -> int:
     return run(cfg, plots=0, tics=set(tics))
 
 
-def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None, progress: HeartbeatProgress | None = None):
+class LeaseSet:
+    """Assignment ids the heartbeat thread should renew. Safe to add from the prefetch thread."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._items: dict[int, HeartbeatProgress | None] = {}
+
+    def add(self, assignment_id: int, progress: HeartbeatProgress | None = None) -> None:
+        with self._lock:
+            self._items[int(assignment_id)] = progress
+
+    def discard(self, assignment_id: int) -> None:
+        with self._lock:
+            self._items.pop(int(assignment_id), None)
+
+    def pairs(self) -> list[tuple[int, HeartbeatProgress | None]]:
+        with self._lock:
+            return list(self._items.items())
+
+
+def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None, progress: HeartbeatProgress | None = None,
+                    leases: LeaseSet | None = None):
     """Ping the coordinator until the returned event is set. ``interval <= 0`` disables it.
 
     ``progress`` is sent only after the worker has a fraction. A call with no progress
-    matches workers that predate the field.
+    matches workers that predate the field. ``leases`` renews every id it holds, so a
+    prefetched batch does not expire while the current one is searching.
     """
     if interval <= 0:
         return None
@@ -243,23 +282,27 @@ def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=No
 
     def loop():
         while not stop.wait(interval):
-            try:
+            if leases is not None:
+                targets = []
+                for aid, prog in leases.pairs():
+                    snap = prog.get() if prog is not None else None
+                    targets.append((aid, snap))
+            else:
                 snap = progress.get() if progress is not None else None
-                if snap:
-                    client.heartbeat(assignment_id, progress=snap)
-                else:
-                    client.heartbeat(assignment_id)
-            except Exception as exc:
-                print(f"heartbeat failed: {exc}", flush=True)
-                if on_result is not None:
-                    try:
-                        on_result(False, "heartbeat failed")
-                    except Exception:
-                        pass
-                continue
+                targets = [(assignment_id, snap)]
+            ok = True
+            for aid, snap in targets:
+                try:
+                    if snap:
+                        client.heartbeat(aid, progress=snap)
+                    else:
+                        client.heartbeat(aid)
+                except Exception as exc:
+                    ok = False
+                    print(f"heartbeat failed: {exc}", flush=True)
             if on_result is not None:
                 try:
-                    on_result(True, "connected")
+                    on_result(ok, "connected" if ok else "heartbeat failed")
                 except Exception:
                     pass
 
@@ -368,28 +411,325 @@ def _paced_sleep(cfg: Config, live, memory: dict, sleeper, seconds: float) -> No
         sleeper(left if left < 0.5 else 0.5)
 
 
-def _next_assignment(client, cache: Path):
-    path = _state_path(cache)
-    local = _read_state(path)
-    current = client.current().get("assignment")
-    if current is None:
-        if local:
-            discard_local(cache, local)
-            _clear_state(path)
-        current = client.claim().get("assignment")
-        if current is None:
-            return None
-        state = {**current, "stage": "claimed"}
-        _write_state(path, state)
-        return state
-    if local and local.get("assignment_id") == current["assignment_id"]:
-        state = {**current, "stage": local.get("stage") or "claimed"}
+def estimate_batch_bytes(data_dir: Path, n_tics: int) -> int:
+    """Bytes the next batch is likely to add. Curves already cached set the average."""
+    root = Path(data_dir)
+    sizes: list[int] = []
+    if root.exists():
+        for path in root.glob("s*/*lc.fits"):
+            if not path.is_file():
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if size > 0:
+                sizes.append(size)
+            if len(sizes) >= 32:
+                break
+    each = int(sum(sizes) / len(sizes)) if sizes else PREFETCH_CURVE_BYTES
+    return each * max(int(n_tics), 0)
+
+
+def prefetch_block(cache: Path, cfg: Config, n_tics: int) -> str | None:
+    """None when the next batch fits. Otherwise ``cache cap`` or ``free space``.
+
+    This does not delete files. The batch already being searched stays on disk.
+    """
+    data = Path(cache) / "data"
+    try:
+        data.mkdir(parents=True, exist_ok=True)
+        used = directory_bytes(data)
+        extra = estimate_batch_bytes(data, n_tics)
+        free = shutil.disk_usage(data).free
+    except OSError:
+        return "free space"
+    cap = int(float(cfg.worker.max_cache_gb) * 1e9)
+    if used + extra > cap:
+        return "cache cap"
+    need = float(cfg.worker.min_free_gb) * 1e9
+    if free - extra < need:
+        return "free space"
+    return None
+
+
+def _call_claim(client, *, prefetch: bool) -> dict:
+    """Claim one batch. Clients that predate the prefetch argument are left on one lease."""
+    claim = client.claim
+    if prefetch:
+        try:
+            params = inspect.signature(claim).parameters
+        except (TypeError, ValueError):
+            return {"assignment": None}
+        accepts = "prefetch" in params or any(
+            item.kind is inspect.Parameter.VAR_KEYWORD for item in params.values()
+        )
+        if not accepts:
+            return {"assignment": None}
+        body = claim(prefetch=True)
     else:
-        if local:
-            discard_local(cache, local)
-        state = {**current, "stage": "claimed"}
-    _write_state(path, state)
-    return state
+        body = claim()
+    return body if isinstance(body, dict) else {"assignment": None}
+
+
+def _release_lease(client, assignment_id: int) -> None:
+    fn = getattr(client, "release", None)
+    if fn is None:
+        return
+    try:
+        fn(int(assignment_id))
+    except Exception as exc:
+        print(f"prefetch release failed: {exc}", flush=True)
+
+
+def _remote_leases(client) -> list[dict]:
+    body = client.current()
+    if not isinstance(body, dict):
+        return []
+    many = body.get("assignments")
+    if isinstance(many, list):
+        return [
+            item for item in many
+            if isinstance(item, dict) and item.get("assignment_id") is not None
+        ]
+    one = body.get("assignment")
+    if isinstance(one, dict) and one.get("assignment_id") is not None:
+        return [one]
+    return []
+
+
+def _merge_saved(cache: Path, saved: dict | None, by_id: dict[int, dict]) -> dict | None:
+    if not isinstance(saved, dict) or saved.get("assignment_id") is None:
+        return None
+    try:
+        aid = int(saved["assignment_id"])
+    except (TypeError, ValueError):
+        return None
+    live = by_id.get(aid)
+    if live is None:
+        discard_local(cache, saved)
+        return None
+    return {**live, "stage": saved.get("stage") or "claimed"}
+
+
+def _resume_or_claim(client, cache: Path) -> tuple[dict | None, dict | None]:
+    """Match ``state.json`` and ``next.json`` to live leases, then claim if none are leased."""
+    local = _read_state(_state_path(cache))
+    nxt = _read_state(_next_path(cache))
+    by_id: dict[int, dict] = {}
+    for item in _remote_leases(client):
+        try:
+            by_id[int(item["assignment_id"])] = item
+        except (TypeError, ValueError, KeyError):
+            continue
+    active = _merge_saved(cache, local, by_id)
+    pre = _merge_saved(cache, nxt, by_id)
+    if (
+        active is not None and pre is not None
+        and int(active["assignment_id"]) == int(pre["assignment_id"])
+    ):
+        pre = None
+    known: set[int] = set()
+    if active is not None:
+        known.add(int(active["assignment_id"]))
+    if pre is not None:
+        known.add(int(pre["assignment_id"]))
+    orphans = [item for aid, item in sorted(by_id.items()) if aid not in known]
+    if active is None and orphans:
+        active = {**orphans.pop(0), "stage": "claimed"}
+    if pre is None and orphans:
+        pre = {**orphans.pop(0), "stage": "claimed"}
+    if active is None and pre is not None:
+        active = pre
+        pre = None
+    if active is None:
+        _clear_state(_state_path(cache))
+    else:
+        _write_state(_state_path(cache), active)
+    if pre is None:
+        _clear_state(_next_path(cache))
+    else:
+        _write_state(_next_path(cache), pre)
+    if active is not None:
+        return active, pre
+    body = _call_claim(client, prefetch=False)
+    claimed = body.get("assignment")
+    if not isinstance(claimed, dict) or claimed.get("assignment_id") is None:
+        return None, None
+    active = {**claimed, "stage": "claimed"}
+    _write_state(_state_path(cache), active)
+    return active, pre
+
+
+def _promote_next(cache: Path) -> dict | None:
+    """Make the prefetched batch the current one. Its stage is kept, so a finished download is not repeated."""
+    pre = _read_state(_next_path(cache))
+    if not pre:
+        return None
+    _write_state(_state_path(cache), pre)
+    _clear_state(_next_path(cache))
+    return pre
+
+
+def _publish_saved_next(live, state: dict) -> None:
+    stage = str(state.get("stage") or "claimed")
+    n = int(state.get("n_tics") or len(state.get("tics") or []))
+    if stage in ("downloaded", "searched", "filtered"):
+        _live_call(live, "set_next", state, stage="ready", stars_done=n, stars_total=n)
+    else:
+        _live_call(live, "set_next", state, stage="downloading", stars_done=0, stars_total=n)
+
+
+def prefetch_hold(live, sleeper) -> None:
+    """Tray Pause and Quit apply to the prefetch download. Eco does not freeze it."""
+    while True:
+        _check_stop()
+        if not _user_paused(live):
+            return
+        sleeper(0.4)
+
+
+def _prefetch_threads(cfg: Config, live) -> int:
+    """Download concurrency for the batch ahead. Eco is one thread; turbo is the raised count."""
+    from .live import pace_settings
+    baseline = _live_call(live, "baseline")
+    if not isinstance(baseline, dict) or not baseline.get("threads"):
+        baseline = {
+            "procs": cfg.worker.procs,
+            "threads": cfg.worker.threads,
+            "priority": cfg.worker.priority,
+        }
+    requested = _live_call(live, "requested_mode") or "live"
+    settings = pace_settings(str(requested), baseline)
+    try:
+        return max(1, int(settings["threads"]))
+    except (TypeError, ValueError):
+        return max(1, int(cfg.worker.threads))
+
+
+def _invoke_download(download, ucfg: Config, tics: set[int], hold) -> None:
+    previous = getattr(_hold_local, "fn", None)
+    _hold_local.fn = hold
+    try:
+        download(ucfg, tics)
+    finally:
+        _hold_local.fn = previous
+
+
+class _PrefetchJob:
+    """Claim the next batch and download it while the current one is searched."""
+
+    def __init__(self, cfg: Config, cache: Path, client, live, download, sleeper, watch):
+        self.cfg = cfg
+        self.cache = cache
+        self.client = client
+        self.live = live
+        self.download = download
+        self.sleeper = sleeper
+        self.watch = watch
+        self._started = False
+        self._thread: threading.Thread | None = None
+
+    def start(self, active: dict, existing: dict | None, depth: int) -> None:
+        if self._started:
+            return
+        self._started = True
+        if existing and str(existing.get("stage") or "") in ("downloaded", "searched", "filtered"):
+            _publish_saved_next(self.live, existing)
+            return
+        if depth < 1 and not existing:
+            return
+        target = self._resume if existing else self._claim_and_download
+        arg = existing if existing else active
+        self._thread = threading.Thread(
+            target=target, args=(arg,), name="rhexas-prefetch", daemon=True,
+        )
+        self._thread.start()
+
+    def wait(self) -> None:
+        thread = self._thread
+        if thread is not None:
+            thread.join()
+
+    def _claim_and_download(self, active: dict) -> None:
+        try:
+            _check_stop()
+            held = {int(active["assignment_id"])}
+            body = _call_claim(self.client, prefetch=True)
+            assignment = body.get("assignment") if isinstance(body, dict) else None
+            if not isinstance(assignment, dict) or assignment.get("assignment_id") is None:
+                return
+            if int(assignment["assignment_id"]) in held:
+                return
+            n = int(assignment.get("n_tics") or len(assignment.get("tics") or []))
+            reason = prefetch_block(self.cache, self.cfg, n)
+            if reason:
+                print(f"prefetch skipped: {reason}", flush=True)
+                _release_lease(self.client, int(assignment["assignment_id"]))
+                return
+            state = {**assignment, "stage": "claimed"}
+            _write_state(_next_path(self.cache), state)
+            print(
+                f"prefetch unit {state['assignment_id']} sector {state.get('sector')} ({n} stars)",
+                flush=True,
+            )
+            self._download(state)
+        except WorkerStopped:
+            return
+        except Exception as exc:
+            print(f"prefetch failed: {exc}", flush=True)
+
+    def _resume(self, state: dict) -> None:
+        try:
+            _check_stop()
+            self._download(state)
+        except WorkerStopped:
+            return
+        except Exception as exc:
+            print(f"prefetch failed: {exc}", flush=True)
+
+    def _download(self, state: dict) -> None:
+        stage = str(state.get("stage") or "claimed")
+        if stage in ("downloaded", "searched", "filtered"):
+            _publish_saved_next(self.live, state)
+            return
+        n = int(state.get("n_tics") or len(state.get("tics") or []))
+        reason = prefetch_block(self.cache, self.cfg, n)
+        if reason:
+            print(f"prefetch paused: {reason}", flush=True)
+            _publish_saved_next(self.live, state)
+            return
+        progress = HeartbeatProgress()
+        progress.set("download", 0, n)
+        self.watch(state, progress)
+        _live_call(self.live, "set_next", state, stage="downloading", stars_done=0, stars_total=n)
+        ucfg = unit_config(self.cfg, state, self.cache)
+        threads = _prefetch_threads(self.cfg, self.live)
+        ucfg = replace(ucfg, download=replace(ucfg.download, threads=threads))
+        tics = {int(tic) for tic in state.get("tics") or []}
+        stop_watch = threading.Event()
+
+        def on_progress(done, total):
+            _live_call(self.live, "update_next", stage="downloading", stars_done=done, stars_total=total)
+
+        watcher = threading.Thread(
+            target=_watch_downloads,
+            args=(self.live, ucfg.sector_data, n, stop_watch, progress),
+            kwargs={"tics": tics, "on_progress": on_progress},
+            name="rhexas-prefetch-watch",
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            prefetch_hold(self.live, self.sleeper)
+            _invoke_download(self.download, ucfg, tics, lambda: prefetch_hold(self.live, self.sleeper))
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=2)
+        state = _advance(_next_path(self.cache), state, "downloaded")
+        progress.set("download", n, n)
+        _live_call(self.live, "update_next", stage="ready", stars_done=n, stars_total=n)
+        print(f"prefetch unit {state['assignment_id']} ready", flush=True)
 
 
 def _advance(path: Path, state: dict, stage: str) -> dict:
@@ -414,14 +754,30 @@ class HeartbeatProgress:
             return None if self._value is None else dict(self._value)
 
 
-def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, progress: HeartbeatProgress | None = None) -> None:
+def _ready_curves(folder: Path, tics: set[int] | None) -> int:
+    """Count light curves on disk. ``tics`` limits the count to one batch when two share a sector."""
+    folder = Path(folder)
+    try:
+        paths = [path for path in folder.glob("*lc.fits") if path.is_file()]
+    except OSError:
+        return 0
+    if tics is None:
+        return len(paths)
+    from rhexas.tics import tic_from_filename
+    found = 0
+    for path in paths:
+        tic = tic_from_filename(path.name)
+        if tic in tics:
+            found += 1
+    return found
+
+
+def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, progress: HeartbeatProgress | None = None,
+                     *, tics: set[int] | None = None, on_progress=None) -> None:
     """Count FITS files already on disk so the dashboard can move during a download."""
     started = time.time()
     while not stop.is_set():
-        try:
-            found = sum(1 for path in Path(folder).glob("*lc.fits") if path.is_file())
-        except OSError:
-            found = 0
+        found = _ready_curves(folder, tics)
         if stop.is_set():
             return
         done = min(found, total)
@@ -430,12 +786,18 @@ def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, prog
         elapsed = time.time() - started
         rate = (found / elapsed) if elapsed >= 1 and found else None
         eta = ((total - found) / rate / 60.0) if rate else None
-        _live_call(
-            live, "update_batch", stage="downloading", progress_kind="files",
-            stars_done=done, stars_total=total,
-            per_s=round(rate, 3) if rate else None,
-            eta_min=round(eta, 1) if eta is not None else None,
-        )
+        if on_progress is not None:
+            try:
+                on_progress(done, total)
+            except Exception:
+                pass
+        else:
+            _live_call(
+                live, "update_batch", stage="downloading", progress_kind="files",
+                stars_done=done, stars_total=total,
+                per_s=round(rate, 3) if rate else None,
+                eta_min=round(eta, 1) if eta is not None else None,
+            )
         if stop.wait(2.0):
             return
 
@@ -469,7 +831,8 @@ def retry_missing_before_submit(ucfg: Config, tics: list[int], download, search,
 
 
 def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None,
-             progress: HeartbeatProgress | None = None, pace_memory=None, sleeper=None) -> None:
+             progress: HeartbeatProgress | None = None, pace_memory=None, sleeper=None,
+             before_search=None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
     live = live or _Quiet()
     path = _state_path(cache)
@@ -483,7 +846,18 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
     stage = state.get("stage") or "claimed"
     memory = pace_memory if isinstance(pace_memory, dict) else {}
     pause_sleep = sleeper or time.sleep
+    armed = {"on": False}
+
+    def arm():
+        if armed["on"]:
+            return
+        armed["on"] = True
+        if before_search is not None:
+            before_search()
+
     _live_call(live, "begin_batch", assignment, stage)
+    if stage != "claimed":
+        arm()
     if stage == "claimed":
         settings = wait_until_running(cfg, live, memory, pause_sleep)
         ucfg = _with_pace(ucfg, settings)
@@ -513,6 +887,7 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             watch.join(timeout=2.0)
         state = _advance(path, state, "downloaded")
         stage = "downloaded"
+        arm()
     if stage == "downloaded":
         _live_call(
             live, "update_batch", stage="searching", progress_kind="stars",
@@ -656,20 +1031,40 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
     except BaseException:
         _stop_event = previous_stop
         raise
+    beat_stop = None
+    prefetcher = None
     try:
         try:
             apply_priority(cfg.worker.priority)
             print(f"process priority: {cfg.worker.priority}", flush=True)
         except Exception as exc:
             print(f"could not set process priority ({exc}); continuing", flush=True)
+        depth = 1 if int(cfg.worker.prefetch) >= 1 else 0
         print(
             f"coordinator {cfg.worker.coordinator_url}  procs={cfg.worker.procs}  "
-            f"threads={cfg.worker.threads}  cache={cache}",
+            f"threads={cfg.worker.threads}  cache={cache}  prefetch={depth}",
             flush=True,
         )
         pace_memory: dict = {}
         current_pace(cfg, live, pace_memory)
         attempt = 0
+        leases = LeaseSet()
+        beat_stop = None
+        beat_lock = threading.Lock()
+        promoted = None
+        prefetcher = None
+
+        def watch(assignment, progress):
+            nonlocal beat_stop
+            leases.add(int(assignment["assignment_id"]), progress)
+            with beat_lock:
+                if beat_stop is None:
+                    beat_stop = start_heartbeat(
+                        client, int(assignment["assignment_id"]), heartbeat_s,
+                        on_result=lambda ok, detail: _live_call(live, "set_connection", ok, detail),
+                        leases=leases,
+                    )
+
         while True:
             _check_stop()
             if _user_paused(live) and not pace_memory.get("announced_pause"):
@@ -680,7 +1075,12 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 sleeper(0.4)
             pace_memory["announced_pause"] = False
             try:
-                assignment = _next_assignment(client, cache)
+                if promoted is not None:
+                    assignment = promoted
+                    resumed_next = None
+                    promoted = None
+                else:
+                    assignment, resumed_next = _resume_or_claim(client, cache)
                 attempt = 0
             except WorkerStopped:
                 raise
@@ -713,25 +1113,32 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 f"({assignment['n_tics']} stars) stage {assignment.get('stage')}",
                 flush=True,
             )
-            beat = HeartbeatProgress()
-            stop = start_heartbeat(
-                client, assignment["assignment_id"], heartbeat_s,
-                on_result=lambda ok, detail: _live_call(live, "set_connection", ok, detail),
-                progress=beat,
-            )
+            progress = HeartbeatProgress()
+            watch(assignment, progress)
+            if resumed_next:
+                nxt_progress = HeartbeatProgress()
+                n_next = int(resumed_next.get("n_tics") or len(resumed_next.get("tics") or []))
+                if str(resumed_next.get("stage") or "") in ("downloaded", "searched", "filtered"):
+                    nxt_progress.set("download", n_next, n_next)
+                watch(resumed_next, nxt_progress)
+                _publish_saved_next(live, resumed_next)
+            prefetcher = _PrefetchJob(cfg, cache, client, live, download, sleeper, watch)
+
+            def begin_prefetch(active=assignment, nxt=resumed_next, job=prefetcher, slots=depth):
+                job.start(active, nxt, slots)
+
             try:
                 run_unit(
                     cfg, cache, client, assignment,
-                    download=download, search=search, filt=filt, live=live, progress=beat,
-                    pace_memory=pace_memory, sleeper=sleeper,
+                    download=download, search=search, filt=filt, live=live, progress=progress,
+                    pace_memory=pace_memory, sleeper=sleeper, before_search=begin_prefetch,
                 )
             except WorkerStopped:
-                if stop is not None:
-                    stop.set()
+                prefetcher.wait()
                 return 0
             except ProtocolError as exc:
-                if stop is not None:
-                    stop.set()
+                prefetcher.wait()
+                leases.discard(int(assignment["assignment_id"]))
                 if exc.status == 409:
                     print(f"unit {assignment['assignment_id']} is no longer ours ({exc}); dropping local files", flush=True)
                     discard_local(cache, assignment)
@@ -747,29 +1154,37 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)
                 continue
             except Exception as exc:
-                if stop is not None:
-                    stop.set()
+                prefetcher.wait()
                 print(f"unit {assignment['assignment_id']} failed: {exc}", flush=True)
                 _live_call(live, "update_batch", stage="error", active=True)
                 if once:
                     return 1
                 _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)
                 continue
-            if stop is not None:
-                stop.set()
+            prefetcher.wait()
+            finished = int(assignment["assignment_id"])
             print(f"unit {assignment['assignment_id']} uploaded; light curves deleted", flush=True)
             if once:
                 return 0
+            nxt = _promote_next(cache)
+            leases.discard(finished)
+            if nxt:
+                _live_call(live, "clear_next")
+                promoted = nxt
     except WorkerStopped:
         return 0
     finally:
+        if beat_stop is not None:
+            beat_stop.set()
+        if prefetcher is not None:
+            prefetcher.wait()
         _stop_event = previous_stop
         _close_local(live, log, old_out, old_err)
 
 
 def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None, procs=None, threads=None,
                    priority=None, max_cache_gb=None, min_free_gb=None, poll_s=None, cache_dir_value=None,
-                   environ=None) -> Config:
+                   prefetch=None, environ=None) -> Config:
     env = os.environ if environ is None else environ
     worker = cfg.worker
     updates = {}
@@ -797,6 +1212,8 @@ def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None
         updates["poll_s"] = float(poll_s)
     if cache_dir_value:
         updates["cache_dir"] = str(cache_dir_value)
+    if prefetch is not None:
+        updates["prefetch"] = 1 if int(prefetch) >= 1 else 0
     return replace(cfg, worker=replace(worker, **updates))
 
 
@@ -830,6 +1247,7 @@ def run_from_args(cfg: Config, args) -> int:
         min_free_gb=getattr(args, "min_free_gb", None),
         poll_s=getattr(args, "poll_seconds", None),
         cache_dir_value=getattr(args, "cache_dir", None),
+        prefetch=getattr(args, "prefetch", None),
     )
     try:
         if getattr(args, "login", False):

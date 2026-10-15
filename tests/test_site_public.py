@@ -16,7 +16,6 @@ PAGES = [
 
 NASA = "Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it."
 INVITE = "The beta is invite-only for now."
-COINS = "There are no coins and no crypto."
 UNVERIFIED = "unverified"
 
 
@@ -33,7 +32,8 @@ def test_pages_exist_and_share_the_rules():
         assert "/img/triskelion.svg" in text
         assert NASA in text, name
         assert INVITE in text, name
-        assert COINS in text, name
+        assert "coin" not in text.lower(), name
+        assert "crypto" not in text.lower(), name
         assert UNVERIFIED in text, name
         assert "bitcoin" not in text.lower()
         assert "ethereum" not in text.lower()

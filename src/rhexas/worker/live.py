@@ -479,6 +479,38 @@ class Store:
         with self._locked() as conn:
             _write_kv(conn, "connection", {"ok": ok, "detail": text, "at": time.time()})
 
+    def set_next(self, assignment: dict, *, stage: str = "downloading", stars_done: int = 0,
+                 stars_total: int | None = None) -> None:
+        """The batch downloading ahead of the one on screen. ``ready`` means its files are in the cache."""
+        tics = assignment.get("tics") or []
+        total = int(assignment.get("n_tics") or len(tics)) if stars_total is None else int(stars_total)
+        payload = {
+            "active": True,
+            "project": str(assignment.get("project") or "exoplanets"),
+            "sector": int(assignment.get("sector") or 0),
+            "unit_id": int(assignment.get("unit_id") or 0),
+            "assignment_id": int(assignment.get("assignment_id") or 0),
+            "stage": str(stage),
+            "stars_done": int(stars_done),
+            "stars_total": total,
+        }
+        with self._locked() as conn:
+            _write_kv(conn, "next", payload)
+
+    def update_next(self, **fields) -> None:
+        with self._locked() as conn:
+            nxt = _read_kv(conn, "next") or {}
+            if not isinstance(nxt, dict):
+                nxt = {}
+            nxt.update(fields)
+            nxt["active"] = True
+            nxt["updated"] = time.time()
+            _write_kv(conn, "next", nxt)
+
+    def clear_next(self) -> None:
+        with self._locked() as conn:
+            _write_kv(conn, "next", None)
+
     def begin_batch(self, assignment: dict, stage: str = "claimed") -> None:
         tics = assignment.get("tics") or []
         batch = {
@@ -907,6 +939,7 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         kv, candidates = {}, []
     worker = kv.get("worker") if isinstance(kv.get("worker"), dict) else {}
     batch = kv.get("batch") if isinstance(kv.get("batch"), dict) else None
+    nxt = kv.get("next") if isinstance(kv.get("next"), dict) else None
     current = kv.get("current") if isinstance(kv.get("current"), dict) else None
     life = dict(_EMPTY_LIFE)
     if isinstance(kv.get("lifetime"), dict):
@@ -932,6 +965,7 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         "label": CANDIDATE_LABEL,
         "updated": time.time(),
         "batch": batch,
+        "next": nxt,
         "current_star": current,
         "candidates": candidates,
         "lifetime": life,

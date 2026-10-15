@@ -131,3 +131,5 @@ fixed_period_frac = 0.001  # fixed-period grid is P*(1-frac) .. P*(1+frac), i.e.
 # api.megarhexas.com is the coordinator. The apex (megarhexas.com) is reserved
 # for the future public site. Put the invite token in a file, not in this file.
 coordinator_url = "https://api.megarhexas.com"
+# 1 downloads the next batch while this one is searching. 0 waits for the upload.
+prefetch = 1

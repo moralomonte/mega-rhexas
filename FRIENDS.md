@@ -115,7 +115,7 @@ rhexas worker-dashboard
 
 The page is the same mission-control screen as the sector dashboard: rings, sky map, the scanning light curve, the histogram that cycles SDE and SNR, and the console. Eco, Live, and Turbo change how hard your worker runs. Eco pauses between stars and keeps the batch you already have. The lit button is the mode the worker is using, and the click does not send your invite. The numbers are your batch (project, sector, unit, stars done, ETA, stars per second), your candidates with period, depth, and SNR, how many stars you have searched, how many batches you have uploaded, and how many contributions are pending or verified. Cache use is drawn against `--max-cache-gb`, with CPU, process count, thread count, and the coordinator connection.
 
-Every hit is labeled **candidates, unverified**. Nothing on this page is a confirmed planet. Pending and verified describe contributions for a future account. There are no coins. The files it uses are `worker-cache/dashboard.sqlite` and `worker-cache/worker.log`. The speed buttons write the mode into that database.
+Every hit is labeled **candidates, unverified**. Nothing on this page is a confirmed planet. Pending and verified describe contributions for a future account. The files it uses are `worker-cache/dashboard.sqlite` and `worker-cache/worker.log`. The speed buttons write the mode into that database.
 
 ## If something looks stuck
 
