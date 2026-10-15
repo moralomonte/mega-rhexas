@@ -28,8 +28,20 @@ class CoordinatorClient:
     def claim(self) -> dict:
         return self._request("POST", self._task("claim"), {})
 
-    def heartbeat(self, assignment_id: int) -> dict:
-        return self._request("POST", self._task("heartbeat"), {"assignment_id": assignment_id})
+    def heartbeat(self, assignment_id: int, progress: dict | None = None) -> dict:
+        """Renew the lease. ``progress`` is omitted when unknown so older coordinators still accept the body.
+
+        The coordinator ignores a missing progress object. Shape, when sent:
+        ``{"phase": "download", "done": 400, "total": 500}``.
+        """
+        body: dict = {"assignment_id": assignment_id}
+        if progress:
+            body["progress"] = {
+                "phase": progress.get("phase"),
+                "done": progress.get("done"),
+                "total": progress.get("total"),
+            }
+        return self._request("POST", self._task("heartbeat"), body)
 
     def submit(self, assignment_id: int, stars: list, candidates: list) -> dict:
         return self._request("POST", self._task("submit"), {

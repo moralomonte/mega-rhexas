@@ -17,7 +17,7 @@ header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .logo:hover .trisk,.trisk.spin{animation:trspin 12s linear infinite}
 .logo:hover .trisk{filter:drop-shadow(0 0 14px #a5b4fcaa)}
 @keyframes trspin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.trisk{animation:none!important}}
+@media (prefers-reduced-motion:reduce){.trisk{animation:none!important}.stack i.wip{animation:none}}
 h1{font-size:20px;margin:0;letter-spacing:.2px}
 h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
 .pill{margin-left:auto;padding:6px 12px;border-radius:999px;border:1px solid var(--bd);background:var(--glass);font-size:12px;color:var(--mut);display:flex;gap:8px;align-items:center}
@@ -31,14 +31,36 @@ h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
 @media(max-width:700px){.stats{grid-template-columns:1fr 1fr}}
 .stat b{display:block;font-size:26px;font-variant-numeric:tabular-nums;background:linear-gradient(90deg,#fff,var(--c2));-webkit-background-clip:text;color:transparent}
 .stat span{font-size:11px;color:var(--mut);letter-spacing:.6px;text-transform:uppercase}
+.stat em,td em{display:block;font-style:normal;color:var(--mut);font-size:11px;font-weight:400}
+.stat em{margin-top:2px}
 .ring{display:flex;align-items:center;gap:16px}
 .ring svg{width:108px;height:108px;flex:none}
 .ring circle{fill:none;stroke-width:9}
 .ring .bg{stroke:rgba(255,255,255,.08)}
-.ring .fg{stroke:url(#rg);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .8s ease}
+.ring .seg{stroke-linecap:butt;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s ease,stroke-dasharray .6s ease}
+.ring .seg.verified{stroke:#34d399}
+.ring .seg.submitted{stroke:#7c5cff}
+.ring .seg.wip{stroke:rgba(226,232,255,.55)}
 .note{color:var(--mut);font-size:13px}
-.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}
-.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .6s ease}
+.stack{display:flex;height:10px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:12px}
+.stack i{display:block;height:100%;width:0;flex:none}
+.stack i.verified{background:linear-gradient(90deg,#22d3ee,#34d399)}
+.stack i.submitted{background:linear-gradient(90deg,#7c5cff,#a78bfa)}
+.stack i.wip{background:repeating-linear-gradient(-45deg,rgba(226,232,255,.72) 0 4px,rgba(226,232,255,.16) 4px 8px);animation:wippulse 1.5s ease-in-out infinite}
+@keyframes wippulse{50%{opacity:.45}}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px;color:var(--mut);font-size:11px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.swatch{width:18px;height:8px;border-radius:99px;display:inline-block;flex:none}
+.swatch.wip{background:repeating-linear-gradient(-45deg,rgba(226,232,255,.72) 0 3px,rgba(226,232,255,.16) 3px 6px)}
+.swatch.submitted{background:linear-gradient(90deg,#7c5cff,#a78bfa)}
+.swatch.verified{background:linear-gradient(90deg,#22d3ee,#34d399)}
+.sector .stack{margin-top:0}
+.badge{display:inline-block;font-size:11px;line-height:1.4;padding:1px 8px;border-radius:99px;margin-left:6px}
+.badge.online{background:rgba(52,211,153,.16);color:var(--ok)}
+.badge.idle{background:rgba(251,191,36,.16);color:var(--warn)}
+.badge.offline{background:rgba(255,255,255,.06);color:var(--mut)}
+.tablewrap{overflow-x:auto}
+td.act{min-width:180px}
 .sector{display:grid;grid-template-columns:72px 1fr auto;gap:10px;align-items:center;margin:8px 0;font-variant-numeric:tabular-nums}
 .sector b{font-weight:600}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -80,7 +102,10 @@ footer{margin-top:14px;color:var(--mut);font-size:12px}
 <h2>Search progress</h2>
 <div class="ring">
 <svg viewBox="0 0 120 120"><defs><linearGradient id="rg"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
-<circle class="bg" cx="60" cy="60" r="50"/><circle class="fg" id="arc" cx="60" cy="60" r="50" stroke-dasharray="314.16" stroke-dashoffset="314.16"/>
+<circle class="bg" cx="60" cy="60" r="50"/>
+<circle class="seg wip" id="arc_wip" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"/>
+<circle class="seg submitted" id="arc_sub" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"/>
+<circle class="seg verified" id="arc_ok" cx="60" cy="60" r="50" stroke-dasharray="0 314.16"/>
 <text id="pct" x="60" y="56" text-anchor="middle" fill="#e7ecff" font-size="20" font-weight="700">0%</text>
 <text x="60" y="76" text-anchor="middle" fill="#8b93b8" font-size="10">stars</text></svg>
 <div>
@@ -88,14 +113,20 @@ footer{margin-top:14px;color:var(--mut);font-size:12px}
 <div class="note" id="pairline"></div>
 </div>
 </div>
+<div class="stack" id="overall"></div>
+<div class="legend">
+<span><i class="swatch wip"></i>in progress</span>
+<span><i class="swatch submitted"></i>submitted, awaiting 2nd check</span>
+<span><i class="swatch verified"></i>verified</span>
+</div>
 </section>
 <section class="card s7">
 <h2>At a glance</h2>
 <div class="stats">
-<div class="stat"><span>Stars finished</span><b id="s_stars">–</b></div>
-<div class="stat"><span>Batches agreed</span><b id="s_units">–</b></div>
-<div class="stat"><span>New candidates</span><b id="s_cands">–</b></div>
-<div class="stat"><span>Workers online</span><b id="s_online">–</b></div>
+<div class="stat"><span>Stars checked</span><b id="s_stars">–</b><em id="s_stars_note"></em></div>
+<div class="stat"><span>Batches</span><b id="s_units">–</b><em id="s_units_note"></em></div>
+<div class="stat"><span>New candidates</span><b id="s_cands">–</b><em id="s_cands_note">agreed</em></div>
+<div class="stat"><span>Workers</span><b id="s_online">–</b><em id="s_online_note"></em></div>
 </div>
 </section>
 <section class="card s5">
@@ -159,26 +190,77 @@ async function api(path, opt){
   if (res.status === 204) return null;
   return res.json();
 }
+function paintArc(id, start, frac){
+  const eln = $(id);
+  const span = Math.max(0, frac) * arcLen;
+  eln.style.strokeDasharray = span + ' ' + Math.max(0, arcLen - span);
+  eln.style.strokeDashoffset = String(-Math.max(0, start) * arcLen);
+}
+function fillStack(node, verified, submitted, progressing, total){
+  node.replaceChildren();
+  const parts = [['verified', verified], ['submitted', submitted], ['wip', progressing]];
+  for (const [cls, n] of parts){
+    if (!total || n <= 0) continue;
+    const seg = document.createElement('i');
+    seg.className = cls;
+    seg.style.width = (100 * n / total) + '%';
+    node.append(seg);
+  }
+  return node;
+}
+function splitCell(main, sub){
+  const td = document.createElement('td');
+  td.append(document.createTextNode(main));
+  td.append(el('em', sub));
+  return td;
+}
+function ago(iso){
+  if (!iso) return 'never';
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return iso;
+  let seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 0) seconds = 0;
+  if (seconds < 45) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return Math.max(1, minutes) + ' min ago';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours === 1 ? '1 hour ago' : hours + ' hours ago';
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1 day ago' : days + ' days ago';
+}
 function drawStatus(s){
-  const frac = s.tics_total ? s.tics_agreed / s.tics_total : 0;
-  $('arc').style.strokeDashoffset = String(arcLen * (1 - Math.max(0, Math.min(1, frac))));
-  $('pct').textContent = Math.round(frac * 100) + '%';
-  $('s_stars').textContent = num(s.tics_agreed);
-  $('s_units').textContent = num(s.units_agreed) + '/' + num(s.units_total);
+  const agreed = s.tics_agreed || 0;
+  const submitted = s.tics_submitted || 0;
+  const progressing = s.tics_in_progress || 0;
+  const total = s.tics_total || 0;
+  const started = agreed + submitted + progressing;
+  const unitsSubmitted = (s.units_agreed || 0) + (s.units_submitted || 0);
+  paintArc('arc_ok', 0, total ? agreed / total : 0);
+  paintArc('arc_sub', total ? agreed / total : 0, total ? submitted / total : 0);
+  paintArc('arc_wip', total ? (agreed + submitted) / total : 0, total ? progressing / total : 0);
+  $('pct').textContent = Math.round((total ? started / total : 0) * 100) + '%';
+  $('s_stars').textContent = num(agreed + submitted);
+  $('s_stars_note').textContent = num(agreed) + ' verified';
+  $('s_units').textContent = num(unitsSubmitted) + '/' + num(s.units_total);
+  $('s_units_note').textContent = num(s.units_agreed) + ' verified · ' + num(s.units_in_progress) + ' in progress';
   $('s_cands').textContent = num(s.candidates_new);
   $('s_online').textContent = num(s.workers_online);
-  $('progline').textContent = num(s.tics_agreed) + ' of ' + num(s.tics_total) + ' stars have two agreeing searches.';
-  $('pairline').textContent = num(s.assignments_leased) + ' batches checked out · lease ' + s.lease_hours + ' h · ' + s.replicas + ' copies each';
+  $('s_online_note').textContent = num(s.workers_idle) + ' idle · ' + num(s.workers_offline) + ' offline';
+  $('progline').textContent = num(agreed + submitted) + ' of ' + num(total) + ' stars checked (' + num(agreed) + ' verified, ' + num(submitted) + ' awaiting a second check). ' + num(progressing) + ' in progress.';
+  const leased = s.assignments_leased || 0;
+  $('pairline').textContent = num(leased) + (leased === 1 ? ' batch' : ' batches') + ' checked out · lease ' + s.lease_hours + ' h · ' + s.replicas + ' copies each';
   $('live').textContent = 'Live · ' + new Date().toLocaleTimeString();
+  fillStack($('overall'), agreed, submitted, progressing, total);
   const box = $('sectors'); box.replaceChildren();
   if (!s.sectors.length) box.append(el('div', 'No sectors enrolled yet. On the server: rhexas coord enroll.', 'empty'));
   for (const row of s.sectors){
     const line = el('div', null, 'sector');
+    const v = row.tics_agreed || 0, sub = row.tics_submitted || 0, prog = row.tics_in_progress || 0;
     line.append(el('b', 'S' + row.sector));
-    const track = el('div', null, 'bar'); const fill = document.createElement('i');
-    fill.style.width = (row.tics ? (100 * row.tics_agreed / row.tics) : 0) + '%';
-    track.append(fill); line.append(track);
-    line.append(el('span', row.agreed + '/' + row.units));
+    line.append(fillStack(el('div', null, 'stack'), v, sub, prog, row.tics || 0));
+    const label = el('span', (v + sub) + '/' + row.tics);
+    label.title = (row.agreed || 0) + ' verified, ' + (row.units_submitted || 0) + ' awaiting a second check, ' + (row.units_in_progress || 0) + ' in progress, ' + row.units + ' batches';
+    line.append(label);
     box.append(line);
   }
 }
@@ -187,18 +269,25 @@ function drawWorkers(list){
   if (!list.length){ box.append(el('div', 'No active invites.', 'empty')); return; }
   const table = document.createElement('table');
   const head = document.createElement('tr');
-  for (const label of ['Name','Checked','Candidates','Batches','Seen']) head.append(el('th', label));
+  for (const label of ['Name','Stars checked','Batches','Candidates','Activity','Seen']) head.append(el('th', label));
   table.append(head);
   for (const w of list){
     const tr = document.createElement('tr');
     tr.append(el('td', w.name));
-    tr.append(el('td', num(w.stars_searched)));
-    tr.append(el('td', num(w.candidates_found)));
-    tr.append(el('td', num(w.units_agreed)));
-    const seen = el('td', w.online ? 'online' : (w.last_seen_at || '—'), w.online ? 'on' : 'off');
-    tr.append(seen); table.append(tr);
+    tr.append(splitCell(num(w.stars_submitted), num(w.stars_verified) + ' verified'));
+    tr.append(splitCell(num(w.batches_submitted) + ' submitted', num(w.batches_verified) + ' verified'));
+    tr.append(splitCell(num(w.candidates_submitted) + ' submitted', num(w.candidates_agreed != null ? w.candidates_agreed : w.candidates_found) + ' agreed'));
+    tr.append(el('td', w.activity || '—', 'act'));
+    const seen = document.createElement('td');
+    seen.append(document.createTextNode(ago(w.last_seen_at) + ' '));
+    const presence = w.presence || (w.online ? 'online' : 'offline');
+    seen.append(el('span', presence, 'badge ' + presence));
+    tr.append(seen);
+    table.append(tr);
   }
-  box.append(table);
+  const wrap = el('div', null, 'tablewrap');
+  wrap.append(table);
+  box.append(wrap);
 }
 function drawCands(list){
   const box = $('cands'); box.replaceChildren();

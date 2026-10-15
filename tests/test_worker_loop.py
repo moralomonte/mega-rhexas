@@ -5,6 +5,7 @@ import time
 from rhexas.config import default_config
 from rhexas.worker.cache import delete_lightcurves, enforce_cache_cap
 from rhexas.worker.loop import (
+    HeartbeatProgress,
     backoff_s,
     load_token,
     read_stars,
@@ -213,6 +214,23 @@ def test_read_stars_fills_in_missing_tics(tmp_path):
     rows = {row["tic"]: row for row in read_stars(folder, [3, 4])}
     assert rows[3]["error"] == "boom"
     assert rows[4]["error"] == "no result"
+
+
+def test_heartbeat_forwards_progress_when_the_worker_has_some():
+    seen = []
+
+    class Client:
+        def heartbeat(self, assignment_id, progress=None):
+            seen.append((assignment_id, progress))
+
+    progress = HeartbeatProgress()
+    progress.set("download", 400, 500)
+    stop = start_heartbeat(Client(), 9, 0.01, progress=progress)
+    deadline = time.time() + 1
+    while not seen and time.time() < deadline:
+        time.sleep(0.02)
+    stop.set()
+    assert seen[0] == (9, {"phase": "download", "done": 400, "total": 500})
 
 
 def test_heartbeat_thread_pings_until_stopped():

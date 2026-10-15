@@ -139,10 +139,15 @@ def test_disagreement_reissues_without_credit(tmp_path):
         by_name = {row["name"]: row for row in store.workers_public()}
         assert by_name["ada"]["stars_searched"] == 0
         assert by_name["bea"]["candidates_found"] == 0
+        assert by_name["ada"]["stars_submitted"] == 0
+        assert by_name["ada"]["batches_submitted"] == 0
         again = store.claim(ids["cam"])
         assert again["generation"] == 2
         assert again["tics"] == [7]
-        assert store.status()["units_agreed"] == 0
+        snap = store.status()
+        assert snap["units_agreed"] == 0
+        assert snap["units_submitted"] == 0
+        assert snap["tics_submitted"] == 0
         rejected = [row for row in store.contributions() if row["outcome"] == "rejected"]
         assert len(rejected) == 2
         assert all(row["verified"] == 0 and row["project"] == "exoplanets" for row in rejected)
@@ -313,8 +318,17 @@ def test_one_replica_accepts_a_single_upload(tmp_path):
         assert len(verified) == 1
         assert verified[0]["user_id"] == ids["ada"]
         assert verified[0]["outcome"] == "agreed"
-        assert store.status()["replicas"] == 1
-        assert store.status()["units_agreed"] == 1
+        snap = store.status()
+        assert snap["replicas"] == 1
+        assert snap["units_agreed"] == 1
+        assert snap["units_submitted"] == 0
+        assert snap["tics_agreed"] == 1
+        assert snap["tics_submitted"] == 0
+        ada_row = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert ada_row["stars_searched"] == 1
+        assert ada_row["stars_submitted"] == 1
+        assert ada_row["stars_verified"] == 1
+        assert ada_row["batches_verified"] == 1
     finally:
         store.close()
 
@@ -362,6 +376,12 @@ def test_status_page_contains_triskelion(tmp_path):
         assert "prefers-reduced-motion:reduce" in html
         assert ".trisk{animation:none!important}" in html
         assert 'rel="icon"' in html and 'href="/favicon.svg"' in html
+        assert "submitted, awaiting 2nd check" in html
+        assert ">in progress<" in html or "in progress</span>" in html
+        assert "verified</span>" in html
+        assert 'class="stack"' in html
+        assert "wippulse" in html
+        assert "min ago" in html
         icon = app.handle("GET", "/favicon.svg", "", {}, b"")
         assert icon.status == 200
         assert icon.content_type == "image/svg+xml"
@@ -369,6 +389,264 @@ def test_status_page_contains_triskelion(tmp_path):
         assert glyph in icon.body.decode("utf-8")
     finally:
         store.close()
+
+
+def test_submitted_work_shows_before_the_second_replica_agrees(tmp_path):
+    """A batch counts on the status page as soon as one worker uploads it.
+
+    Credit stays at zero until the copies agree. That split is display-only.
+    """
+    store = _store(tmp_path, online_window_s=600)
+    try:
+        store.enroll_tics(107, [1, 2, 3, 4], unit_size=2)
+        tokens, ids = _ids(store, "ada", "bea", "cam")
+        cam = {row["name"]: row for row in store.workers_public()}["cam"]
+        assert cam["presence"] == "offline"
+        assert cam["last_seen"] == "never"
+        assert cam["activity"] == "—"
+        assert cam["stars_submitted"] == 0
+
+        ada = store.claim(ids["ada"])
+        assert ada["unit_id"] == 1
+        held = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert held["presence"] == "online"
+        assert held["activity"] == "working on sector 107 unit 1"
+        assert held["last_seen"] == "just now"
+        snap = store.status()
+        assert snap["tics_in_progress"] == 2
+        assert snap["units_in_progress"] == 1
+        assert snap["tics_submitted"] == 0
+        assert snap["tics_agreed"] == 0
+        assert snap["workers_online"] == 1
+
+        store.clock.now += timedelta(seconds=120)
+        aged = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert aged["last_seen"] == "2 min ago"
+        assert aged["presence"] == "online"
+
+        store.heartbeat(ids["ada"], ada["assignment_id"], progress={"phase": "download", "done": 1, "total": 2})
+        moving = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert moving["activity"] == "working on sector 107 unit 1, 1/2 downloaded"
+        assert moving["last_seen"] == "just now"
+
+        # A heartbeat with no progress, or with junk, still renews the lease.
+        store.heartbeat(ids["ada"], ada["assignment_id"])
+        store.heartbeat(ids["ada"], ada["assignment_id"], progress="nope")
+        store.heartbeat(ids["ada"], ada["assignment_id"], progress={"done": True, "total": 2})
+        plain = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert plain["activity"] == "working on sector 107 unit 1, 1/2 downloaded"
+        assert plain["presence"] == "online"
+
+        pending = store.submit(
+            ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1)],
+        )
+        assert pending["verdict"] == "pending"
+        submitted = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert submitted["presence"] == "idle"
+        assert submitted["activity"] == "waiting for work"
+        assert submitted["stars_submitted"] == 2
+        assert submitted["stars_verified"] == 0
+        assert submitted["stars_searched"] == 0
+        assert submitted["batches_submitted"] == 1
+        assert submitted["batches_verified"] == 0
+        assert submitted["candidates_submitted"] == 1
+        assert submitted["candidates_agreed"] == 0
+        assert submitted["candidates_found"] == 0
+        snap = store.status()
+        assert snap["tics_submitted"] == 2
+        assert snap["units_submitted"] == 1
+        assert snap["tics_agreed"] == 0
+        assert snap["tics_in_progress"] == 0
+        assert snap["sectors"][0]["tics_submitted"] == 2
+        assert snap["sectors"][0]["tics_agreed"] == 0
+        handed = [row for row in store.contributions() if row["outcome"] == "submitted"]
+        assert handed and all(row["verified"] == 0 for row in handed)
+
+        second = store.claim(ids["ada"])
+        assert second["tics"] == [3, 4]
+        assert second["unit_id"] == 2
+        snap = store.status()
+        assert snap["tics_submitted"] == 2
+        assert snap["tics_in_progress"] == 2
+        assert snap["units_in_progress"] == 1
+        working = {row["name"]: row for row in store.workers_public()}["ada"]
+        assert working["activity"] == "working on sector 107 unit 2"
+        assert working["stars_submitted"] == 2
+
+        bea = store.claim(ids["bea"])
+        assert bea["tics"] == [1, 2]
+        # Unit 1 already has a submission, so the second lease does not also paint it as in progress.
+        snap = store.status()
+        assert snap["tics_submitted"] == 2
+        assert snap["tics_in_progress"] == 2
+        assert snap["assignments_leased"] == 2
+
+        agreed = store.submit(ids["bea"], bea["assignment_id"], [_star(1), _star(2)], [_cand(1)])
+        assert agreed["verdict"] == "agreed"
+        snap = store.status()
+        assert snap["tics_agreed"] == 2
+        assert snap["tics_submitted"] == 0
+        assert snap["units_agreed"] == 1
+        assert snap["tics_in_progress"] == 2
+        both = {row["name"]: row for row in store.workers_public()}
+        assert both["ada"]["stars_searched"] == 2
+        assert both["bea"]["stars_searched"] == 2
+        assert both["ada"]["stars_verified"] == 2
+        assert both["ada"]["batches_submitted"] == 1
+        assert both["ada"]["batches_verified"] == 1
+        assert both["ada"]["candidates_agreed"] == 1
+        assert both["bea"]["batches_verified"] == 1
+        credited = [row for row in store.contributions() if row["verified"] == 1]
+        assert {row["user_id"] for row in credited} == {ids["ada"], ids["bea"]}
+        assert all(row["outcome"] == "agreed" for row in credited)
+
+        admin = store.ensure_admin()
+        app = App(store)
+        headers = {"Authorization": f"Bearer {admin}"}
+        status = app.handle("GET", "/api/v1/status", "", headers, b"")
+        assert status.status == 200
+        body = json.loads(status.body)
+        assert body["tics_agreed"] == 2
+        assert body["tics_submitted"] == 0
+        assert body["tics_in_progress"] == 2
+        assert body["units_submitted"] == 0
+        assert body["workers_online"] == 1
+        assert body["workers_idle"] == 1
+        listed = app.handle("GET", "/api/v1/workers", "", headers, b"")
+        workers = {row["name"]: row for row in json.loads(listed.body)["workers"]}
+        assert workers["ada"]["activity"] == "working on sector 107 unit 2"
+        assert workers["ada"]["batches_verified"] == 1
+        assert "token" not in workers["ada"]
+
+        beat = app.handle(
+            "POST", "/api/v1/work/heartbeat", "",
+            {"Authorization": f"Bearer {tokens['ada']}"},
+            json.dumps({
+                "assignment_id": second["assignment_id"],
+                "progress": {"phase": "download", "done": 400, "total": 500},
+            }).encode(),
+        )
+        assert beat.status == 200
+        listed = app.handle("GET", "/api/v1/workers", "", headers, b"")
+        ada_now = {row["name"]: row for row in json.loads(listed.body)["workers"]}["ada"]
+        assert ada_now["activity"] == "working on sector 107 unit 2, 400/500 downloaded"
+
+        bare = app.handle(
+            "POST", "/api/v1/work/heartbeat", "",
+            {"Authorization": f"Bearer {tokens['ada']}"},
+            json.dumps({"assignment_id": second["assignment_id"]}).encode(),
+        )
+        assert bare.status == 200
+        scoped = app.handle(
+            "GET", "/api/v1/projects/exoplanets/status", "", headers, b"",
+        )
+        scoped_body = json.loads(scoped.body)
+        assert scoped_body["tics_in_progress"] == 2
+        assert scoped_body["tics_agreed"] == 2
+    finally:
+        store.close()
+
+
+def test_progress_columns_migrate_without_rewriting_rows(tmp_path):
+    path = tmp_path / "coord.sqlite"
+    conn = __import__("sqlite3").connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE workers (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            revoked_at TEXT,
+            last_seen_at TEXT,
+            stars_searched INTEGER NOT NULL DEFAULT 0,
+            candidates_found INTEGER NOT NULL DEFAULT 0,
+            units_agreed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE units (
+            id INTEGER PRIMARY KEY,
+            project TEXT NOT NULL DEFAULT 'exoplanets',
+            sector INTEGER NOT NULL,
+            ordinal INTEGER NOT NULL,
+            generation INTEGER NOT NULL,
+            payload_json TEXT NOT NULL,
+            n_tics INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            agreed_at TEXT,
+            UNIQUE (project, sector, ordinal)
+        );
+        CREATE TABLE assignments (
+            id INTEGER PRIMARY KEY,
+            unit_id INTEGER NOT NULL,
+            project TEXT NOT NULL DEFAULT 'exoplanets',
+            generation INTEGER NOT NULL,
+            worker_id INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            leased_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            submitted_at TEXT,
+            result_id INTEGER
+        );
+        INSERT INTO workers (name, token_hash, created_at, last_seen_at, stars_searched)
+            VALUES ('ada', 'hash', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', 7);
+        INSERT INTO units (project, sector, ordinal, generation, payload_json, n_tics, state, created_at)
+            VALUES ('exoplanets', 107, 0, 1, '{"sector":107,"tics":[1,2]}', 2, 'open', '2026-01-01T00:00:00+00:00');
+        INSERT INTO assignments (unit_id, project, generation, worker_id, status, leased_at, expires_at)
+            VALUES (1, 'exoplanets', 1, 1, 'leased', '2026-01-01T00:00:00+00:00', '2026-01-01T12:00:00+00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+    store = Store(path, Settings(), clock=Clock())
+    try:
+        store.init_schema()
+        store.init_schema()
+        cols = {row["name"] for row in store.conn.execute("PRAGMA table_info(assignments)")}
+        assert {"progress_phase", "progress_done", "progress_total"} <= cols
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"] == 1
+        assert store.conn.execute("SELECT stars_searched FROM workers").fetchone()["stars_searched"] == 7
+        snap = store.status()
+        assert snap["tics_in_progress"] == 2
+        assert snap["tics_agreed"] == 0
+        ada = store.workers_public()[0]
+        assert ada["name"] == "ada"
+        assert ada["stars_searched"] == 7
+        assert ada["activity"] == "working on sector 107 unit 1"
+        assert ada["presence"] == "online"
+    finally:
+        store.close()
+
+
+def test_cli_status_and_token_list_show_the_split(tmp_path, capsys):
+    path = tmp_path / "coord.toml"
+    path.write_text('[coord]\ndb = "coord.sqlite"\n', encoding="utf-8")
+    assert coord_main(["--config", str(path), "init"]) == 0
+    capsys.readouterr()
+    coord = load_coord_file(path)
+    store = Store(coord.db, coord.settings)
+    try:
+        store.init_schema()
+        store.enroll_tics(107, [1, 2], unit_size=500)
+        token = store.create_worker("ada")
+        worker = store.authenticate(token)["id"]
+        assignment = store.claim(worker)
+        store.submit(worker, assignment["assignment_id"], [_star(1), _star(2)], [_cand(1)])
+    finally:
+        store.close()
+    assert coord_main(["--config", str(path), "status"]) == 0
+    summary = capsys.readouterr().out
+    assert "0 verified, 1 submitted, 0 in progress, 1 total" in summary
+    assert "0 verified, 2 submitted, 0 in progress, 2 total" in summary
+    assert coord_main(["--config", str(path), "token", "list"]) == 0
+    listed = capsys.readouterr().out
+    assert "ada" in listed
+    assert "stars=2 submitted/0 verified" in listed
+    assert "batches=1 submitted/0 verified" in listed
+    assert "candidates=1 submitted/0 agreed" in listed
+    assert "waiting for work" in listed
+    assert "idle" in listed
+    assert "just now" in listed
 
 
 def _call(port, method, path, body=None, headers=None):
