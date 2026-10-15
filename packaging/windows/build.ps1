@@ -60,8 +60,9 @@ Copy-Item (Join-Path $Here "..\assets\triskelion.ico") (Join-Path $App "triskeli
 $version = "1.0.0"
 if ($env:GITHUB_REF_NAME -match '^v(.+)$') { $version = $Matches[1] }
 $iscc = @(
-    "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+    (Get-Command iscc.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if (-not $iscc) { throw "Inno Setup 6 (ISCC.exe) is not installed" }
 
