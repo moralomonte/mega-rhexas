@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mega-rhexas"
+version = "1.0.0"
+description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and an invite-only friends-beta coordinator and worker."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-or-later" }
+classifiers = ["License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)"]
+dependencies = [
+    "numpy==2.5.4",
+    "pandas==2.3.3",
+    "astropy==8.0.1",
+    "lightkurve==2.6.0",
+    "matplotlib==3.11.2",
+    "requests==2.34.2",
+    "psutil==7.2.2",
+    "astroquery==0.4.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+rhexas = "rhexas.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

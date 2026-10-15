@@ -1,0 +1,18 @@
+[Unit]
+Description=Mega Rhexas friends-beta coordinator
+After=network.target
+
+[Service]
+Type=simple
+User=rhexas
+Group=rhexas
+WorkingDirectory=/var/lib/rhexas
+Environment=PYTHONPATH=/opt/mega-rhexas/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m rhexas.coord --config /var/lib/rhexas/coord.toml serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

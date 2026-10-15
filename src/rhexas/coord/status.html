@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mega Rhexas · coordinator</title>
+<style>
+:root{--bg:#05060f;--glass:rgba(255,255,255,.05);--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--gold:#ffd166}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+#stars{position:fixed;inset:0;z-index:-1}
+.wrap{max-width:1200px;margin:0 auto;padding:22px 20px 40px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.mark{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 10px #818cf888)}
+h1{font-size:20px;margin:0;letter-spacing:.2px}
+h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
+.pill{margin-left:auto;padding:6px 12px;border-radius:999px;border:1px solid var(--bd);background:var(--glass);font-size:12px;color:var(--mut);display:flex;gap:8px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:16px}
+.card{background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:18px;padding:16px 18px;box-shadow:0 10px 40px rgba(0,0,0,.28)}
+.card h2{margin:0 0 12px;font-size:12px;letter-spacing:1.3px;text-transform:uppercase;color:var(--mut);font-weight:600}
+.s4{grid-column:span 4}.s5{grid-column:span 5}.s7{grid-column:span 7}.s8{grid-column:span 8}.s12{grid-column:span 12}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.s4,.s5,.s7,.s8,.s12{grid-column:auto}}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}}
+.stat b{display:block;font-size:26px;font-variant-numeric:tabular-nums;background:linear-gradient(90deg,#fff,var(--c2));-webkit-background-clip:text;color:transparent}
+.stat span{font-size:11px;color:var(--mut);letter-spacing:.6px;text-transform:uppercase}
+.ring{display:flex;align-items:center;gap:16px}
+.ring svg{width:108px;height:108px;flex:none}
+.ring circle{fill:none;stroke-width:9}
+.ring .bg{stroke:rgba(255,255,255,.08)}
+.ring .fg{stroke:url(#rg);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .8s ease}
+.note{color:var(--mut);font-size:13px}
+.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .6s ease}
+.sector{display:grid;grid-template-columns:72px 1fr auto;gap:10px;align-items:center;margin:8px 0;font-variant-numeric:tabular-nums}
+.sector b{font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--mut);font-weight:600;font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+td,th{padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.06)}
+.on{color:var(--ok)}.off{color:var(--mut)}
+.tag{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(255,209,102,.15);color:var(--gold)}
+.console{background:#03040a;border:1px solid var(--bd);border-radius:12px;height:280px;overflow:auto;font:12.5px/1.55 "Cascadia Code",Consolas,ui-monospace,monospace;padding:10px 12px}
+.console .t{color:#5b6390;margin-right:8px}
+.l.info{color:#cdd5ff}.l.warn{color:var(--warn)}.l.error{color:var(--err)}.l.success{color:var(--ok)}
+.tools{display:flex;gap:8px;align-items:center}
+button{background:var(--glass);border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
+button.on{background:#7c5cff33;border-color:#7c5cff}
+.login{position:fixed;inset:0;background:rgba(3,4,12,.72);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:18px}
+.box{width:min(420px,100%);background:linear-gradient(165deg,#1a1440,#0b0d1c);border:1px solid var(--bd);border-radius:20px;padding:22px}
+.box h2{margin:0 0 8px;font-size:18px;letter-spacing:0;text-transform:none;color:var(--tx)}
+label{display:block;margin:14px 0 6px;color:var(--mut);font-size:12px}
+input{width:100%;background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:10px;padding:10px 12px;font:inherit}
+.err{color:var(--err);min-height:1.2em;font-size:13px}
+footer{margin-top:14px;color:var(--mut);font-size:12px}
+.empty{color:var(--mut);padding:12px 0}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="wrap">
+<header>
+<svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+<defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5f3fc"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>
+<g fill="none" stroke="url(#mg)" stroke-width="3" stroke-linecap="round">
+<path d="M32 8c8 6 12 10 12 18"/><path d="M54 40c-2 10-10 16-20 16"/><path d="M14 36c0-8 4-16 12-22"/>
+<path d="M32 14c6 8 8 12 4 20"/><path d="M46 42c-6 6-12 8-20 4"/><path d="M20 30c2-8 8-12 14-12"/>
+</g>
+<circle cx="32" cy="32" r="3" fill="url(#mg)" stroke="none"/>
+</svg>
+<div>
+<h1>Mega Rhexas <small id="sub">Friends beta · coordinator</small></h1>
+</div>
+<div class="pill"><span class="dot" id="dot"></span><span id="live">Connecting…</span></div>
+</header>
+<div class="grid">
+<section class="card s5">
+<h2>Search progress</h2>
+<div class="ring">
+<svg viewBox="0 0 120 120"><defs><linearGradient id="rg"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs>
+<circle class="bg" cx="60" cy="60" r="50"/><circle class="fg" id="arc" cx="60" cy="60" r="50" stroke-dasharray="314.16" stroke-dashoffset="314.16"/>
+<text id="pct" x="60" y="56" text-anchor="middle" fill="#e7ecff" font-size="20" font-weight="700">0%</text>
+<text x="60" y="76" text-anchor="middle" fill="#8b93b8" font-size="10">stars</text></svg>
+<div>
+<div class="note" id="progline">Waiting for the server.</div>
+<div class="note" id="pairline"></div>
+</div>
+</div>
+</section>
+<section class="card s7">
+<h2>At a glance</h2>
+<div class="stats">
+<div class="stat"><span>Stars finished</span><b id="s_stars">–</b></div>
+<div class="stat"><span>Batches agreed</span><b id="s_units">–</b></div>
+<div class="stat"><span>New candidates</span><b id="s_cands">–</b></div>
+<div class="stat"><span>Workers online</span><b id="s_online">–</b></div>
+</div>
+</section>
+<section class="card s5">
+<h2>Sectors</h2>
+<div id="sectors"><div class="empty">No sectors enrolled yet.</div></div>
+</section>
+<section class="card s7">
+<h2>Workers</h2>
+<div id="workers"><div class="empty">No invites yet.</div></div>
+</section>
+<section class="card s12">
+<h2>Candidates both workers agreed on</h2>
+<div id="cands"><div class="empty">None yet. A candidate appears here only after the two copies agree.</div></div>
+</section>
+<section class="card s12">
+<h2>Console <span class="tools" style="float:right"><button id="auto" class="on" type="button">auto-scroll</button><button id="pause" type="button">pause</button></span></h2>
+<div class="console" id="con"></div>
+</section>
+</div>
+<footer id="foot">Each batch is searched by two different people. Both receive credit when the top period, SDE, and depth agree. megarhexas.com is reserved for the public site.</footer>
+</div>
+<div class="login" id="login">
+<form class="box" id="form">
+<h2>Coordinator</h2>
+<p class="note">Paste the admin token from the server. Worker invite tokens stay on the friends' computers; they do not open this page.</p>
+<label for="tok">Admin token</label>
+<input id="tok" type="password" autocomplete="current-password" required>
+<p class="err" id="lerr"></p>
+<button type="submit">Open status</button>
+</form>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const arcLen = 314.16;
+let after = 0, paused = false, stick = true, seen = new Set();
+$('sub').textContent = 'Friends beta · ' + location.host;
+(() => {
+  const c = $('stars'), x = c.getContext('2d');
+  let S = [];
+  function rs(){c.width = innerWidth; c.height = innerHeight; S = Array.from({length: 140}, () => ({x: Math.random()*c.width, y: Math.random()*c.height, r: Math.random()*1.2, a: Math.random(), s: .002+Math.random()*.01}))}
+  rs(); addEventListener('resize', rs);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function frame(){
+    const g = x.createRadialGradient(c.width*.8, 0, 0, c.width*.8, 0, c.width);
+    g.addColorStop(0,'#1a1040'); g.addColorStop(.55,'#070818'); g.addColorStop(1,'#04050c');
+    x.fillStyle = g; x.fillRect(0,0,c.width,c.height);
+    for (const s of S){if(!reduce) s.a += s.s; x.globalAlpha = .25+.7*Math.abs(Math.sin(s.a)); x.fillStyle = '#fff'; x.beginPath(); x.arc(s.x,s.y,s.r,0,7); x.fill()}
+    x.globalAlpha = 1;
+    if (!reduce) requestAnimationFrame(frame);
+  }
+  frame();
+})();
+function num(n){return (n ?? 0).toLocaleString()}
+function ppm(d){return d == null ? '–' : Math.round(d*1e6).toLocaleString() + ' ppm'}
+function days(d){return d == null ? '–' : Number(d).toFixed(4) + ' d'}
+function el(tag, text, cls){const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n}
+async function api(path, opt){
+  const res = await fetch(path, Object.assign({headers:{'Accept':'application/json'}}, opt || {}));
+  if (res.status === 401) { $('login').style.display = 'flex'; throw new Error('auth'); }
+  if (!res.ok) throw new Error('http ' + res.status);
+  if (res.status === 204) return null;
+  return res.json();
+}
+function drawStatus(s){
+  const frac = s.tics_total ? s.tics_agreed / s.tics_total : 0;
+  $('arc').style.strokeDashoffset = String(arcLen * (1 - Math.max(0, Math.min(1, frac))));
+  $('pct').textContent = Math.round(frac * 100) + '%';
+  $('s_stars').textContent = num(s.tics_agreed);
+  $('s_units').textContent = num(s.units_agreed) + '/' + num(s.units_total);
+  $('s_cands').textContent = num(s.candidates_new);
+  $('s_online').textContent = num(s.workers_online);
+  $('progline').textContent = num(s.tics_agreed) + ' of ' + num(s.tics_total) + ' stars have two agreeing searches.';
+  $('pairline').textContent = num(s.assignments_leased) + ' batches checked out · lease ' + s.lease_hours + ' h · ' + s.replicas + ' copies each';
+  $('live').textContent = 'Live · ' + new Date().toLocaleTimeString();
+  const box = $('sectors'); box.replaceChildren();
+  if (!s.sectors.length) box.append(el('div', 'No sectors enrolled yet. On the server: rhexas coord enroll.', 'empty'));
+  for (const row of s.sectors){
+    const line = el('div', null, 'sector');
+    line.append(el('b', 'S' + row.sector));
+    const track = el('div', null, 'bar'); const fill = document.createElement('i');
+    fill.style.width = (row.tics ? (100 * row.tics_agreed / row.tics) : 0) + '%';
+    track.append(fill); line.append(track);
+    line.append(el('span', row.agreed + '/' + row.units));
+    box.append(line);
+  }
+}
+function drawWorkers(list){
+  const box = $('workers'); box.replaceChildren();
+  if (!list.length){ box.append(el('div', 'No active invites.', 'empty')); return; }
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const label of ['Name','Checked','Candidates','Batches','Seen']) head.append(el('th', label));
+  table.append(head);
+  for (const w of list){
+    const tr = document.createElement('tr');
+    tr.append(el('td', w.name));
+    tr.append(el('td', num(w.stars_searched)));
+    tr.append(el('td', num(w.candidates_found)));
+    tr.append(el('td', num(w.units_agreed)));
+    const seen = el('td', w.online ? 'online' : (w.last_seen_at || '—'), w.online ? 'on' : 'off');
+    tr.append(seen); table.append(tr);
+  }
+  box.append(table);
+}
+function drawCands(list){
+  const box = $('cands'); box.replaceChildren();
+  if (!list.length){ box.append(el('div', 'None yet. A candidate appears here only after the two copies agree.', 'empty')); return; }
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const label of ['TIC','Sector','Period','Depth','SDE','SNR','']) head.append(el('th', label));
+  table.append(head);
+  for (const c of list){
+    const tr = document.createElement('tr');
+    tr.append(el('td', String(c.tic)));
+    tr.append(el('td', String(c.sector)));
+    tr.append(el('td', days(c.period)));
+    tr.append(el('td', ppm(c.depth)));
+    tr.append(el('td', c.sde == null ? '–' : Number(c.sde).toFixed(1)));
+    tr.append(el('td', c.snr == null ? '–' : Number(c.snr).toFixed(1)));
+    const td = document.createElement('td'); const tag = el('span', c.status || 'NEW', 'tag'); td.append(tag); tr.append(td);
+    table.append(tr);
+  }
+  box.append(table);
+}
+function drawEvents(events){
+  const con = $('con');
+  for (const ev of events){
+    if (seen.has(ev.id)) continue;
+    seen.add(ev.id); after = Math.max(after, ev.id);
+    const line = el('div', null, 'l ' + (ev.level || 'info'));
+    const t = (ev.ts || '').replace('T',' ').replace('+00:00','');
+    line.append(el('span', t, 't'));
+    line.append(document.createTextNode(ev.message));
+    con.append(line);
+  }
+  while (con.childNodes.length > 400) con.removeChild(con.firstChild);
+  if (stick && !paused) con.scrollTop = con.scrollHeight;
+}
+async function tick(){
+  try {
+    const [status, workers, cands, events] = await Promise.all([
+      api('/api/v1/status'),
+      api('/api/v1/workers'),
+      api('/api/v1/candidates?limit=50'),
+      api('/api/v1/events?after=' + after),
+    ]);
+    $('login').style.display = 'none';
+    drawStatus(status); drawWorkers(workers.workers); drawCands(cands.candidates); drawEvents(events.events);
+  } catch (err) {
+    if (err.message !== 'auth') $('live').textContent = 'Reconnecting…';
+  }
+}
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('lerr').textContent = '';
+  const res = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: $('tok').value.trim()})});
+  if (res.status === 204) { $('tok').value = ''; tick(); return; }
+  $('lerr').textContent = 'That token does not match.';
+});
+$('auto').onclick = () => { stick = !stick; $('auto').classList.toggle('on', stick); };
+$('pause').onclick = () => { paused = !paused; $('pause').classList.toggle('on', paused); $('pause').textContent = paused ? 'paused' : 'pause'; };
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

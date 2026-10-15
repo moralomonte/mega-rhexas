@@ -1,0 +1,31 @@
+# Optional. On a 1 GB droplet, DEPLOY.md's systemd + Caddy path uses less memory.
+services:
+  coord:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    volumes:
+      - coord-data:/var/lib/rhexas
+    restart: unless-stopped
+    environment:
+      RHEXAS_DATA: /var/lib/rhexas
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-api.megarhexas.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - coord
+    restart: unless-stopped
+
+volumes:
+  coord-data:
+  caddy-data:
+  caddy-config:

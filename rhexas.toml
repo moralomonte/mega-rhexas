@@ -1,0 +1,132 @@
+# Mega Rhexas configuration. Every key is optional; the values below are the defaults.
+# The `rhexas` command reads this file (later of: this file, MR_* environment
+# variables, CLI flags). Disk limits below apply to every command.
+#
+# Resolution of relative paths: the directory that contains this file, unless
+# [project].root or MR_ROOT says otherwise.
+
+[project]
+sector = 107
+
+[paths]
+data_dir = "data"          # sector light curves in data/sNNNN/
+results_dir = "results"    # every sector writes results/sNNNN/ (including 107)
+logs_dir = "logs"
+catalogs_dir = "results"   # toi_catalog.csv and confirmed_planets.csv (shared across sectors)
+archive_dir = "archive"    # rhexas reset-results moves old products here
+# multisector downloads follow data_dir/multisector when this key is omitted.
+
+[disk]
+min_free_gb = 100          # stop a download when the data drive has less free space than this
+max_project_gb = 400       # stop when sector files + the env allowance exceed this
+env_overhead_gb = 4.5      # flat allowance added by the project-size check (does not walk venv)
+
+[download]
+threads = 8                # MAST concurrency
+retries = 5
+timeout_s = 120
+curl_timeout_s = 60
+throttle_base_s = 15       # HTTP 429/503 backoff: base * factor**attempt
+throttle_factor = 2
+retry_base_s = 5           # other errors: base * factor**attempt
+
+[search]
+procs = 28
+period_min_days = 0.5
+period_max_days = 13.0
+n_periods = 20000
+durations_days = [0.04, 0.06, 0.08, 0.12, 0.16, 0.24]
+flatten_window = 721       # ~1 day at 2-minute cadence
+bin_minutes = 10
+min_points = 300
+outlier_sigma_upper = 4
+outlier_sigma_lower = 20
+
+[filter]
+# filter.py v2. The live dashboard's preliminary cut uses these same numbers.
+sde_min = 6.0
+snr_min = 7.0
+min_transits = 3
+max_depth = 0.05
+odd_even_max_sigma = 3.0
+secondary_max_sigma = 3.0
+max_duration_fraction = 0.12
+eb_depth = 0.03
+crowdsap_min = 0.8
+n_plots = 50
+plot_period_min_days = 0.5
+plot_period_max_days = 13.0
+plot_n_periods = 20000
+plot_durations_days = [0.04, 0.08, 0.12, 0.24]
+
+[dashboard]
+host = "0.0.0.0"
+port = 8080
+mode = "live"              # eco | live | turbo
+demo_port = 8081
+
+# The dashboard reads this table (sector switcher and `rhexas dashboard --all`).
+# One row per sector. Demo mode is `rhexas dashboard --demo` on demo_port,
+# not a second sector 107 row (that duplicated 107 in the switcher).
+[[dashboard.sectors]]
+sector = 107
+port = 8080
+
+[[dashboard.sectors]]
+sector = 106
+port = 8082
+
+[[dashboard.sectors]]
+sector = 105
+port = 8083
+
+[[dashboard.sectors]]
+sector = 104
+port = 8084
+
+[[dashboard.sectors]]
+sector = 103
+port = 8085
+
+[[dashboard.sectors]]
+sector = 102
+port = 8086
+
+[[dashboard.sectors]]
+sector = 101
+port = 8087
+
+[[dashboard.sectors]]
+sector = 100
+port = 8088
+
+[[dashboard.sectors]]
+sector = 99
+port = 8089
+
+[[dashboard.sectors]]
+sector = 98
+port = 8090
+
+[[dashboard.sectors]]
+sector = 97
+port = 8091
+
+[[dashboard.sectors]]
+sector = 96
+port = 8092
+
+[multisector]
+period_min_days = 0.3
+period_max_days = 13.0
+n_periods = 30000
+durations_days = [0.03, 0.04, 0.06, 0.08]
+snr_min = 5.0
+fixed_period_steps = 400
+fixed_period_frac = 0.001  # fixed-period grid is P*(1-frac) .. P*(1+frac), i.e. 0.999P..1.001P
+
+[worker]
+# Friends-beta worker only. download/search/filter/run ignore this section.
+# api.megarhexas.com is the coordinator. The apex (megarhexas.com) is reserved
+# for the future public site. Put the invite token in a file, not in this file.
+coordinator_url = "https://api.megarhexas.com"

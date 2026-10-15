@@ -1,0 +1,7 @@
+# Public coordinator. DNS: A record "api" on megarhexas.com → this host.
+# The apex megarhexas.com is not served here; it is reserved for the public site.
+# Override the name with the DOMAIN environment variable if you are testing elsewhere.
+{$DOMAIN:api.megarhexas.com} {
+	encode gzip
+	reverse_proxy coord:8787
+}

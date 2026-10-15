@@ -1,0 +1,9 @@
+# Installed at /etc/caddy/Caddyfile on the droplet (systemd + Caddy, no Docker).
+# Namecheap Advanced DNS: A record, host "api", value = this machine's IPv4.
+# Caddy asks Let's Encrypt for a certificate the first time someone visits.
+# Leave megarhexas.com itself out of this file.
+
+api.megarhexas.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}

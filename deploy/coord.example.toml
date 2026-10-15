@@ -1,0 +1,25 @@
+# Mega Rhexas friends-beta coordinator. Paths are relative to this file.
+# The process only hands out work and stores compact results. It does not
+# download light curves and it does not run BLS.
+#
+# Leave host on 127.0.0.1. The public name api.megarhexas.com belongs to
+# Caddy, which terminates HTTPS and proxies to this port. The apex
+# megarhexas.com is reserved for the future public site.
+
+[coord]
+host = "127.0.0.1"
+port = 8787
+db = "coord.sqlite"
+lease_hours = 12         # a worker must heartbeat before this, or the batch is reissued
+max_lease_hours = 36     # heartbeats cannot hold a batch longer than this
+unit_size = 500          # TIC IDs per work unit
+
+# A second worker's top BLS hit must land inside these windows.
+period_rtol = 0.002      # 0.2% relative on the top period
+sde_atol = 0.25          # absolute SDE
+depth_rtol = 0.05        # 5% relative depth
+depth_atol = 0.0001      # or 100 ppm, whichever is larger
+max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
+
+# Omit replicas to let the project handler decide. Exoplanets uses 2.
+# replicas = 1             # accept a single upload and skip the comparison
