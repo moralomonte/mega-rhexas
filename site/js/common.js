@@ -2,6 +2,8 @@
 (function (root) {
   var MR = root.MR || (root.MR = {});
   MR.API = "https://api.megarhexas.com";
+  MR.config = { signup: "invite", copies_required: 2 };
+  MR.configReady = false;
   MR.RELEASES = "https://github.com/moralomonte/mega-rhexas/releases/latest";
   MR.GH_RELEASE_API = "https://api.github.com/repos/moralomonte/mega-rhexas/releases/latest";
 
@@ -164,6 +166,41 @@
     });
   };
 
+  function applyConfig(cfg) {
+    var copies = cfg && Number(cfg.copies_required) === 1 ? 1 : 2;
+    var signup = cfg && cfg.signup === "open" ? "open" : "invite";
+    MR.config = { signup: signup, copies_required: copies };
+    MR.configReady = true;
+    document.querySelectorAll("[data-copies]").forEach(function (node) {
+      node.hidden = String(node.getAttribute("data-copies")) !== String(copies);
+    });
+    document.querySelectorAll("[data-signup]").forEach(function (node) {
+      node.hidden = node.getAttribute("data-signup") !== signup;
+    });
+    document.dispatchEvent(new CustomEvent("mr-config"));
+  }
+
+  MR.whenConfig = function (fn) {
+    if (MR.configReady) {
+      fn(MR.config);
+      return;
+    }
+    document.addEventListener("mr-config", function () { fn(MR.config); }, { once: true });
+  };
+
+  function loadPublicConfig() {
+    fetch(MR.API + "/api/v1/public/config", {
+      credentials: "omit",
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    }).then(function (res) {
+      if (!res.ok) throw new Error("config");
+      return res.json();
+    }).then(applyConfig).catch(function () {
+      applyConfig({ signup: "invite", copies_required: 2 });
+    });
+  }
+
   function paintSession() {
     var link = document.getElementById("nav-session");
     if (!link) return;
@@ -180,6 +217,7 @@
     markNav();
     stars();
     resolveDownload();
+    loadPublicConfig();
     paintSession();
   }
 

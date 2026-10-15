@@ -702,6 +702,149 @@ def test_prefetch_claim_holds_two_leases_and_keeps_replica_rules(tmp_path):
         store.close()
 
 
+def _copy_store(tmp_path, copies_required, **kwargs):
+    store = Store(tmp_path / "coord.sqlite", Settings(**kwargs) if kwargs else Settings(), clock=Clock(), copies_required=copies_required)
+    store.init_schema()
+    return store
+
+
+def test_one_copy_counts_the_first_upload_and_issues_no_second(tmp_path):
+    store = _copy_store(tmp_path, 1)
+    try:
+        store.enroll_tics(107, [1, 2], unit_size=500)
+        _, ids = _ids(store, "ada", "bea")
+        ada = store.claim(ids["ada"])
+        done = store.submit(ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1)])
+        assert done["verdict"] == "agreed"
+        assert done["detail"] == "checked once"
+        assert done["candidates"] == 1
+        assert store.claim(ids["bea"]) is None
+        assert store.status()["copies_required"] == 1
+        assert store.status()["replicas"] == 1
+        assert store.status()["units_agreed"] == 1
+        assert store.status()["units_submitted"] == 0
+        results = store.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"]
+        assignments = store.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"]
+        assert results == 1 and assignments == 1
+        assert store.conn.execute("SELECT status FROM assignments").fetchone()["status"] == "submitted"
+    finally:
+        store.close()
+
+
+def test_reverify_promotes_a_submitted_batch_without_deleting_copies(tmp_path):
+    path = tmp_path / "coord.sqlite"
+    store = Store(path, Settings(), clock=Clock(), copies_required=2)
+    store.init_schema()
+    try:
+        store.enroll_tics(107, [1], unit_size=500)
+        _, ids = _ids(store, "ada", "bea")
+        ada = store.claim(ids["ada"])
+        pending = store.submit(ids["ada"], ada["assignment_id"], [_star(1)], [_cand(1)])
+        assert pending["verdict"] == "pending"
+        before_results = store.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"]
+        before_assignments = store.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"]
+    finally:
+        store.close()
+
+    again = Store(path, Settings(), clock=Clock(), copies_required=1)
+    try:
+        again.init_schema()
+        summary = again.reverify()
+        assert summary["copies_required"] == 1
+        assert summary["promoted"] == 1
+        assert again.reverify()["promoted"] == 0
+        assert again.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"] == before_results
+        assert again.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"] == before_assignments
+        assert again.conn.execute("SELECT state FROM units").fetchone()["state"] == "agreed"
+        verified = [row for row in again.contributions() if row["verified"] == 1]
+        assert len(verified) == 1
+        assert again.claim(ids["bea"]) is None
+    finally:
+        again.close()
+
+    restored = Store(path, Settings(), clock=Clock(), copies_required=2)
+    try:
+        restored.init_schema()
+        assert restored.conn.execute("SELECT state FROM units WHERE sector=107").fetchone()["state"] == "agreed"
+        assert restored.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"] == before_results
+        restored.enroll_tics(108, [8, 9], unit_size=500)
+        first = restored.claim(ids["ada"])
+        assert first["sector"] == 108
+        assert restored.submit(ids["ada"], first["assignment_id"], [_star(8), _star(9)], [])["verdict"] == "pending"
+        second = restored.claim(ids["bea"])
+        assert second["tics"] == first["tics"]
+        bad = restored.submit(ids["bea"], second["assignment_id"], [_star(8, period=9), _star(9, period=9)], [])
+        assert bad["verdict"] == "disagreed"
+        assert "outside tolerance" in bad["detail"] or "stars" in bad["detail"]
+    finally:
+        restored.close()
+
+
+def test_two_copy_mode_still_blocks_the_same_account(tmp_path):
+    store = _copy_store(tmp_path, 2)
+    try:
+        store.enroll_tics(107, [1, 2, 3, 4], unit_size=2)
+        _, ids = _ids(store, "ada", "ada2", "bea")
+        store.conn.execute(
+            "UPDATE workers SET account_id=(SELECT account_id FROM workers WHERE id=?) WHERE id=?",
+            (ids["ada"], ids["ada2"]),
+        )
+        first = store.claim(ids["ada"])
+        store.submit(ids["ada"], first["assignment_id"], [_star(1), _star(2)], [])
+        other = store.claim(ids["ada2"])
+        assert other["unit_id"] != first["unit_id"]
+        partner = store.claim(ids["bea"])
+        assert partner["unit_id"] == first["unit_id"]
+        assert store.reverify()["promoted"] == 0
+    finally:
+        store.close()
+
+
+def test_reverify_cli_and_copies_config(tmp_path, capsys):
+    path = tmp_path / "coord.toml"
+    path.write_text(
+        '[coord]\ndb = "coord.sqlite"\n[verification]\ncopies_required = 2\n',
+        encoding="utf-8",
+    )
+    assert coord_main(["--config", str(path), "init"]) == 0
+    capsys.readouterr()
+    loaded = load_coord_file(path)
+    assert loaded.verification.copies_required == 2
+    store = Store(loaded.db, loaded.settings, clock=Clock(), copies_required=2)
+    try:
+        store.init_schema()
+        store.enroll_tics(107, [1], unit_size=500)
+        token = store.create_worker("ada")
+        worker = store.authenticate(token)["id"]
+        assignment = store.claim(worker)
+        store.submit(worker, assignment["assignment_id"], [_star(1)], [])
+    finally:
+        store.close()
+    path.write_text(
+        '[coord]\ndb = "coord.sqlite"\n[verification]\ncopies_required = 1\n',
+        encoding="utf-8",
+    )
+    assert load_coord_file(path).verification.copies_required == 1
+    assert coord_main(["--config", str(path), "reverify"]) == 0
+    printed = capsys.readouterr().out
+    assert "copies_required 1: 1 verified" in printed
+    assert "Existing copies were kept." in printed
+    assert coord_main(["--config", str(path), "status"]) == 0
+    summary = capsys.readouterr().out
+    assert "1 verified, 0 submitted" in summary
+    bad = tmp_path / "bad.toml"
+    bad.write_text("[verification]\ncopies_required = 3\n", encoding="utf-8")
+    try:
+        load_coord_file(bad)
+        raised = False
+    except ConfigError:
+        raised = True
+    assert raised
+    from rhexas.coord.server import serve
+    import inspect
+    assert "reverify" in inspect.getsource(serve)
+
+
 def _call(port, method, path, body=None, headers=None):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     data = None if body is None else json.dumps(body).encode()

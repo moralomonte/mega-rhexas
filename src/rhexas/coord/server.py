@@ -60,6 +60,13 @@ def make_server(store: Store, host: str, port: int, *, accounts=None, smtp=None,
 
 
 def serve(store: Store, host: str, port: int, *, accounts=None, smtp=None, mailer=None) -> None:
+    summary = store.reverify()
+    if summary["promoted"] or summary["reissued"]:
+        print(
+            f"reverify: {summary['promoted']} verified, {summary['reissued']} reissued "
+            f"(copies_required {summary['copies_required']})",
+            flush=True,
+        )
     httpd = make_server(store, host, port, accounts=accounts, smtp=smtp, mailer=mailer)
     bound_host, bound_port = httpd.server_address[:2]
     print(f"Mega Rhexas coordinator on http://{bound_host}:{bound_port}", flush=True)

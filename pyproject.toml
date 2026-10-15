@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mega-rhexas"
-version = "0.3.4"
-description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and an invite-only friends-beta coordinator, worker, and local worker dashboard."
+version = "0.3.5"
+description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and a friends-beta coordinator, worker, and local worker dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }

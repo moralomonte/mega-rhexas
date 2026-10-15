@@ -338,9 +338,11 @@ def new_token() -> str:
 
 
 class Store:
-    def __init__(self, path: Path | str, settings: Settings | None = None, clock=None):
+    def __init__(self, path: Path | str, settings: Settings | None = None, clock=None, copies_required: int = 2):
         self.path = Path(path)
         self.settings = settings or Settings()
+        # 1 pauses the second copy. Anything else keeps the two-copy path.
+        self.copies_required = 1 if int(copies_required) == 1 else 2
         self.clock = clock or utcnow
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
@@ -357,11 +359,34 @@ class Store:
         self._migrate()
 
     def replica_count(self, project: str) -> int:
-        """How many distinct workers must finish a unit. A toml override wins."""
+        """How many distinct workers must finish a unit.
+
+        ``copies_required = 1`` pauses the second copy. The two-account rule,
+        the agreement check, and pending credit stay in this file and run
+        again when ``copies_required`` is 2. A toml ``replicas`` override
+        still applies in that two-copy mode.
+        """
         project = self._require_project(project)
+        if self.copies_required == 1:
+            return 1
         if self.settings.replicas is not None:
             return int(self.settings.replicas)
         return get_handler(project).replicas
+
+    def public_copies(self) -> int:
+        """1 when a batch is kept after one upload, otherwise 2.
+
+        This is what public pages should say. It follows the verification
+        switch, and also the older ``replicas = 1`` override.
+        """
+        if self.copies_required == 1:
+            return 1
+        try:
+            if self.replica_count(DEFAULT_PROJECT) <= 1:
+                return 1
+        except CoordError:
+            return 2
+        return 2
 
     def projects_public(self) -> list[dict]:
         from .projects import HANDLERS
@@ -639,48 +664,100 @@ class Store:
             )
             self._touch(conn, worker_id, now)
             self._contribute(conn, worker_id, unit, "submitted", 0, "", now)
-            need = self.replica_count(unit["project"])
-            peers = conn.execute(
-                """SELECT r.* FROM results r
-                   JOIN assignments a ON a.id = r.assignment_id
-                   WHERE r.unit_id=? AND r.generation=? AND r.verdict='pending'
-                     AND a.status='submitted'
-                   ORDER BY r.id""",
-                (unit["id"], assignment["generation"]),
+            peers = self._pending_copies(conn, unit)
+            return self._settle(conn, unit, peers, now, announce_wait=True, worker_id=worker_id)
+
+    def reverify(self) -> dict:
+        """Apply the current copy count to batches that already have uploads.
+
+        Nothing is deleted. With one copy required, a batch that already has
+        an accepted upload is marked verified. With two, a batch that already
+        has two uploads is compared; a batch with one upload stays pending.
+        Safe to run twice: an agreed batch is left as it is.
+        """
+        promoted = 0
+        reissued = 0
+        left = 0
+        with self._tx() as conn:
+            units = conn.execute(
+                "SELECT * FROM units WHERE state='open' ORDER BY id"
             ).fetchall()
-            if len(peers) < need:
-                waiting = "waiting for a second worker" if need == 2 else f"waiting for {need} copies"
+            now = self.clock()
+            for unit in units:
+                peers = self._pending_copies(conn, unit)
+                need = self.replica_count(unit["project"])
+                if len(peers) < need:
+                    left += 1
+                    continue
+                outcome = self._settle(
+                    conn, unit, peers, now, announce_wait=False, worker_id=None,
+                )
+                if outcome["verdict"] == "agreed":
+                    promoted += 1
+                elif outcome["verdict"] == "disagreed":
+                    reissued += 1
+                else:
+                    left += 1
+        return {
+            "copies_required": self.public_copies(),
+            "promoted": promoted,
+            "reissued": reissued,
+            "left_pending": left,
+        }
+
+    def _pending_copies(self, conn, unit):
+        return conn.execute(
+            """SELECT r.* FROM results r
+               JOIN assignments a ON a.id = r.assignment_id
+               WHERE r.unit_id=? AND r.generation=? AND r.verdict='pending'
+                 AND a.status='submitted'
+               ORDER BY r.id""",
+            (unit["id"], unit["generation"]),
+        ).fetchall()
+
+    def _settle(self, conn, unit, peers, now, *, announce_wait: bool, worker_id) -> dict:
+        """Keep a batch, or leave it waiting. Callers are already in a transaction.
+
+        One required copy finishes on the uploads already stored. Two required
+        copies still compare period, SDE, depth, and ``max_miss_fraction``,
+        and still refuse to pair two devices from the same account (that rule
+        runs when the second copy is claimed, not here).
+        """
+        need = self.replica_count(unit["project"])
+        if len(peers) < need:
+            waiting = "waiting for a second worker" if need == 2 else f"waiting for {need} copies"
+            if announce_wait and worker_id is not None:
                 self._event(
                     conn, "info",
                     f"{self._name(conn, worker_id)} submitted unit {unit['id']} ({waiting})",
                 )
-                return {"status": "accepted", "verdict": "pending", "detail": waiting}
-            if need <= 1:
-                confirmed = self._finish(conn, unit, peers, "accepted", now)
-                return {
-                    "status": "accepted",
-                    "verdict": "agreed",
-                    "detail": "accepted",
-                    "candidates": len(confirmed),
-                }
-            handler = get_handler(unit["project"])
-            payload = json.loads(unit["payload_json"])
-            base_stars = json.loads(peers[0]["stars_json"])
-            reason = "accepted"
-            for peer in peers[1:]:
-                ok, reason = handler.validate(
-                    payload, base_stars, json.loads(peer["stars_json"]), self.settings,
-                )
-                if not ok:
-                    self._reissue(conn, unit, reason)
-                    return {"status": "accepted", "verdict": "disagreed", "detail": reason}
-            confirmed = self._finish(conn, unit, peers, reason, now)
+            return {"status": "accepted", "verdict": "pending", "detail": waiting}
+        if need <= 1:
+            confirmed = self._finish(conn, unit, peers, "checked once", now)
             return {
                 "status": "accepted",
                 "verdict": "agreed",
-                "detail": reason,
+                "detail": "checked once",
                 "candidates": len(confirmed),
             }
+        handler = get_handler(unit["project"])
+        payload = json.loads(unit["payload_json"])
+        base_stars = json.loads(peers[0]["stars_json"])
+        reason = "accepted"
+        for peer in peers[1:]:
+            ok, reason = handler.validate(
+                payload, base_stars, json.loads(peer["stars_json"]), self.settings,
+            )
+            if not ok:
+                self._reissue(conn, unit, reason)
+                return {"status": "accepted", "verdict": "disagreed", "detail": reason}
+        confirmed = self._finish(conn, unit, peers, reason, now)
+        return {
+            "status": "accepted",
+            "verdict": "agreed",
+            "detail": reason,
+            "candidates": len(confirmed),
+        }
 
     def status(self, project: str | None = None) -> dict:
         if project is not None:
@@ -740,6 +817,7 @@ class Store:
             "candidates_new": int(new or 0),
             "lease_hours": self.settings.lease_s / 3600,
             "replicas": self.replica_count(counted),
+            "copies_required": self.public_copies(),
             "sectors": sectors,
         }
 

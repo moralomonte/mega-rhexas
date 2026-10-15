@@ -22,7 +22,12 @@ depth_atol = 0.0001      # or 100 ppm, whichever is larger
 max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 
 # Omit replicas to let the project handler decide. Exoplanets uses 2.
-# replicas = 1             # accept a single upload and skip the comparison
+# replicas = 1             # older override; [verification] copies_required is the switch
+
+[verification]
+# 2: two different accounts must agree. 1: the first accepted upload counts,
+# and no second copy is issued. Existing copies are never deleted.
+copies_required = 2
 
 [accounts]
 # invite: signup needs a code from `rhexas coord invite create` (the default).

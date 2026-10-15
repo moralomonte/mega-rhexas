@@ -42,7 +42,9 @@
       <nav class="jumps" aria-label="On this page">
         <a href="#transit">A transit</a>
         <a href="#your-computer">Your computer</a>
-        <a href="#two-checks">Two checks</a>
+        <a href="#two-checks" data-copies="2">Two checks</a>
+        <a href="#two-checks" data-copies="1" hidden>One check</a>
+        <a href="#faq">Questions</a>
         <a href="#candidates">Candidates</a>
         <a href="#pace">Pace</a>
         <a href="#privacy">Privacy</a>
@@ -123,7 +125,24 @@
     </section>
 
     <section class="section" id="two-checks">
-      <div class="story flip">
+      <div class="story flip" data-copies="1" hidden>
+        <div>
+          <h2>Checked once, for now</h2>
+          <p>Each batch of stars is checked by one person. The first accepted result counts.</p>
+          <p>That is a single check. It is not two people agreeing on the same dip.</p>
+          <p>The two-person check will return as more people join. The comparison stays in the program, and it comes back when that happens.</p>
+        </div>
+        <figure class="illus card">
+          <svg viewBox="0 0 360 220" aria-hidden="true">
+            <circle cx="90" cy="78" r="16" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M62 148 c6-28 18-40 28-40 s22 12 28 40" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <rect x="180" y="58" width="96" height="72" rx="12" fill="rgba(255,209,102,.08)" stroke="#ffd166" stroke-width="2"/>
+            <path d="M210 94 l10 10 18-22" fill="none" stroke="#34d399" stroke-width="3"/>
+          </svg>
+          <figcaption>One person. One batch. Checked once.</figcaption>
+        </figure>
+      </div>
+      <div class="story flip" data-copies="2">
         <div>
           <h2>Why two people check each batch</h2>
           <p>Every batch of stars goes to two different people. Each one searches it alone.</p>
@@ -213,8 +232,10 @@
           <p>The big star files stay on your computer until they are deleted. They are not uploaded.</p>
           <p>The server receives the small result: the dip measurements for that batch. It does not receive your photos, documents, or other files.</p>
           <p>The leaderboard shows the display name you pick. It does not show your email.</p>
-          <p>Credit is a count of stars that two people agreed on.</p>
-          <p>The beta is invite-only for now.</p>
+          <p data-copies="2">Credit is a count of stars that two people agreed on.</p>
+          <p data-copies="1" hidden>Credit is a count of stars checked once. The two-person check will return as more people join.</p>
+          <p data-signup="invite">The beta is invite-only for now.</p>
+          <p data-signup="open" hidden>Signup is open. An account does not need an invite code.</p>
         </div>
         <figure class="illus card">
           <svg viewBox="0 0 360 220" aria-hidden="true">
@@ -233,6 +254,21 @@
       </div>
     </section>
 
+    <section class="section" id="faq">
+      <h2>Questions</h2>
+      <h3>How many people check a batch?</h3>
+      <p data-copies="2">Two different people. The batch counts when they see the same dip. If they do not, the stars are checked again.</p>
+      <p data-copies="1" hidden>One person, for now. The result is checked once. The two-person check will return as more people join.</p>
+      <h3>Do I need an invite code?</h3>
+      <p data-signup="invite">Yes. The beta is invite-only for now. An invite code is how a new account is opened.</p>
+      <p data-signup="open" hidden>No. Signup is open. Create an account with an email and a password, then link your computer.</p>
+      <h3>Is a candidate a confirmed planet?</h3>
+      <p>No. Every candidate here is unverified until astronomers confirm it. This site does not announce a discovery.</p>
+      <h3>What does the leaderboard count?</h3>
+      <p data-copies="2">Stars that two different people agreed on, under the display name you pick. It does not show your email.</p>
+      <p data-copies="1" hidden>Stars checked once, under the display name you pick. It does not show your email. The two-person check will return as more people join.</p>
+    </section>
+
     <section class="section" id="technical-details">
       <div class="card">
         <h2>Technical details (coming soon)</h2>
@@ -245,7 +281,8 @@
       <div class="cta-band">
         <div>
           <h2>Join the search</h2>
-          <p>Create an account with your invite code, download the program, and link your computer.</p>
+          <p data-signup="invite">Create an account with your invite code, download the program, and link your computer.</p>
+          <p data-signup="open" hidden>Create an account, download the program, and link your computer. No invite code.</p>
         </div>
         <div class="cta-row">
           <a class="btn btn-primary" href="/signup">Join the search</a>
@@ -271,7 +308,8 @@
   </div>
   <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
   <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
-  <p>The beta is invite-only for now.</p>
+  <p data-signup="invite">The beta is invite-only for now.</p>
+  <p data-signup="open" hidden>Signup is open. An account does not need an invite code.</p>
 </footer>
 <script src="/js/common.js" defer></script>
 </body>

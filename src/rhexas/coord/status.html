@@ -116,8 +116,8 @@ footer{margin-top:14px;color:var(--mut);font-size:12px}
 <div class="stack" id="overall"></div>
 <div class="legend">
 <span><i class="swatch wip"></i>in progress</span>
-<span><i class="swatch submitted"></i>submitted, awaiting 2nd check</span>
-<span><i class="swatch verified"></i>verified</span>
+<span><i class="swatch submitted"></i><span id="leg-sub">submitted, awaiting 2nd check</span></span>
+<span><i class="swatch verified"></i><span id="leg-ok">verified</span></span>
 </div>
 </section>
 <section class="card s7">
@@ -179,6 +179,8 @@ $('sub').textContent = 'Friends beta · ' + location.host;
   }
   frame();
 })();
+let copiesRequired = 2;
+function onceMode(){ return copiesRequired <= 1; }
 function num(n){return (n ?? 0).toLocaleString()}
 function ppm(d){return d == null ? '–' : Math.round(d*1e6).toLocaleString() + ' ppm'}
 function days(d){return d == null ? '–' : Number(d).toFixed(4) + ' d'}
@@ -229,6 +231,8 @@ function ago(iso){
   return days === 1 ? '1 day ago' : days + ' days ago';
 }
 function drawStatus(s){
+  copiesRequired = (s.copies_required || s.replicas || 2) <= 1 ? 1 : 2;
+  const once = onceMode();
   const agreed = s.tics_agreed || 0;
   const submitted = s.tics_submitted || 0;
   const progressing = s.tics_in_progress || 0;
@@ -240,15 +244,19 @@ function drawStatus(s){
   paintArc('arc_wip', total ? (agreed + submitted) / total : 0, total ? progressing / total : 0);
   $('pct').textContent = Math.round((total ? started / total : 0) * 100) + '%';
   $('s_stars').textContent = num(agreed + submitted);
-  $('s_stars_note').textContent = num(agreed) + ' verified';
+  $('s_stars_note').textContent = num(agreed) + (once ? ' checked once' : ' verified');
   $('s_units').textContent = num(unitsSubmitted) + '/' + num(s.units_total);
-  $('s_units_note').textContent = num(s.units_agreed) + ' verified · ' + num(s.units_in_progress) + ' in progress';
+  $('s_units_note').textContent = num(s.units_agreed) + (once ? ' checked once · ' : ' verified · ') + num(s.units_in_progress) + ' in progress';
   $('s_cands').textContent = num(s.candidates_new);
   $('s_online').textContent = num(s.workers_online);
   $('s_online_note').textContent = num(s.workers_idle) + ' idle · ' + num(s.workers_offline) + ' offline';
-  $('progline').textContent = num(agreed + submitted) + ' of ' + num(total) + ' stars checked (' + num(agreed) + ' verified, ' + num(submitted) + ' awaiting a second check). ' + num(progressing) + ' in progress.';
+  $('progline').textContent = once
+    ? num(agreed + submitted) + ' of ' + num(total) + ' stars checked (' + num(agreed) + ' checked once, ' + num(submitted) + ' uploaded). ' + num(progressing) + ' in progress.'
+    : num(agreed + submitted) + ' of ' + num(total) + ' stars checked (' + num(agreed) + ' verified, ' + num(submitted) + ' awaiting a second check). ' + num(progressing) + ' in progress.';
   const leased = s.assignments_leased || 0;
-  $('pairline').textContent = num(leased) + (leased === 1 ? ' batch' : ' batches') + ' checked out · lease ' + s.lease_hours + ' h · ' + s.replicas + ' copies each';
+  $('pairline').textContent = num(leased) + (leased === 1 ? ' batch' : ' batches') + ' checked out · lease ' + s.lease_hours + ' h · ' + (once ? 'checked once' : s.replicas + ' copies each');
+  $('leg-sub').textContent = once ? 'uploaded' : 'submitted, awaiting 2nd check';
+  $('leg-ok').textContent = once ? 'checked once' : 'verified';
   $('live').textContent = 'Live · ' + new Date().toLocaleTimeString();
   fillStack($('overall'), agreed, submitted, progressing, total);
   const box = $('sectors'); box.replaceChildren();
@@ -259,7 +267,9 @@ function drawStatus(s){
     line.append(el('b', 'S' + row.sector));
     line.append(fillStack(el('div', null, 'stack'), v, sub, prog, row.tics || 0));
     const label = el('span', (v + sub) + '/' + row.tics);
-    label.title = (row.agreed || 0) + ' verified, ' + (row.units_submitted || 0) + ' awaiting a second check, ' + (row.units_in_progress || 0) + ' in progress, ' + row.units + ' batches';
+    label.title = once
+      ? (row.agreed || 0) + ' checked once, ' + (row.units_submitted || 0) + ' uploaded, ' + (row.units_in_progress || 0) + ' in progress, ' + row.units + ' batches'
+      : (row.agreed || 0) + ' verified, ' + (row.units_submitted || 0) + ' awaiting a second check, ' + (row.units_in_progress || 0) + ' in progress, ' + row.units + ' batches';
     line.append(label);
     box.append(line);
   }
@@ -274,8 +284,9 @@ function drawWorkers(list){
   for (const w of list){
     const tr = document.createElement('tr');
     tr.append(el('td', w.name));
-    tr.append(splitCell(num(w.stars_submitted), num(w.stars_verified) + ' verified'));
-    tr.append(splitCell(num(w.batches_submitted) + ' submitted', num(w.batches_verified) + ' verified'));
+    const credit = onceMode() ? ' checked once' : ' verified';
+    tr.append(splitCell(num(w.stars_submitted), num(w.stars_verified) + credit));
+    tr.append(splitCell(num(w.batches_submitted) + ' submitted', num(w.batches_verified) + credit));
     tr.append(splitCell(num(w.candidates_submitted) + ' submitted', num(w.candidates_agreed != null ? w.candidates_agreed : w.candidates_found) + ' agreed'));
     tr.append(el('td', w.activity || '—', 'act'));
     const seen = document.createElement('td');
@@ -291,7 +302,12 @@ function drawWorkers(list){
 }
 function drawCands(list){
   const box = $('cands'); box.replaceChildren();
-  if (!list.length){ box.append(el('div', 'None yet. A candidate appears here only after the two copies agree.', 'empty')); return; }
+  if (!list.length){
+    box.append(el('div', onceMode()
+      ? 'None yet. A candidate appears here after one check.'
+      : 'None yet. A candidate appears here only after the two copies agree.', 'empty'));
+    return;
+  }
   const table = document.createElement('table');
   const head = document.createElement('tr');
   for (const label of ['TIC','Sector','Period','Depth','SDE','SNR','']) head.append(el('th', label));

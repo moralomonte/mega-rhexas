@@ -145,6 +145,117 @@ def test_local_cookie_is_lax_without_secure(tmp_path):
         store.close()
 
 
+def test_open_signup_signs_in_and_links_a_device(tmp_path):
+    store = _store(tmp_path)
+    try:
+        app = _open(store)
+        config = _json(app.handle("GET", "/api/v1/public/config", "", {}, b""))
+        assert config == {"signup": "open", "copies_required": 2}
+        created = _signup(app)
+        assert created.status == 201
+        session = _session(created)
+        logged = _post(app, "/api/v1/login", {"email": "ada@example.com", "password": "correct horse"})
+        assert logged.status == 200
+        cookie = {"Cookie": f"rhexas_session={session}", "Content-Type": "application/json"}
+        started = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
+        approved = _post(app, "/api/v1/device/approve", {"code": started["user_code"]}, cookie)
+        assert approved.status == 200
+        polled = _json(_post(app, "/api/v1/device/poll", {"device_code": started["device_code"]}))
+        assert polled["token"].startswith("rhx_")
+        assert store.authenticate(polled["token"])["name"]
+    finally:
+        store.close()
+
+
+def test_honeypot_email_and_device_cap(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    try:
+        app = _open(store)
+        bad_email = _signup(app, email="not-an-email", name="Ada")
+        assert bad_email.status == 400
+        trapped = _post(app, "/api/v1/signup", {
+            "email": "ada@example.com",
+            "password": "correct horse",
+            "display_name": "Ada",
+            "company": "filled by a bot",
+        })
+        assert trapped.status == 400
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"] == 0
+        created = _signup(app)
+        assert created.status == 201
+        monkeypatch.setattr(auth, "MAX_DEVICES_PER_ACCOUNT", 1)
+        cookie = {"Cookie": f"rhexas_session={_session(created)}", "Content-Type": "application/json"}
+        first = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
+        assert _post(app, "/api/v1/device/approve", {"code": first["user_code"]}, cookie).status == 200
+        second = _json(_post(app, "/api/v1/device/start", {"hostname": "desktop"}))
+        capped = _post(app, "/api/v1/device/approve", {"code": second["user_code"]}, cookie)
+        assert capped.status == 409
+        devices = _json(app.handle("GET", "/api/v1/me/devices", "", cookie, b""))["devices"]
+        laptop = next(row for row in devices if row["hostname"] == "laptop")
+        assert app.handle(
+            "POST", f"/api/v1/me/devices/{laptop['id']}/revoke", "", cookie, b"{}",
+        ).status == 200
+        third = _json(_post(app, "/api/v1/device/start", {"hostname": "spare"}))
+        assert _post(app, "/api/v1/device/approve", {"code": third["user_code"]}, cookie).status == 200
+    finally:
+        store.close()
+
+
+def test_login_and_device_link_are_rate_limited_per_ip(tmp_path, monkeypatch):
+    monkeypatch.setattr(auth, "LOGIN_FAIL_PER_IP", 2)
+    monkeypatch.setattr(auth, "DEVICE_START_PER_IP", 1)
+    store = _store(tmp_path)
+    try:
+        app = _open(store)
+        assert _signup(app).status == 201
+        headers = {"X-Forwarded-For": "203.0.113.8"}
+        assert _post(app, "/api/v1/login", {
+            "email": "ada@example.com", "password": "wrong-password-1",
+        }, headers).status == 401
+        assert _post(app, "/api/v1/login", {
+            "email": "ada@example.com", "password": "wrong-password-2",
+        }, headers).status == 401
+        limited = _post(app, "/api/v1/login", {
+            "email": "ada@example.com", "password": "wrong-password-3",
+        }, headers)
+        assert limited.status == 429
+        other = _post(app, "/api/v1/login", {
+            "email": "ada@example.com", "password": "correct horse",
+        }, {"X-Forwarded-For": "203.0.113.9"})
+        assert other.status == 200
+        assert _post(app, "/api/v1/device/start", {"hostname": "one"}, headers).status == 200
+        started = _post(app, "/api/v1/device/start", {"hostname": "two"}, headers)
+        assert started.status == 429
+    finally:
+        store.close()
+
+
+def test_public_config_follows_invite_and_one_copy(tmp_path):
+    store = Store(tmp_path / "coord.sqlite", clock=Clock(), copies_required=1)
+    store.init_schema()
+    try:
+        invite = App(store)
+        hidden = _json(invite.handle("GET", "/api/v1/public/config", "", {}, b""))
+        assert hidden == {"signup": "invite", "copies_required": 1}
+        blocked = _signup(invite)
+        assert blocked.status == 403
+        page = invite.handle("GET", "/signup", "", {}, b"").body.decode()
+        assert "Invite code" in page
+        assert 'name="company"' in page
+        opened = App(store, accounts=AccountsConfig(signup="open", cookie_secure=False))
+        shown = _json(opened.handle("GET", "/api/v1/public/config", "", {}, b""))
+        assert shown == {"signup": "open", "copies_required": 1}
+        stats = _json(opened.handle("GET", "/api/v1/public/stats", "", {}, b""))
+        assert stats["copies_required"] == 1
+        created = _signup(opened, invite="")
+        assert created.status == 201
+        open_page = opened.handle("GET", "/signup", "", {}, b"").body.decode()
+        assert "Invite code" not in open_page
+        assert "checked once" in open_page
+    finally:
+        store.close()
+
+
 def test_invite_only_is_the_default_and_codes_are_single_use(tmp_path, capsys):
     store = _store(tmp_path)
     try:

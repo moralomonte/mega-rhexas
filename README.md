@@ -297,9 +297,12 @@ cached at `dashboard/sky_cache_sNNNN.json`.
 ## Friends beta
 
 The coordinator hands batches of about 500 TIC IDs to friends' computers,
-which run the same download, search, and filter code. Each exoplanet batch is
-searched twice, by two different accounts. The coordinator keeps a result only
-when the two top hits agree on period, SDE, and depth. It is a small Python
+which run the same download, search, and filter code. With
+`[verification] copies_required = 2` (the default), each exoplanet batch is
+searched twice, by two different accounts, and the coordinator keeps a result
+only when the two top hits agree on period, SDE, and depth. Set
+`copies_required = 1` to count the first accepted upload and skip the second
+copy; the two-copy checks stay in the program. It is a small Python
 process with a SQLite file, meant for one Ubuntu VPS (or, later, a home
 server). The public name is `https://api.megarhexas.com`. The apex
 `megarhexas.com` is the public site in `site/`; its pages call that API with a session cookie.
@@ -309,9 +312,11 @@ Every unit and result carries a `project` (`exoplanets` today). Routes are
 exoplanets. Exoplanet comparison lives in a project handler, so a later science
 can register its own. Credit is an append-only contributions log: account,
 project, unit, outcome, a verified flag, and the time. Verified stays 0 until
-another account agrees. A public leaderboard reads those rows by display name.
-Redundant assignment is that handler's `replicas` (exoplanets uses 2; the
-generic handler uses 1). `replicas` in `coord.toml` overrides it. Signup is
+another account agrees, unless `copies_required` is 1, in which case the first
+accepted upload is verified. A public leaderboard reads those rows by display
+name. Redundant assignment is that handler's `replicas` (exoplanets uses 2; the
+generic handler uses 1). `replicas` in `coord.toml` overrides it while
+`copies_required` is 2. `copies_required = 1` pauses the second copy. Signup is
 invite-only until `accounts.signup` is `open`. Teams and other sciences are
 not in this beta.
 
