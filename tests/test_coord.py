@@ -3,9 +3,11 @@ import http.client
 import json
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from rhexas.config import ConfigError
 from rhexas.coord.cli import main as coord_main
+from rhexas.coord.httpapi import App
 from rhexas.coord.logic import chunk_tics, compare_star_lists, tics_from_curl_script
 from rhexas.coord.server import make_server
 from rhexas.coord.settings import Settings, load_coord_file
@@ -335,6 +337,36 @@ def test_unknown_project_is_rejected(tmp_path):
             pass
         path.write_text("[coord]\nreplicas = 1\n", encoding="utf-8")
         assert load_coord_file(path).settings.replicas == 1
+    finally:
+        store.close()
+
+
+def test_status_page_contains_triskelion(tmp_path):
+    """Status page inlines the dashboard triskelion and the coordinator serves its favicon."""
+    root = Path(__file__).resolve().parents[1]
+    mark = (root / "dashboard" / "static" / "img" / "triskelion.svg").read_text(encoding="utf-8")
+    start = mark.index('d="') + 3
+    glyph = mark[start:mark.index('"', start)]
+    favicon = (root / "dashboard" / "static" / "img" / "favicon.svg").read_bytes()
+    store = _store(tmp_path)
+    try:
+        app = App(store)
+        page = app.handle("GET", "/", "", {}, b"")
+        assert page.status == 200
+        html = page.body.decode("utf-8")
+        assert glyph in html
+        assert "animation:trspin 12s linear infinite" in html
+        assert "@keyframes trspin{to{transform:rotate(360deg)}}" in html
+        assert "drop-shadow(0 0 8px #818cf866)" in html
+        assert "drop-shadow(0 0 14px #a5b4fcaa)" in html
+        assert "prefers-reduced-motion:reduce" in html
+        assert ".trisk{animation:none!important}" in html
+        assert 'rel="icon"' in html and 'href="/favicon.svg"' in html
+        icon = app.handle("GET", "/favicon.svg", "", {}, b"")
+        assert icon.status == 200
+        assert icon.content_type == "image/svg+xml"
+        assert icon.body == favicon
+        assert glyph in icon.body.decode("utf-8")
     finally:
         store.close()
 

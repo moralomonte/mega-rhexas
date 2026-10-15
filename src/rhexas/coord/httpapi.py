@@ -11,6 +11,7 @@ from .store import CoordError, Store
 _TASKS = {"claim", "current", "heartbeat", "submit", "release"}
 
 _PAGE = "status.html"
+_FAVICON = "favicon.svg"
 _COOKIE = "rhexas_admin"
 _MAX_BODY = 8_000_000
 
@@ -77,6 +78,7 @@ class App:
         self.store = store
         self.max_body = max_body
         self.page = page if page is not None else _load_page()
+        self.favicon = _load_asset(_FAVICON)
 
     def handle(self, method: str, path: str, query: str, headers: dict, body: bytes) -> Response:
         try:
@@ -93,6 +95,8 @@ class App:
             return _json(200, {"ok": True})
         if method == "GET" and path in ("/", "/index.html"):
             return Response(200, self.page, "text/html; charset=utf-8")
+        if method == "GET" and path == "/favicon.svg":
+            return Response(200, self.favicon, "image/svg+xml")
         if method == "POST" and path == "/login":
             return self._login(body)
         if method == "POST" and path == "/logout":
@@ -231,5 +235,9 @@ def _code(status: int) -> str:
 
 
 def _load_page() -> bytes:
+    return _load_asset(_PAGE)
+
+
+def _load_asset(name: str) -> bytes:
     from pathlib import Path
-    return (Path(__file__).with_name(_PAGE)).read_bytes()
+    return (Path(__file__).with_name(name)).read_bytes()

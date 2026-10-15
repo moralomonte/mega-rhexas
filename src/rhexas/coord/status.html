@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mega Rhexas · coordinator</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{--bg:#05060f;--glass:rgba(255,255,255,.05);--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--gold:#ffd166}
 *{box-sizing:border-box}
@@ -11,7 +12,12 @@ html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI
 #stars{position:fixed;inset:0;z-index:-1}
 .wrap{max-width:1200px;margin:0 auto;padding:22px 20px 40px}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.mark{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 10px #818cf888)}
+.logo{display:flex;align-items:center;gap:12px}
+.trisk{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 8px #818cf866);transition:filter .4s}
+.logo:hover .trisk,.trisk.spin{animation:trspin 12s linear infinite}
+.logo:hover .trisk{filter:drop-shadow(0 0 14px #a5b4fcaa)}
+@keyframes trspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.trisk{animation:none!important}}
 h1{font-size:20px;margin:0;letter-spacing:.2px}
 h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
 .pill{margin-left:auto;padding:6px 12px;border-radius:999px;border:1px solid var(--bd);background:var(--glass);font-size:12px;color:var(--mut);display:flex;gap:8px;align-items:center}
@@ -60,16 +66,12 @@ footer{margin-top:14px;color:var(--mut);font-size:12px}
 <canvas id="stars"></canvas>
 <div class="wrap">
 <header>
-<svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-<defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5f3fc"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>
-<g fill="none" stroke="url(#mg)" stroke-width="3" stroke-linecap="round">
-<path d="M32 8c8 6 12 10 12 18"/><path d="M54 40c-2 10-10 16-20 16"/><path d="M14 36c0-8 4-16 12-22"/>
-<path d="M32 14c6 8 8 12 4 20"/><path d="M46 42c-6 6-12 8-20 4"/><path d="M20 30c2-8 8-12 14-12"/>
-</g>
-<circle cx="32" cy="32" r="3" fill="url(#mg)" stroke="none"/>
-</svg>
+<div class="logo">
+<svg class="trisk spin" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 721 721"><defs><linearGradient id="tgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a5f3fc"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
+<filter id="gll" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g filter="url(#gll)"><g transform="translate(0.000000,681.000000) scale(0.100000,-0.100000)" fill="url(#tgl)"> <path d="M4595 6673 c-134 -33 -210 -57 -280 -88 -55 -24 -180 -86 -207 -103 -183 -115 -350 -262 -473 -417 -26 -33 -51 -62 -55 -65 -15 -10 -119 -178 -155 -250 -20 -41 -41 -83 -46 -92 -25 -50 -91 -254 -119 -373 -62 -263 -63 -763 -1 -1048 5 -23 17 -78 26 -122 9 -44 24 -106 31 -137 22 -86 21 -425 -1 -521 -99 -430 -305 -737 -646 -964 -50 -33 -231 -123 -248 -123 -6 0 -25 -6 -43 -14 -165 -69 -452 -97 -622 -61 -66 15 -89 20 -191 46 -22 6 -44 14 -49 20 -6 5 -17 9 -26 9 -28 0 -207 96 -278 149 -111 82 -239 230 -278 321 -3 8 -12 29 -19 45 -176 402 -4 846 400 1035 149 70 363 93 480 53 153 -53 267 -182 281 -320 15 -136 -27 -244 -111 -290 -68 -37 -115 -27 -223 46 -77 53 -150 68 -233 51 -93 -20 -184 -111 -194 -195 -9 -72 0 -154 22 -196 19 -35 98 -120 123 -132 8 -4 29 -16 45 -27 32 -21 40 -25 120 -60 146 -64 361 -72 490 -20 300 122 466 338 507 663 59 468 -255 902 -742 1023 -102 26 -391 26 -495 0 -109 -26 -177 -47 -208 -62 -16 -8 -37 -14 -47 -14 -9 0 -23 -7 -30 -15 -7 -8 -17 -15 -23 -15 -21 0 -100 -44 -207 -115 -143 -96 -366 -345 -415 -465 -4 -8 -11 -22 -16 -30 -11 -18 -14 -26 -49 -120 -118 -320 -120 -632 -5 -949 121 -334 391 -627 735 -796 52 -25 108 -53 123 -61 16 -8 33 -14 39 -14 5 0 24 -6 41 -13 63 -27 213 -66 357 -93 127 -23 434 -24 533 0 38 9 80 16 94 16 14 0 46 7 72 14 25 8 73 23 106 32 104 29 313 112 365 145 8 5 22 12 30 15 25 10 34 14 55 27 11 7 43 25 70 41 162 94 395 267 506 376 50 49 160 143 194 166 22 15 53 37 70 49 28 21 77 49 182 103 140 73 416 132 613 132 143 0 348 -32 428 -66 18 -8 41 -14 50 -14 10 0 27 -7 38 -15 10 -8 25 -15 33 -15 13 0 117 -50 176 -84 159 -91 339 -259 441 -411 116 -173 197 -415 208 -625 8 -164 -14 -338 -55 -430 -6 -14 -18 -41 -26 -60 -8 -19 -19 -42 -24 -50 -5 -8 -12 -22 -16 -30 -40 -90 -242 -282 -333 -316 -8 -3 -23 -10 -32 -15 -149 -79 -406 -88 -583 -21 -87 34 -99 39 -138 66 -21 14 -41 26 -45 26 -4 0 -32 22 -62 48 -206 176 -290 384 -231 570 30 93 130 222 172 222 7 0 20 6 28 13 32 27 125 41 177 27 102 -29 139 -90 130 -220 -5 -87 8 -168 32 -192 7 -7 12 -18 12 -24 0 -14 67 -69 117 -97 42 -23 171 -24 216 -1 152 79 210 265 158 510 -93 437 -507 668 -961 537 -303 -88 -542 -350 -624 -685 -24 -98 -22 -331 3 -429 73 -280 233 -513 476 -694 90 -67 90 -67 195 -120 41 -20 87 -43 102 -51 14 -8 31 -14 38 -14 7 0 26 -6 43 -14 18 -8 43 -17 57 -19 14 -3 43 -10 65 -16 122 -31 235 -43 340 -38 150 8 324 41 387 73 14 8 33 14 41 14 14 0 52 16 97 42 8 4 22 11 30 14 8 3 22 10 30 15 8 5 24 13 35 18 11 5 37 21 58 35 21 14 41 26 45 26 36 1 288 259 361 370 79 121 173 338 192 445 5 27 13 61 18 75 48 130 30 555 -31 750 -6 19 -15 51 -19 70 -7 36 -23 84 -45 135 -7 17 -22 55 -34 85 -80 200 -227 409 -411 585 -87 83 -288 245 -304 245 -4 0 -24 13 -44 28 -20 16 -43 32 -51 36 -8 3 -42 22 -75 41 -81 47 -213 111 -370 179 -17 7 -45 17 -62 20 -18 4 -35 12 -38 17 -4 5 -15 9 -25 9 -11 0 -34 6 -52 14 -18 8 -60 21 -93 30 -105 29 -247 90 -320 137 -16 10 -37 22 -45 26 -78 35 -298 236 -382 348 -75 99 -105 149 -179 297 -52 104 -103 304 -119 468 -12 122 6 374 29 419 6 11 11 32 11 48 1 15 7 39 15 53 8 14 14 33 15 42 0 17 50 135 71 168 5 8 14 26 20 40 17 40 141 200 212 271 146 150 357 277 512 309 22 5 53 13 68 19 45 17 281 14 346 -5 176 -51 306 -127 407 -236 43 -46 134 -180 134 -197 0 -5 6 -22 14 -38 42 -84 50 -135 50 -303 0 -177 -18 -264 -75 -360 -5 -8 -12 -22 -16 -30 -29 -67 -125 -158 -212 -201 -62 -31 -72 -34 -171 -34 -101 0 -108 1 -168 34 -101 55 -162 139 -162 223 0 75 42 123 155 179 112 55 165 134 165 247 0 253 -260 351 -505 192 -16 -11 -36 -23 -43 -26 -7 -4 -27 -18 -45 -33 -272 -223 -351 -565 -201 -874 8 -16 14 -33 14 -38 0 -33 153 -208 240 -273 273 -203 594 -239 930 -103 41 17 82 36 91 44 8 7 19 13 23 13 4 0 42 26 84 59 245 187 388 448 437 801 28 201 5 464 -51 597 -8 17 -14 38 -14 46 0 9 -6 28 -14 44 -8 15 -31 62 -52 103 -105 212 -296 417 -499 536 -27 16 -59 34 -70 41 -11 7 -27 15 -35 18 -8 4 -28 12 -45 19 -89 39 -174 67 -277 91 -92 21 -476 20 -563 -2z"/> </g></g></svg>
 <div>
 <h1>Mega Rhexas <small id="sub">Friends beta · coordinator</small></h1>
+</div>
 </div>
 <div class="pill"><span class="dot" id="dot"></span><span id="live">Connecting…</span></div>
 </header>
