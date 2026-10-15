@@ -26,8 +26,9 @@
       var item = MR.el("li", "board-row");
       item.appendChild(MR.el("span", "rank", String(index + 1)));
       item.appendChild(MR.el("span", "name", row.name));
-      item.appendChild(metric(row.starsAgreed, "Stars agreed"));
-      item.appendChild(metric(row.batchesAgreed, "Batches agreed"));
+      var once = stats.copiesRequired === 1;
+      item.appendChild(metric(row.starsAgreed, once ? "Stars checked once" : "Stars agreed"));
+      item.appendChild(metric(row.batchesAgreed, once ? "Batches checked once" : "Batches agreed"));
       item.appendChild(metric(row.candidatesUnverified, "Unverified candidates"));
       list.appendChild(item);
     });

@@ -92,7 +92,12 @@
       batchesTotal: num(src.batches_total, src.units_total),
       sectors: sectors,
       leaderboard: board,
-      updatedAt: src.updated_at || src.updatedAt || null
+      updatedAt: src.updated_at || src.updatedAt || null,
+      copiesRequired: (function () {
+        var copies = num(src.copies_required);
+        if (copies === 1 || copies === 2) return copies;
+        return num(src.replicas) === 1 ? 1 : 2;
+      })()
     };
   };
 

@@ -40,7 +40,8 @@
         <p class="kicker">Welcome back</p>
         <h1>Log in</h1>
         <p class="lede">This is the same account you use to link a computer and to appear on the leaderboard.</p>
-        <p class="note">New here? <a href="/signup">Sign up</a>. The beta is invite-only for now.</p>
+        <p class="note" data-signup="invite">New here? <a href="/signup">Sign up</a>. The beta is invite-only for now.</p>
+        <p class="note" data-signup="open" hidden>New here? <a href="/signup">Sign up</a>. Signup is open. No invite code.</p>
       </div>
       <form class="card" id="login-form" method="post" action="/login">
         <h2>Your account</h2>
@@ -73,7 +74,8 @@
   </div>
   <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
   <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
-  <p>The beta is invite-only for now.</p>
+  <p data-signup="invite">The beta is invite-only for now.</p>
+  <p data-signup="open" hidden>Signup is open. An account does not need an invite code.</p>
 </footer>
 <script src="/js/common.js" defer></script>
 <script src="/js/account.js" defer></script>

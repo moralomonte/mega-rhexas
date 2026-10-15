@@ -22,11 +22,14 @@ from .store import CoordError, hash_token, iso, new_token, parse_iso
 
 
 def signup(store, *, email: str, password: str, display_name: str, invite_code: str,
-           require_invite: bool, ip: str, user_agent: str, session_days: int) -> tuple[dict, str]:
+           require_invite: bool, ip: str, user_agent: str, session_days: int,
+           company: str = "") -> tuple[dict, str]:
     _gate(store, [
         ("signup", f"ip:{ip}", auth.SIGNUP_PER_IP, auth.SIGNUP_WINDOW_S),
         ("signup", "global", auth.SIGNUP_PER_HOUR_GLOBAL, auth.SIGNUP_WINDOW_S),
     ], record=True)
+    if str(company or "").strip():
+        raise CoordError("could not create the account", 400)
     email_key = auth.normalize_email(email)
     display = auth.check_display_name(display_name)
     password = auth.check_password(password)
@@ -306,6 +309,13 @@ def device_approve(store, account_id: int, user_code: str) -> dict:
     with store._tx() as conn:
         _expire_device_grants(store, conn, store.clock())
         row = _pending_grant(conn, canonical)
+        linked = conn.execute(
+            """SELECT COUNT(*) AS n FROM workers
+               WHERE account_id=? AND revoked_at IS NULL""",
+            (int(account_id),),
+        ).fetchone()["n"]
+        if int(linked) >= auth.MAX_DEVICES_PER_ACCOUNT:
+            raise CoordError("this account already has the maximum number of linked computers", 409)
         name = _device_worker_name(conn, row["hostname"])
         now = iso(store.clock())
         cur = conn.execute(
@@ -425,7 +435,7 @@ def public_stats(store) -> dict:
     keys = (
         "units_total", "units_agreed", "units_submitted", "units_in_progress",
         "tics_total", "tics_agreed", "tics_submitted", "tics_in_progress",
-        "replicas",
+        "replicas", "copies_required",
     )
     body = {key: snap[key] for key in keys}
     body["sectors"] = snap["sectors"]

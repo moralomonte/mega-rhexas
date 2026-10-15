@@ -32,6 +32,18 @@ class Settings:
 
 
 @dataclass(frozen=True)
+class VerificationConfig:
+    """How many accepted uploads a batch needs before it counts.
+
+    ``2`` is the two-account agreement check. ``1`` pauses that check: the
+    first accepted upload counts, and no second copy is issued. The comparison
+    code stays in place and runs again when this is set back to ``2``.
+    """
+
+    copies_required: int = 2
+
+
+@dataclass(frozen=True)
 class AccountsConfig:
     """Signup policy and the public origins that may call this API with cookies.
 
@@ -101,6 +113,7 @@ class CoordFile:
     settings: Settings
     accounts: AccountsConfig = field(default_factory=AccountsConfig)
     smtp: SmtpConfig = field(default_factory=SmtpConfig)
+    verification: VerificationConfig = field(default_factory=VerificationConfig)
 
 
 DEFAULT_TOML = """\
@@ -125,6 +138,12 @@ max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 
 # Omit replicas to let the project handler decide. Exoplanets uses 2.
 # replicas = 1             # accept a single upload and skip the comparison
+
+[verification]
+# 2: two different accounts must agree. 1: the first accepted upload counts,
+# and no second copy is issued. The two-copy checks stay in the program and
+# come back when this is set to 2. Existing copies are never deleted.
+copies_required = 2
 
 [accounts]
 # invite: signup needs a code from `rhexas coord invite create` (the default).
@@ -171,7 +190,7 @@ def load_coord_file(path: Path | str | None = None, *, environ: dict | None = No
     data = read_toml(file_path)
     if not isinstance(data, dict):
         raise ConfigError(f"{file_path}: config must be a TOML table")
-    unknown = set(data) - {"coord", "accounts", "smtp"}
+    unknown = set(data) - {"coord", "accounts", "smtp", "verification"}
     if unknown:
         raise ConfigError(f"{file_path}: unknown section(s): {', '.join(sorted(unknown))}")
     block = data.get("coord") or {}
@@ -196,8 +215,10 @@ def load_coord_file(path: Path | str | None = None, *, environ: dict | None = No
     _validate(settings)
     accounts = _accounts_from(data.get("accounts") or {}, file_path)
     smtp = _smtp_from(data.get("smtp") or {}, file_path)
+    verification = _verification_from(data.get("verification") or {}, file_path)
     return CoordFile(
-        path=file_path, host=host, port=port, db=db, settings=settings, accounts=accounts, smtp=smtp,
+        path=file_path, host=host, port=port, db=db, settings=settings,
+        accounts=accounts, smtp=smtp, verification=verification,
     )
 
 
@@ -220,6 +241,20 @@ def _settings_from(block: dict) -> Settings:
     if not updates:
         return current
     return Settings(**{f.name: updates.get(f.name, getattr(current, f.name)) for f in fields(Settings)})
+
+
+def _verification_from(block, file_path: Path) -> VerificationConfig:
+    if not isinstance(block, dict):
+        raise ConfigError(f"{file_path}: [verification] must be a table")
+    extra = set(block) - {"copies_required"}
+    if extra:
+        raise ConfigError(f"{file_path}: unknown key(s) in [verification]: {', '.join(sorted(extra))}")
+    if "copies_required" not in block:
+        return VerificationConfig()
+    copies = _as_int(block["copies_required"])
+    if copies not in (1, 2):
+        raise ConfigError("verification.copies_required must be 1 or 2")
+    return VerificationConfig(copies_required=copies)
 
 
 def _accounts_from(block, file_path: Path) -> AccountsConfig:

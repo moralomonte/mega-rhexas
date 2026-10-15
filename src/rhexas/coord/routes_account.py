@@ -12,7 +12,9 @@ def account_route(app, method: str, path: str, query: dict, headers: dict, body:
     if path == "/signup":
         return _signup_html(app, method, headers, body, query)
     if path == "/login" and method == "GET":
-        return _html(pages.login_page(next_path=auth.safe_next(_first(query, "next"))))
+        return _html(pages.login_page(
+            next_path=auth.safe_next(_first(query, "next")), **_copy_kw(app),
+        ))
     if path == "/account/login" and method == "POST":
         return _login_html(app, headers, body)
     if path == "/account" and method == "GET":
@@ -50,6 +52,8 @@ def account_route(app, method: str, path: str, query: dict, headers: dict, body:
         return _json(200, identity.my_stats(app.store, account["id"]))
     if path == "/api/v1/public/stats" and method == "GET":
         return _json(200, identity.public_stats(app.store))
+    if path == "/api/v1/public/config" and method == "GET":
+        return _json(200, _public_config(app))
     if path == "/api/v1/device/start" and method == "POST":
         return _device_start(app, headers, body)
     if path == "/api/v1/device/poll" and method == "POST":
@@ -79,6 +83,7 @@ def _known(path: str) -> bool:
         "/link", "/link/approve", "/link/deny", "/verify-email",
         "/api/v1/signup", "/api/v1/login", "/api/v1/logout", "/api/v1/me",
         "/api/v1/me/devices", "/api/v1/me/stats", "/api/v1/public/stats",
+        "/api/v1/public/config",
         "/api/v1/device", "/api/v1/device/start", "/api/v1/device/poll",
         "/api/v1/device/approve", "/api/v1/device/deny", "/api/v1/verify-email/resend",
     }:
@@ -87,6 +92,18 @@ def _known(path: str) -> bool:
         _device_id(path, "/account/devices/", "/revoke") is not None
         or _device_id(path, "/api/v1/me/devices/", "/revoke") is not None
     )
+
+
+def _copy_kw(app) -> dict:
+    return {"copies_required": app.store.public_copies()}
+
+
+def _public_config(app) -> dict:
+    copies = app.store.public_copies()
+    return {
+        "signup": "invite" if app.accounts.invite_only else "open",
+        "copies_required": 1 if copies <= 1 else 2,
+    }
 
 
 def _signup_json(app, headers, body) -> Response:
@@ -113,7 +130,9 @@ def _login_json(app, headers, body) -> Response:
 def _signup_html(app, method, headers, body, query) -> Response:
     nxt = auth.safe_next(_first(query, "next"))
     if method == "GET":
-        return _html(pages.signup_page(invite=app.accounts.invite_only, next_path=nxt))
+        return _html(pages.signup_page(
+            invite=app.accounts.invite_only, next_path=nxt, **_copy_kw(app),
+        ))
     if method != "POST":
         return _error(405, "method not allowed", "method")
     _origin(app, headers)
@@ -129,6 +148,7 @@ def _signup_html(app, method, headers, body, query) -> Response:
             display_name=str(form.get("display_name") or ""),
             invite_code=str(form.get("invite_code") or ""),
             next_path=nxt,
+            **_copy_kw(app),
         ), exc.status)
     return _redirect(nxt, [_session(app, token)])
 
@@ -149,6 +169,7 @@ def _login_html(app, headers, body) -> Response:
     except CoordError as exc:
         return _html(pages.login_page(
             error=str(exc), email=str(form.get("email") or ""), next_path=nxt,
+            **_copy_kw(app),
         ), exc.status)
     return _redirect(nxt, [_session(app, token)])
 
@@ -164,6 +185,7 @@ def _create(app, headers, payload: dict) -> tuple[dict, str, str]:
         ip=auth.client_ip(headers),
         user_agent=auth.header(headers, "user-agent"),
         session_days=app.accounts.session_days,
+        company=str(payload.get("company") or ""),
     )
     return account, token, _send_verification(app, account, auth.client_ip(headers))
 
@@ -219,6 +241,7 @@ def _account_html(app, headers, query) -> Response:
         stats=stats,
         note=note,
         verify_offered=app.mailer.enabled(),
+        **_copy_kw(app),
     ))
 
 
@@ -229,17 +252,21 @@ def _link_html(app, headers, query) -> Response:
             "Link a computer",
             "Missing code. On the computer you want to link, run rhexas worker --login.",
             error=True,
+            **_copy_kw(app),
         ), 400)
     try:
         preview = identity.device_preview(app.store, code)
     except CoordError as exc:
-        return _html(pages.link_page(code=code, hostname="", logged_in=False, error=str(exc)), exc.status)
+        return _html(pages.link_page(
+            code=code, hostname="", logged_in=False, error=str(exc), **_copy_kw(app),
+        ), exc.status)
     account = identity.account_for_session(app.store, _session_token(headers))
     return _html(pages.link_page(
         code=preview["code"],
         hostname=preview["hostname"],
         logged_in=account is not None,
         display_name=account["display_name"] if account else "",
+        **_copy_kw(app),
     ))
 
 
@@ -257,14 +284,18 @@ def _link_decision(app, headers, body, *, approve: bool) -> Response:
         identity.device_deny(app.store, account["id"], code)
         return _redirect("/account?denied=1")
     except CoordError as exc:
-        return _html(pages.link_page(code=code, hostname="", logged_in=True, error=str(exc)), exc.status)
+        return _html(pages.link_page(
+            code=code, hostname="", logged_in=True, error=str(exc), **_copy_kw(app),
+        ), exc.status)
 
 
 def _verify_html(app, query) -> Response:
     try:
         identity.confirm_email(app.store, _first(query, "token"))
     except CoordError as exc:
-        return _html(pages.message_page("Verification", str(exc), error=True), exc.status)
+        return _html(pages.message_page(
+            "Verification", str(exc), error=True, **_copy_kw(app),
+        ), exc.status)
     return _redirect("/account?verified=1")
 
 
@@ -276,7 +307,9 @@ def _revoke_html(app, headers, device_id: int) -> Response:
     try:
         identity.revoke_device(app.store, account["id"], device_id)
     except CoordError as exc:
-        return _html(pages.message_page("Devices", str(exc), error=True), exc.status)
+        return _html(pages.message_page(
+            "Devices", str(exc), error=True, **_copy_kw(app),
+        ), exc.status)
     return _redirect("/account")
 
 
@@ -293,13 +326,16 @@ def _resend(app, headers, *, html: bool) -> Response:
         if html:
             return _html(pages.message_page(
                 "Verification", "Email verification is not configured.", error=True,
+                **_copy_kw(app),
             ), 400)
         raise CoordError("email verification is not configured", 400)
     status = _send_verification(app, account, auth.client_ip(headers))
     if html:
         if status == "sent":
             return _redirect("/account?resent=1")
-        return _html(pages.message_page("Verification", "Could not send email.", error=True), 502)
+        return _html(pages.message_page(
+            "Verification", "Could not send email.", error=True, **_copy_kw(app),
+        ), 502)
     return _json(200, {"email_verification": status})
 
 

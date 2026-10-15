@@ -34,7 +34,7 @@ def _mark() -> str:
     return _MARK
 
 
-def render(title: str, body: str, *, wide: bool = False) -> bytes:
+def render(title: str, body: str, *, wide: bool = False, copies_required: int = 2) -> bytes:
     width = "760px" if wide else "440px"
     html = f"""<!doctype html>
 <html lang="en">
@@ -77,6 +77,7 @@ footer{{margin-top:16px;color:var(--mut);font-size:12px}}
 .stats{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}}
 .stat b{{display:block;font-size:22px;font-variant-numeric:tabular-nums}}
 .stat span{{font-size:11px;color:var(--mut);letter-spacing:.6px;text-transform:uppercase}}
+.hp{{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}}
 </style>
 </head>
 <body>
@@ -87,7 +88,7 @@ footer{{margin-top:16px;color:var(--mut);font-size:12px}}
 <div><h1>Mega Rhexas <small>{_esc(title)}</small></h1></div>
 </a>
 {body}
-<footer>Batches are kept when two different accounts agree.</footer>
+<footer>{_footer(copies_required)}</footer>
 </div>
 <script>
 (() => {{
@@ -115,8 +116,14 @@ footer{{margin-top:16px;color:var(--mut);font-size:12px}}
     return html.encode("utf-8")
 
 
+def _footer(copies_required: int) -> str:
+    if int(copies_required) == 1:
+        return "Each batch is checked once. The two-person check will return as more people join."
+    return "Batches are kept when two different accounts agree."
+
+
 def signup_page(*, error: str = "", invite: bool = True, email: str = "", display_name: str = "",
-                invite_code: str = "", next_path: str = "/account") -> bytes:
+                invite_code: str = "", next_path: str = "/account", copies_required: int = 2) -> bytes:
     invite_field = ""
     if invite:
         invite_field = f"""
@@ -136,16 +143,21 @@ def signup_page(*, error: str = "", invite: bool = True, email: str = "", displa
 <label for="name">Display name</label>
 <input id="name" name="display_name" autocomplete="nickname" required value="{_esc(display_name)}">
 {invite_field}
+<div class="hp" aria-hidden="true">
+<label for="company">Company</label>
+<input id="company" name="company" tabindex="-1" autocomplete="off" value="">
+</div>
 <p class="err">{_esc(error)}</p>
 <div class="row"><button class="primary" type="submit">Sign up</button>
 <a href="/login?next={_esc(next_path)}">Log in</a></div>
 </form>
 </section>
 """
-    return render("Sign up", body)
+    return render("Sign up", body, copies_required=copies_required)
 
 
-def login_page(*, error: str = "", email: str = "", next_path: str = "/account") -> bytes:
+def login_page(*, error: str = "", email: str = "", next_path: str = "/account",
+               copies_required: int = 2) -> bytes:
     body = f"""
 <section class="card">
 <h2>Log in</h2>
@@ -162,10 +174,11 @@ def login_page(*, error: str = "", email: str = "", next_path: str = "/account")
 </form>
 </section>
 """
-    return render("Log in", body)
+    return render("Log in", body, copies_required=copies_required)
 
 
-def link_page(*, code: str, hostname: str, logged_in: bool, display_name: str = "", error: str = "") -> bytes:
+def link_page(*, code: str, hostname: str, logged_in: bool, display_name: str = "", error: str = "",
+              copies_required: int = 2) -> bytes:
     next_path = "/link?code=" + code
     if error:
         inner = f"<p class='err'>{_esc(error)}</p>"
@@ -194,11 +207,11 @@ def link_page(*, code: str, hostname: str, logged_in: bool, display_name: str = 
 </div>
 """
     body = f"<section class='card'><h2>Link a computer</h2>{inner}</section>"
-    return render("Link a computer", body)
+    return render("Link a computer", body, copies_required=copies_required)
 
 
 def account_page(*, account: dict, devices: list[dict], stats: dict, note: str = "",
-                 verify_offered: bool = False) -> bytes:
+                 verify_offered: bool = False, copies_required: int = 2) -> bytes:
     verified = "verified" if account.get("email_verified") else "not verified yet"
     banner = f"<p class='ok'>{_esc(note)}</p>" if note else ""
     resend = ""
@@ -238,7 +251,7 @@ def account_page(*, account: dict, devices: list[dict], stats: dict, note: str =
 <div class="stat"><span>Batches verified</span><b>{int(stats.get('batches_verified') or 0)}</b></div>
 <div class="stat"><span>Batches pending</span><b>{int(stats.get('batches_pending') or 0)}</b></div>
 </div>
-<p class="note">Pending until another account agrees on the same batch. Revoking a device drops its open lease.</p>
+<p class="note">{_credit_note(copies_required)} Revoking a device drops its open lease.</p>
 <h2>Computers</h2>
 <table>
 <tr><th>Computer</th><th></th><th></th><th></th></tr>
@@ -249,10 +262,16 @@ def account_page(*, account: dict, devices: list[dict], stats: dict, note: str =
 </div>
 </section>
 """
-    return render("Your account", body, wide=True)
+    return render("Your account", body, wide=True, copies_required=copies_required)
 
 
-def message_page(title: str, text: str, *, error: bool = False) -> bytes:
+def _credit_note(copies_required: int) -> str:
+    if int(copies_required) == 1:
+        return "Checked once. The two-person check will return as more people join."
+    return "Pending until another account agrees on the same batch."
+
+
+def message_page(title: str, text: str, *, error: bool = False, copies_required: int = 2) -> bytes:
     kind = "err" if error else "note"
     body = f"<section class='card'><h2>{_esc(title)}</h2><p class='{kind}'>{_esc(text)}</p></section>"
-    return render(title, body)
+    return render(title, body, copies_required=copies_required)

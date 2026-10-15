@@ -78,7 +78,7 @@ sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
 
 That writes `/var/lib/rhexas/coord.toml` and `/var/lib/rhexas/coord.sqlite`, and prints an **admin token** once. It is also stored in `/var/lib/rhexas/admin.token` (mode 600). You paste this token into the status page. It is not a worker invite and it is not a signup code.
 
-Signup starts **invite-only**. The example `[accounts]` block in `deploy/coord.example.toml` is already the default when those keys are absent, so an existing `coord.toml` does not need a rewrite. `coord.toml` binds `127.0.0.1:8787` on purpose. The hostname `api.megarhexas.com` is Caddy's job, not a setting in this file.
+Signup starts **invite-only**, and each exoplanet batch starts at **two copies**. The example `[accounts]` and `[verification]` blocks in `deploy/coord.example.toml` are already the defaults when those keys are absent, so an existing `coord.toml` does not need a rewrite until you want open signup or a single check. `coord.toml` binds `127.0.0.1:8787` on purpose. The hostname `api.megarhexas.com` is Caddy's job, not a setting in this file.
 
 ## 5. Enroll sectors
 
@@ -98,7 +98,7 @@ sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
   python3 -m rhexas.coord --config /var/lib/rhexas/coord.toml enroll --sector 107 --curl-script /path/to/tesscurl_sector_107_lc.sh
 ```
 
-## 6. Invite friends
+## 6. Invite friends, or open signup
 
 Signup is invite-only until you set `signup = "open"` under `[accounts]`. Create a signup code and send that, not an `rhx_` token:
 
@@ -118,7 +118,9 @@ sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
 
 `invite list` prints id, label, and remaining uses. It does not print the code. `invite revoke` takes that id or the code itself. `--uses N` on create lets one code open N accounts (default 1).
 
-Two people must be running or a batch can never finish: every batch is given to two **different accounts**, and the server keeps it only when both top hits agree (period within 0.2%, SDE within 0.25, depth within 5% or 100 ppm). Two computers on the same account cannot be the two copies of one batch. One account can still link several computers; those computers just will not be paired with each other.
+With `copies_required = 2` (the default), two people must be running or a batch can never finish: every batch is given to two **different accounts**, and the server keeps it only when both top hits agree (period within 0.2%, SDE within 0.25, depth within 5% or 100 ppm). Two computers on the same account cannot be the two copies of one batch. One account can still link several computers; those computers just will not be paired with each other. With `copies_required = 1`, the first accepted upload counts and a second copy is not issued. The two-copy checks stay in the program. See “Switch verification and signup” below for the exact lines.
+
+An account can link at most 5 computers. Passwords must be at least 10 characters. Signup, login, and device-link are rate limited per IP. The signup form has a hidden company field; leave it empty.
 
 Old `token create` invites keep working. On the next restart each existing `rhx_` token becomes a legacy account named after that invite, with no email and no password. New ones do the same:
 
@@ -189,11 +191,53 @@ If the browser says the certificate is missing, `dig +short` for that hostname i
 
 ## 9. What you will see once friends are running
 
+With two copies (the default):
+
 - A batch is checked out to two different accounts. While they search, it counts as leased.
 - Each worker heartbeats. The lease is 12 hours and can be extended up to 36 hours. After that the batch goes back to the pool. A late upload is refused.
 - If the two period / SDE / depth values disagree, neither account gets credit and the batch is issued again (a new generation).
 - When they agree, both accounts get credit for the stars they actually measured, and for new candidates that **both** lists marked NEW. Those candidates show on the admin page only. Until the other account agrees, the upload counts as pending on the public leaderboard (display names, no emails).
 - Raw light curves never land on this server. An upload is a few hundred kilobytes to a couple of megabytes.
+
+With one copy (`copies_required = 1`), a batch counts as soon as the first upload is accepted. No second copy is issued. The status page, public stats, and leaderboard call that “checked once”, not “verified by two people”. The two-person check comes back when you set `copies_required = 2` again. Batches already checked once stay checked. Their result rows are not deleted.
+
+## Switch verification and signup
+
+Edit `/var/lib/rhexas/coord.toml`. Do not delete `coord.sqlite`, and do not delete result rows. There is no table rebuild for this change. Restart is what makes the running process read the new lines. Startup also re-evaluates batches that already have an upload.
+
+One check, and anyone can create an account (the lines to use while running ads):
+
+```toml
+[verification]
+copies_required = 1
+
+[accounts]
+signup = "open"
+```
+
+Two checks, invite-only (the defaults, and the lines to put back later):
+
+```toml
+[verification]
+copies_required = 2
+
+[accounts]
+signup = "invite"
+```
+
+Then:
+
+```bash
+sudo -u rhexas env PYTHONPATH=/opt/mega-rhexas/src \
+  python3 -m rhexas.coord --config /var/lib/rhexas/coord.toml reverify
+systemctl restart rhexas-coord
+```
+
+`reverify` prints how many batches became verified. It does not delete copies. A restart runs the same re-evaluation, so the command is optional if you only want the new mode; run it when you want the count before the restart. The restart is not optional: the process keeps the old setting until it starts again.
+
+What changes in the database: a batch that was `submitted` with one copy, while `copies_required` is 1, is marked agreed. The upload row stays. The assignment stays. A new contribution row records the verified credit. Nothing is removed. Switching back to 2 does not undo those rows. New batches then wait for a second account and the agreement check again (`period_rtol`, `sde_atol`, `depth_rtol`, `depth_atol`, `max_miss_fraction`).
+
+The public site reads `GET /api/v1/public/config`. While `signup` is `open` it hides the invite field. While `copies_required` is 1 it says “checked once” and says the two-person check will return as more people join. Set the lines back to `2` and `invite`, restart, and those words return. Accounts created while signup was open keep working after you switch back to invite. New signups then need a code again.
 
 ## 10. Backups
 
@@ -256,7 +300,7 @@ Period, SDE, and depth comparison is an exoplanet project handler. Another scien
 
 `workers.id` is still the device id stored as `contributions.user_id`, so an assignment's `user_id` does not change meaning. Credit belongs to `contributions.account_id`. The table stays append-only: this process does not update or delete those rows. A row is pending after `submitted`, and verified when the other account agrees (`outcome = agreed`, `verified = 1`). Phase 4 scoring can set `revoked = 1` to drop pending or verified points without rewriting history. `accounts.tier` and `accounts.trust_score` are stored empty for that scoring. There is no point total in the database. The public leaderboard is computed from these rows.
 
-Leave `replicas` unset and exoplanets keeps two copies, which must come from two different accounts. Set `replicas = 1` to accept a single upload with no comparison. Teams are not built here. Google sign-in is not wired; `accounts.provider` and `accounts.provider_sub` are reserved for it.
+Leave `[verification] copies_required` at 2, or omit it, and exoplanets keeps two copies, which must come from two different accounts. Set `copies_required = 1` to accept a single upload and skip the comparison until you set it back to 2. The older `[coord] replicas = 1` override still skips the comparison while `copies_required` is 2. Teams are not built here. Google sign-in is not wired; `accounts.provider` and `accounts.provider_sub` are reserved for it.
 
 ## Knobs worth knowing
 
@@ -271,8 +315,9 @@ In `/var/lib/rhexas/coord.toml`:
 | `sde_atol` | 0.25 | Top SDE absolute window |
 | `depth_rtol` / `depth_atol` | 0.05 / 0.0001 | Depth within 5% or 100 ppm, whichever is larger |
 | `max_miss_fraction` | 0.02 | Stars only one worker measured, as a fraction of the batch |
-| `replicas` | omitted | Copy count. Omit it and the project decides (exoplanets: 2). `1` skips the comparison |
-| `[accounts] signup` | `invite` | `invite` requires `invite create`. `open` lets anyone sign up |
+| `replicas` | omitted | Older copy override, used only while `copies_required` is 2. Omit it and the project decides (exoplanets: 2) |
+| `[verification] copies_required` | `2` | `2` requires two different accounts to agree. `1` counts the first accepted upload and issues no second copy. Existing copies are kept |
+| `[accounts] signup` | `invite` | `invite` requires `invite create`. `open` lets anyone sign up. The site hides the invite field when this is `open` |
 | `[accounts] public_origin` | `https://megarhexas.com` | Browser origin allowed to call the API with cookies |
 | `[accounts] api_public_url` | `https://api.megarhexas.com` | Device-link and email links |
 | `[accounts] cookie_secure` | `true` when the API URL is https | `Secure` and `SameSite=None` on the session cookie |
@@ -294,7 +339,8 @@ JSON the public site uses (no worker tokens in these responses except device pol
 
 | Call | Body | Result |
 | --- | --- | --- |
-| `POST /api/v1/signup` | `email`, `password`, `display_name`, `invite_code` | 201, `Set-Cookie`, account fields plus `email_verification` (`sent`, `failed`, or `skipped`) |
+| `GET /api/v1/public/config` | none | `{signup: "invite" or "open", copies_required: 1 or 2}`. The site uses this to hide the invite field and to label one check or two |
+| `POST /api/v1/signup` | `email`, `password`, `display_name`, `invite_code` (omit the code when signup is open), `company` (must be empty) | 201, `Set-Cookie`, account fields plus `email_verification` (`sent`, `failed`, or `skipped`) |
 | `POST /api/v1/login` | `email`, `password` | 200 and `Set-Cookie` |
 | `POST /api/v1/logout` | empty | 204, cookie cleared |
 | `GET /api/v1/me` | session cookie | `id`, `email`, `display_name`, `email_verified`, `provider`, `legacy`, `created_at` |
@@ -309,7 +355,7 @@ JSON the public site uses (no worker tokens in these responses except device pol
 
 `verification_url` is `https://api.megarhexas.com/link` with no query. The worker opens `verification_url?code=USER_CODE`. Codes last 10 minutes and work once. A signed-in user sees “Link this computer:” followed by the hostname, and approves. Public stats omit emails, worker names, and candidate lists. Candidates stay on the admin page.
 
-`GET /api/v1/me/stats` is the only stats route that includes an email, and only for the signed-in account. Signup and login are rate limited per IP. Failed logins are also limited per email. Passwords are hashed with stdlib scrypt.
+`GET /api/v1/me/stats` is the only stats route that includes an email, and only for the signed-in account. Signup, failed login, and device-link (`POST /api/v1/device/start`) are rate limited per IP. Failed logins are also limited per email. Passwords are hashed with stdlib scrypt and must be at least 10 characters. The email must look like an email address. A non-empty `company` field on signup is rejected and no account is created. An account can have at most 5 linked computers; revoking one frees a slot. `GET /api/v1/public/stats` includes `copies_required` so the leaderboard can say “checked once” or “agreed” to match the server.
 
 `rhexas worker --login` stores the token at `~/.local/share/rhexas/worker.token` on Linux (`XDG_DATA_HOME` if set), `~/Library/Application Support/rhexas/worker.token` on macOS, and `%APPDATA%\rhexas\worker.token` on Windows, mode 600 where the filesystem allows it. An installer or the dashboard setup screen can call `rhexas.worker.login.link_this_computer()`.
 

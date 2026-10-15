@@ -66,6 +66,9 @@ def test_how_it_works_is_plain_and_has_the_placeholder():
         "A transit",
         "What your computer does",
         "Why two people check each batch",
+        "Checked once, for now",
+        "The two-person check will return as more people join.",
+        "Questions",
         "What happens to a candidate",
         "How much it uses your computer",
         "Privacy",
@@ -92,7 +95,18 @@ def test_account_pages_call_the_coordinator_contract():
     assert 'credentials: "include"' in js
     assert "/api/v1/account/" not in js
     assert "invite_code" in js
+    assert "/api/v1/public/config" in (SITE / "js" / "common.js").read_text(encoding="utf-8")
     signup = (SITE / "signup.html").read_text(encoding="utf-8")
+    assert 'id="invite-field"' in signup
+    assert 'name="company"' in signup
+    assert 'minlength="10"' in signup
+    assert 'data-copies="1"' in signup
+    assert 'data-signup="open"' in signup
+    deploy = (ROOT / "DEPLOY.md").read_text(encoding="utf-8")
+    assert 'copies_required = 1' in deploy
+    assert 'signup = "open"' in deploy
+    assert 'copies_required = 2' in deploy
+    assert 'signup = "invite"' in deploy
     assert 'data-page="signup"' in signup
     assert (SITE / "link-device.html").read_text(encoding="utf-8").count("Link a device") >= 1
     assert 'data-page="account"' in (SITE / "account.html").read_text(encoding="utf-8")

@@ -37,11 +37,14 @@
   <div class="wrap">
     <div class="auth-shell">
       <div>
-        <p class="kicker">Invite-only beta</p>
+        <p class="kicker" data-signup="invite">Invite-only beta</p>
+        <p class="kicker" data-signup="open" hidden>Open beta</p>
         <h1>Create an account</h1>
-        <p class="lede">The beta is invite-only for now. An invite code is how a new account is opened.</p>
+        <p class="lede" data-signup="invite">The beta is invite-only for now. An invite code is how a new account is opened.</p>
+        <p class="lede" data-signup="open" hidden>Signup is open. An email and a password are enough. No invite code.</p>
         <p>Choose a display name. That is the name on the leaderboard. Your email stays off the board.</p>
-        <p>Credit is a count of stars that two people agreed on.</p>
+        <p data-copies="2">Credit is a count of stars that two people agreed on.</p>
+        <p data-copies="1" hidden>Credit is a count of stars checked once. The two-person check will return as more people join.</p>
         <p class="note">Already registered? <a href="/login">Log in</a>.</p>
       </div>
       <form class="card" id="signup-form" method="post" action="/signup">
@@ -51,9 +54,16 @@
         <label for="email">Email</label>
         <input id="email" name="email" type="email" autocomplete="email" required>
         <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
-        <label for="invite_code">Invite code</label>
-        <input id="invite_code" name="invite_code" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="10">
+        <p class="note">At least 10 characters.</p>
+        <div id="invite-field" data-signup="invite">
+          <label for="invite_code">Invite code</label>
+          <input id="invite_code" name="invite_code" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        </div>
+        <div class="hp" aria-hidden="true">
+          <label for="company">Company</label>
+          <input id="company" name="company" type="text" tabindex="-1" autocomplete="off" value="">
+        </div>
         <p class="alert error" id="form-alert" hidden tabindex="-1" role="alert"></p>
         <div class="form-actions">
           <button class="btn btn-primary" type="submit">Create account</button>
@@ -79,7 +89,8 @@
   </div>
   <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
   <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
-  <p>The beta is invite-only for now.</p>
+  <p data-signup="invite">The beta is invite-only for now.</p>
+  <p data-signup="open" hidden>Signup is open. An account does not need an invite code.</p>
 </footer>
 <script src="/js/common.js" defer></script>
 <script src="/js/account.js" defer></script>

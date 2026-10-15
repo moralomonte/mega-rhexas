@@ -124,4 +124,4 @@ Every hit is labeled **candidates, unverified**. Nothing on this page is a confi
 - A disk message means the drive is under 5 GB free even after the cache was emptied. Free some space and start the command again.
 - The temporary files live in `worker-cache\` inside the checkout. Deleting that folder is safe. The worker will download a batch again if it still owns it.
 
-Your name on the status page is the name on the invite, along with how many stars you have checked and how many new candidates both copies agreed on. Credit is recorded when a batch agrees, including the fact that two people did the work.
+Your name on the status page is the name on the invite, along with how many stars you have checked and how many new candidates were kept. When the coordinator asks for two copies, credit is recorded when two different people agree. When it asks for one copy, the first accepted upload counts, and the two-person check comes back when more people join.

@@ -48,7 +48,8 @@
           <a class="btn btn-primary" href="/signup">Join the search</a>
           <a class="btn btn-ghost js-download" id="download" href="https://github.com/moralomonte/mega-rhexas/releases/latest">Download</a>
         </div>
-        <p class="fine" id="download-note">The beta is invite-only for now. You need an invite code to create an account. Download opens the latest GitHub Release.</p>
+        <p class="fine" id="download-note" data-signup="invite">The beta is invite-only for now. You need an invite code to create an account. Download opens the latest GitHub Release.</p>
+        <p class="fine" data-signup="open" hidden>Signup is open. Create an account, then download the program. Download opens the latest GitHub Release.</p>
       </div>
       <figure class="hero-art">
         <svg viewBox="0 0 640 460" role="img" aria-labelledby="heroTitle heroDesc">
@@ -127,8 +128,8 @@
         <div class="card">
           <h3 class="eyebrow">At a glance</h3>
           <div class="stat-grid" id="stat-grid">
-            <article class="stat"><span>Stars agreed</span><b id="n-agreed">–</b><em>Two checks match</em></article>
-            <article class="stat"><span>Awaiting a second check</span><b id="n-await">–</b><em>One check so far</em></article>
+            <article class="stat"><span id="label-agreed">Stars agreed</span><b id="n-agreed">–</b><em id="note-agreed">Two checks match</em></article>
+            <article class="stat"><span id="label-await">Awaiting a second check</span><b id="n-await">–</b><em id="note-await">One check so far</em></article>
             <article class="stat"><span>Unverified candidates</span><b id="n-cands">–</b><em>Not confirmed planets</em></article>
             <article class="stat"><span>Searching now</span><b id="n-online">–</b><em>Computers online</em></article>
           </div>
@@ -139,8 +140,8 @@
         <p class="note">TESS splits the sky into sectors. Each bar is that sector’s stars. A full bar is not a discovery. It means those stars have been checked.</p>
         <div id="sectors"><p class="empty">Sector progress loads from the public stats feed.</p></div>
         <ul class="legend">
-          <li><i class="swatch verified"></i>Agreed</li>
-          <li><i class="swatch submitted"></i>Awaiting a second check</li>
+          <li><i class="swatch verified"></i><span id="legend-ok">Agreed</span></li>
+          <li><i class="swatch submitted"></i><span id="legend-sub">Awaiting a second check</span></li>
           <li><i class="swatch wip"></i>In progress</li>
         </ul>
       </div>
@@ -168,9 +169,12 @@
             <path d="M44 48c2-10 8-14 10-14s8 4 10 14" fill="none" stroke="#c4b5fd" stroke-width="2"/>
             <rect x="28" y="28" width="16" height="16" rx="4" fill="none" stroke="#ffd166" stroke-width="2"/>
           </svg>
-          <h3>Two checks</h3>
-          <p>Two different people search each batch. It counts when they see the same dip.</p>
-          <a href="/how-it-works#two-checks">Why two people</a>
+          <h3 data-copies="2">Two checks</h3>
+          <p data-copies="2">Two different people search each batch. It counts when they see the same dip.</p>
+          <a data-copies="2" href="/how-it-works#two-checks">Why two people</a>
+          <h3 data-copies="1" hidden>Checked once</h3>
+          <p data-copies="1" hidden>One person checks each batch for now. The two-person check will return as more people join.</p>
+          <a data-copies="1" hidden href="/how-it-works#two-checks">Why one check</a>
         </article>
         <article class="card fact">
           <svg viewBox="0 0 72 72" aria-hidden="true">
@@ -191,7 +195,8 @@
         <h2 id="preview-heading">Leaderboard</h2>
         <a href="/leaderboard">Full list</a>
       </div>
-      <p class="note">Names are account display names. The order is stars both checks agreed on. Candidates are unverified.</p>
+      <p class="note" data-copies="2">Names are account display names. The order is stars both checks agreed on. Candidates are unverified.</p>
+      <p class="note" data-copies="1" hidden>Names are account display names. The order is stars checked once. Candidates are unverified. The two-person check will return as more people join.</p>
       <ol class="board" id="home-board"></ol>
     </section>
 
@@ -199,7 +204,8 @@
       <div class="cta-band">
         <div>
           <h2>Join the search</h2>
-          <p class="lede">Create an account with your invite code, download the program, and link your computer.</p>
+          <p class="lede" data-signup="invite">Create an account with your invite code, download the program, and link your computer.</p>
+          <p class="lede" data-signup="open" hidden>Create an account, download the program, and link your computer. No invite code.</p>
         </div>
         <div class="cta-row">
           <a class="btn btn-primary" href="/signup">Join the search</a>
@@ -225,7 +231,8 @@
   </div>
   <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
   <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
-  <p>The beta is invite-only for now.</p>
+  <p data-signup="invite">The beta is invite-only for now.</p>
+  <p data-signup="open" hidden>Signup is open. An account does not need an invite code.</p>
 </footer>
 <script src="/js/common.js" defer></script>
 <script src="/js/stats.js" defer></script>

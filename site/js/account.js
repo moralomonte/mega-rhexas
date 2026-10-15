@@ -91,6 +91,7 @@
     if (status >= 500) return "The account service had a problem. Try again later.";
     if (action === "login" && (status === 401 || status === 403)) return "That email or password was not accepted.";
     if (action === "signup" && (status === 401 || status === 403)) {
+      if (MR.config && MR.config.signup === "open") return "The server did not accept the sign-up.";
       return "The server did not accept the sign-up. Check the invite code. The beta is invite-only for now.";
     }
     return "The account service returned status " + status + ".";
@@ -123,19 +124,32 @@
     var form = document.getElementById("signup-form");
     if (!form) return;
     var alert = document.getElementById("form-alert");
+    var button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    MR.whenConfig(function (cfg) {
+      var open = cfg.signup === "open";
+      var invite = document.getElementById("invite-field");
+      if (invite) invite.hidden = open;
+      if (form.invite_code) form.invite_code.required = !open;
+      if (button) button.disabled = false;
+    });
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       show(alert, "error", "");
       var button = form.querySelector("button[type=submit]");
       busy(button, true, "Creating account…");
+      var body = {
+        display_name: form.display_name.value.trim(),
+        email: form.email.value.trim(),
+        password: form.password.value,
+        company: form.company ? form.company.value : ""
+      };
+      if (!MR.config || MR.config.signup !== "open") {
+        body.invite_code = form.invite_code ? form.invite_code.value.trim() : "";
+      }
       request(PATHS.signup, {
         method: "POST",
-        body: {
-          display_name: form.display_name.value.trim(),
-          email: form.email.value.trim(),
-          password: form.password.value,
-          invite_code: form.invite_code.value.trim()
-        }
+        body: body
       }).then(function (result) {
         if (!result.res.ok && result.res.status !== 204) {
           show(alert, "error", safeMessage(result.payload, fallbackFor(result.res.status, "signup")));
@@ -207,11 +221,12 @@
     var host = document.getElementById("my-stats");
     if (!host) return;
     var src = (payload && payload.stats) || payload || {};
+    var once = MR.config && MR.config.copies_required === 1;
     var rows = [
-      ["Stars agreed", numOf(src, "stars_verified", "stars_agreed", "tics_agreed")],
-      ["Stars pending", numOf(src, "stars_pending", "stars_submitted", "tics_submitted")],
-      ["Batches agreed", numOf(src, "batches_verified", "batches_agreed", "units_agreed")],
-      ["Batches pending", numOf(src, "batches_pending", "batches_submitted")]
+      [once ? "Stars checked once" : "Stars agreed", numOf(src, "stars_verified", "stars_agreed", "tics_agreed")],
+      [once ? "Stars not checked yet" : "Stars pending", numOf(src, "stars_pending", "stars_submitted", "tics_submitted")],
+      [once ? "Batches checked once" : "Batches agreed", numOf(src, "batches_verified", "batches_agreed", "units_agreed")],
+      [once ? "Batches not checked yet" : "Batches pending", numOf(src, "batches_pending", "batches_submitted")]
     ];
     host.replaceChildren();
     rows.forEach(function (row) {
@@ -304,6 +319,7 @@
         return;
       }
       paintStats(result.payload);
+      MR.whenConfig(function () { paintStats(result.payload); });
     }).catch(function () {
       if (!host) return;
       host.replaceChildren();

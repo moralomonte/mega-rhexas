@@ -544,6 +544,13 @@ input {
 input:focus-visible { outline-offset: 1px; }
 
 .form-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+.hp {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
 
 .alert {
   border-radius: 12px;

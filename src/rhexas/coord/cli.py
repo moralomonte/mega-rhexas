@@ -56,6 +56,10 @@ def add_subcommands(sub, parent: argparse.ArgumentParser | None = None) -> None:
     p = sub.add_parser("admin-token", parents=[parent], help="Rotate the status-page token")
     p.add_argument("--reset", action="store_true", help="Invalidate the current token and print a new one")
     sub.add_parser("status", parents=[parent], help="Print progress from the local database")
+    sub.add_parser(
+        "reverify", parents=[parent],
+        help="Mark one-copy batches verified when copies_required is 1. Does not delete copies.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,7 +88,9 @@ def execute(args) -> int:
         if command == "init":
             return _init(_config_arg(args))
         coord = load_coord_file(_config_arg(args))
-        store = Store(coord.db, coord.settings)
+        store = Store(
+            coord.db, coord.settings, copies_required=coord.verification.copies_required,
+        )
         store.init_schema()
         try:
             if command == "serve":
@@ -106,6 +112,8 @@ def execute(args) -> int:
                 return _admin_token(store, coord.db.parent / "admin.token", reset=args.reset)
             if command == "status":
                 return _status(store)
+            if command == "reverify":
+                return _reverify(store)
         finally:
             if command != "serve":
                 store.close()
@@ -126,7 +134,9 @@ def _init(path) -> int:
         write_default_config(target)
         print(f"wrote {target.resolve()}")
     coord = load_coord_file(target)
-    store = Store(coord.db, coord.settings)
+    store = Store(
+        coord.db, coord.settings, copies_required=coord.verification.copies_required,
+    )
     try:
         store.init_schema()
         token = store.ensure_admin()
@@ -143,7 +153,11 @@ def _init(path) -> int:
             if coord.accounts.invite_only:
                 print("Signup is invite-only. Create a code with `rhexas coord invite create`.")
             else:
-                print("Signup is open.")
+                print("Signup is open. New accounts do not need an invite code.")
+            if coord.verification.copies_required == 1:
+                print("Verification is one copy. A batch counts on the first accepted upload.")
+            else:
+                print("Verification is two copies. Two different accounts must agree.")
             if coord.smtp.enabled():
                 print(f"Verification email is on ({coord.smtp.host}).")
             else:
@@ -249,6 +263,18 @@ def _admin_token(store: Store, path: Path, *, reset: bool) -> int:
         return 0
     print("no admin token yet. Run `rhexas coord init`.", file=sys.stderr)
     return 2
+
+
+def _reverify(store: Store) -> int:
+    summary = store.reverify()
+    print(
+        f"copies_required {summary['copies_required']}: "
+        f"{summary['promoted']} verified, "
+        f"{summary['reissued']} reissued, "
+        f"{summary['left_pending']} still pending"
+    )
+    print("Existing copies were kept.")
+    return 0
 
 
 def _status(store: Store) -> int:
