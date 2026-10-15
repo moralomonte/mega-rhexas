@@ -57,8 +57,12 @@ if (-not (Test-Path (Join-Path $App "pythonw.exe"))) { throw "pythonw.exe missin
 
 Copy-Item (Join-Path $Here "..\assets\triskelion.ico") (Join-Path $App "triskelion.ico") -Force
 
-$version = "1.0.0"
-if ($env:GITHUB_REF_NAME -match '^v(.+)$') { $version = $Matches[1] }
+# The installer version is the package version. A v* tag must match it.
+$version = (& $python -c "import rhexas; print(rhexas.__version__)").Trim()
+if ($LASTEXITCODE -ne 0 -or -not $version) { throw "could not read rhexas.__version__" }
+if ($env:GITHUB_REF_NAME -match '^v(.+)$') {
+    if ($Matches[1] -ne $version) { throw "tag $($env:GITHUB_REF_NAME) does not match package version $version" }
+}
 $iscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
