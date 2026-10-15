@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#05060f">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="Link a computer to your Mega Rhexas account. The device key is shown once.">
+<meta name="description" content="Link a computer to your Mega Rhexas account. Approve a worker's link code. Nothing to copy.">
 <meta property="og:title" content="Link a device · Mega Rhexas">
-<meta property="og:description" content="Link a computer to your Mega Rhexas account. The device key is shown once.">
+<meta property="og:description" content="Link a computer to your Mega Rhexas account. Approve a worker's link code. Nothing to copy.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://megarhexas.com/link-device">
 <title>Link a device · Mega Rhexas</title>
@@ -41,10 +41,9 @@
         <h1>Link a device</h1>
         <p class="lede" id="gate-note">Log in to link a computer to your account.</p>
         <ol>
-          <li>Name the computer.</li>
-          <li>Create the link.</li>
-          <li>Copy the key into the program on that computer.</li>
-          <li>The key is shown once.</li>
+          <li>Start the worker with “Sign in with megarhexas.com” (or <code>rhexas worker --login</code>).</li>
+          <li>It opens this page with a link code.</li>
+          <li>Approve “Link this computer”. Nothing to copy.</li>
         </ol>
       </div>
       <div class="card">
@@ -59,28 +58,22 @@
       <div>
         <p class="kicker">This computer</p>
         <h1>Link a device</h1>
-        <p class="lede">Name this computer. The server returns a device key once. Paste that key into the program on the computer you want to link.</p>
+        <p class="lede">The worker on that computer shows a short link code and opens this page. Approve it here and the worker saves its own key. There is nothing to copy.</p>
         <ol>
-          <li>Pick a name you will recognize, such as “Living room PC”.</li>
-          <li>Create the link.</li>
-          <li>Copy the key. You will not be shown it again.</li>
+          <li>Start the worker with “Sign in with megarhexas.com” (or <code>rhexas worker --login</code>).</li>
+          <li>Check that the code below matches the one the worker shows.</li>
+          <li>Press “Link this computer”.</li>
           <li>You can revoke a computer later from <a href="/account">My account</a>.</li>
         </ol>
       </div>
       <form class="card" id="link-form" method="post" action="/link-device">
-        <h2>New device</h2>
-        <label for="device_name">Name this computer</label>
-        <input id="device_name" name="device_name" autocomplete="off" required maxlength="40" placeholder="Living room PC">
+        <h2>Link code</h2>
+        <label for="device_code">Code shown by the worker</label>
+        <input id="device_code" name="device_code" autocomplete="off" required maxlength="40" placeholder="ABCD-EFGH" spellcheck="false">
+        <p class="note" id="device-host" hidden></p>
         <p class="alert error" id="form-alert" hidden tabindex="-1" role="alert"></p>
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit">Create link</button>
-        </div>
-        <div class="token-box" id="token-reveal" hidden>
-          <label for="device-token">Device key</label>
-          <input id="device-token" readonly spellcheck="false">
-          <div class="form-actions">
-            <button class="btn btn-ghost" id="copy-token" type="button">Copy</button>
-          </div>
+          <button class="btn btn-primary" type="submit">Link this computer</button>
         </div>
       </form>
     </div>

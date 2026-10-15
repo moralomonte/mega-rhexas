@@ -141,7 +141,7 @@
    * Log in link in place; account pages explain that the service did not answer.
    */
   MR.session = function () {
-    return fetch(MR.API + "/api/v1/account/me", {
+    return fetch(MR.API + "/api/v1/me", {
       credentials: "include",
       headers: { Accept: "application/json" },
       cache: "no-store"

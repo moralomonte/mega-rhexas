@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from rhexas.config import ConfigError, read_toml
 
@@ -31,12 +32,75 @@ class Settings:
 
 
 @dataclass(frozen=True)
+class AccountsConfig:
+    """Signup policy and the public origins that may call this API with cookies.
+
+    ``provider`` on each account is ``password`` today. ``google`` is reserved:
+    a later sign-in stores a subject and leaves the password hash empty.
+    """
+
+    signup: str = "invite"  # invite | open
+    public_origin: str = "https://megarhexas.com"
+    api_public_url: str = "https://api.megarhexas.com"
+    cookie_secure: bool | None = None
+    session_days: int = 30
+    extra_origins: tuple[str, ...] = ()
+
+    @property
+    def invite_only(self) -> bool:
+        return self.signup != "open"
+
+    @property
+    def secure_cookies(self) -> bool:
+        if self.cookie_secure is not None:
+            return bool(self.cookie_secure)
+        return self.api_public_url.lower().startswith("https://")
+
+    def verification_url(self) -> str:
+        return self.api_public_url.rstrip("/") + "/link"
+
+    def allowed_origins(self) -> set[str]:
+        found = set()
+        for value in (self.public_origin, self.api_public_url, *self.extra_origins):
+            origin = _origin_of(value)
+            if origin:
+                found.add(origin)
+        return found
+
+    def origin_allowed(self, origin: str) -> bool:
+        if origin in self.allowed_origins():
+            return True
+        if self.secure_cookies:
+            return False
+        parts = urlsplit(origin or "")
+        return parts.scheme == "http" and parts.hostname in {"127.0.0.1", "localhost"}
+
+
+@dataclass(frozen=True)
+class SmtpConfig:
+    """Empty host means verification mail is off and accounts work unverified."""
+
+    host: str = ""
+    port: int = 587
+    username: str = ""
+    password: str = ""
+    from_addr: str = ""
+    starttls: bool = True
+    ssl: bool = False
+
+    def enabled(self) -> bool:
+        return bool(self.host.strip())
+
+
+@dataclass(frozen=True)
 class CoordFile:
     path: Path
     host: str
     port: int
     db: Path
     settings: Settings
+    accounts: AccountsConfig = field(default_factory=AccountsConfig)
+    smtp: SmtpConfig = field(default_factory=SmtpConfig)
 
 
 DEFAULT_TOML = """\
@@ -61,6 +125,27 @@ max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 
 # Omit replicas to let the project handler decide. Exoplanets uses 2.
 # replicas = 1             # accept a single upload and skip the comparison
+
+[accounts]
+# invite: signup needs a code from `rhexas coord invite create` (the default).
+# open: anyone can create an account on megarhexas.com.
+signup = "invite"
+public_origin = "https://megarhexas.com"          # browser origin allowed to call this API
+api_public_url = "https://api.megarhexas.com"    # device-link and email links
+cookie_secure = true     # Secure + SameSite=None so the public site can send the session cookie
+session_days = 30
+# extra_origins = ["http://localhost:5173"]  # more browser origins, if you need them
+
+# Email verification. Leave [smtp] out, or leave host empty, and accounts work
+# unverified. Fill it in to send a verification link. Google sign-in is not
+# wired yet; accounts are stored so it can be added without a new table.
+# [smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = ""
+# password = ""
+# from = "Mega Rhexas <noreply@megarhexas.com>"
+# starttls = true
 """
 
 
@@ -86,7 +171,7 @@ def load_coord_file(path: Path | str | None = None, *, environ: dict | None = No
     data = read_toml(file_path)
     if not isinstance(data, dict):
         raise ConfigError(f"{file_path}: config must be a TOML table")
-    unknown = set(data) - {"coord"}
+    unknown = set(data) - {"coord", "accounts", "smtp"}
     if unknown:
         raise ConfigError(f"{file_path}: unknown section(s): {', '.join(sorted(unknown))}")
     block = data.get("coord") or {}
@@ -109,7 +194,11 @@ def load_coord_file(path: Path | str | None = None, *, environ: dict | None = No
         db = (file_path.parent / db).resolve()
     settings = _settings_from(block)
     _validate(settings)
-    return CoordFile(path=file_path, host=host, port=port, db=db, settings=settings)
+    accounts = _accounts_from(data.get("accounts") or {}, file_path)
+    smtp = _smtp_from(data.get("smtp") or {}, file_path)
+    return CoordFile(
+        path=file_path, host=host, port=port, db=db, settings=settings, accounts=accounts, smtp=smtp,
+    )
 
 
 def _settings_from(block: dict) -> Settings:
@@ -131,6 +220,97 @@ def _settings_from(block: dict) -> Settings:
     if not updates:
         return current
     return Settings(**{f.name: updates.get(f.name, getattr(current, f.name)) for f in fields(Settings)})
+
+
+def _accounts_from(block, file_path: Path) -> AccountsConfig:
+    if not isinstance(block, dict):
+        raise ConfigError(f"{file_path}: [accounts] must be a table")
+    allowed = {
+        "signup", "public_origin", "api_public_url", "cookie_secure",
+        "session_days", "extra_origins",
+    }
+    extra = set(block) - allowed
+    if extra:
+        raise ConfigError(f"{file_path}: unknown key(s) in [accounts]: {', '.join(sorted(extra))}")
+    current = AccountsConfig()
+    signup = _as_str(block.get("signup", current.signup)).strip().lower()
+    if signup not in ("invite", "open"):
+        raise ConfigError("accounts.signup must be \"invite\" or \"open\"")
+    public_origin = _as_str(block.get("public_origin", current.public_origin)).strip()
+    api_public_url = _as_str(block.get("api_public_url", current.api_public_url)).strip().rstrip("/")
+    if _origin_of(public_origin) == "" or _origin_of(api_public_url) == "":
+        raise ConfigError("accounts.public_origin and accounts.api_public_url must be http(s) origins")
+    cookie_secure = current.cookie_secure
+    if "cookie_secure" in block:
+        cookie_secure = _as_bool(block["cookie_secure"])
+    session_days = current.session_days
+    if "session_days" in block:
+        session_days = _as_int(block["session_days"])
+    if not 1 <= session_days <= 365:
+        raise ConfigError("accounts.session_days must be from 1 to 365")
+    extra_origins = current.extra_origins
+    if "extra_origins" in block:
+        raw = block["extra_origins"]
+        if isinstance(raw, str) or not isinstance(raw, (list, tuple)):
+            raise ConfigError("accounts.extra_origins must be a list of origins")
+        cleaned = []
+        for item in raw:
+            origin = _origin_of(_as_str(item))
+            if not origin:
+                raise ConfigError(f"accounts.extra_origins entry is not an origin: {item!r}")
+            cleaned.append(origin)
+        extra_origins = tuple(cleaned)
+    return AccountsConfig(
+        signup=signup,
+        public_origin=public_origin,
+        api_public_url=api_public_url,
+        cookie_secure=cookie_secure,
+        session_days=session_days,
+        extra_origins=extra_origins,
+    )
+
+
+def _smtp_from(block, file_path: Path) -> SmtpConfig:
+    if not isinstance(block, dict):
+        raise ConfigError(f"{file_path}: [smtp] must be a table")
+    allowed = {"host", "port", "username", "password", "from", "starttls", "ssl"}
+    extra = set(block) - allowed
+    if extra:
+        raise ConfigError(f"{file_path}: unknown key(s) in [smtp]: {', '.join(sorted(extra))}")
+    if not block:
+        return SmtpConfig()
+    current = SmtpConfig()
+    host = _as_str(block.get("host", current.host)).strip()
+    port = _as_int(block.get("port", current.port)) if "port" in block else current.port
+    if not (1 <= port <= 65535):
+        raise ConfigError("smtp.port out of range")
+    starttls = _as_bool(block["starttls"]) if "starttls" in block else current.starttls
+    ssl = _as_bool(block["ssl"]) if "ssl" in block else current.ssl
+    return SmtpConfig(
+        host=host,
+        port=port,
+        username=_as_str(block.get("username", "")),
+        password=_as_str(block.get("password", "")),
+        from_addr=_as_str(block.get("from", "")),
+        starttls=starttls,
+        ssl=ssl,
+    )
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ConfigError(f"expected true or false, got {value!r}")
+
+
+def _origin_of(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    parts = urlsplit(text if "://" in text else "")
+    if parts.scheme not in ("https", "http") or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def _validate(settings: Settings) -> None:

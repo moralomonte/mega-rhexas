@@ -10,6 +10,9 @@
 #     email you@example.com
 # }
 
+# The coordinator sends CORS headers so the public site can call the API
+# with credentials. Caddy does not proxy the apex to the coordinator.
+
 import /opt/mega-rhexas/deploy/Caddyfile.site
 
 api.megarhexas.com {

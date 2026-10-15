@@ -1,60 +1,38 @@
 /* Account pages: sign up, log in, my account, link a device.
  *
- * TODO(account-api): cookie sessions on the coordinator are being added in
- * parallel. This file is the contract the site sends and reads. Update the
- * paths and the field readers if the landed API differs.
+ * Routes are the coordinator's JSON API (see DEPLOY.md, "Account routes").
+ * Credentials are session cookies (fetch credentials: "include"). The API
+ * allows https://megarhexas.com and https://www.megarhexas.com with
+ * Access-Control-Allow-Credentials.
  *
- * Credentials are cookies (fetch credentials: "include"). The API must allow
- * origins https://megarhexas.com and https://www.megarhexas.com with
- * Access-Control-Allow-Credentials, and must not use Access-Control-Allow-Origin *.
- * SameSite=Lax is enough for these same-site subdomains when the cookie is
- * host-only on api.megarhexas.com. POST JSON needs a CORS preflight that
- * allows Content-Type.
+ * POST /api/v1/signup   { email, password, display_name, invite_code } -> 201
+ * POST /api/v1/login    { email, password } -> 200
+ * POST /api/v1/logout   -> 204
+ * GET  /api/v1/me       -> { id, email, display_name, ... } or 401
+ * GET  /api/v1/me/devices -> { devices: [{ id, name, hostname, kind, created_at, last_seen_at, revoked_at }] }
+ * POST /api/v1/me/devices/{id}/revoke -> { status: "revoked" }
+ * GET  /api/v1/me/stats -> stars_verified, stars_pending, batches_verified, batches_pending, ...
+ * GET  /api/v1/device?code=   -> { hostname, status, code }
+ * POST /api/v1/device/approve { code } -> hostname and device id (no token)
  *
- * POST /api/v1/account/signup
- *   { "email", "password", "display_name", "invite_code" }
- *   201 { "account": { "id", "email", "display_name" } } or 204
- *   The beta is invite-only: invite_code is required by this form.
- *
- * POST /api/v1/account/login
- *   { "email", "password" }
- *   200 or 204, plus a session cookie
- *
- * POST /api/v1/account/logout
- *   204, clears the cookie
- *
- * GET /api/v1/account/me
- *   200 { "id", "email", "display_name" } or { "account": { ... } }
- *   401 logged out
- *
- * GET /api/v1/account/devices
- *   200 { "devices": [{ "id", "name", "linked_at", "last_seen_at", "revoked" }] }
- *
- * POST /api/v1/account/devices
- *   { "name" }
- *   201 { "device": { "id", "name", "token" } } or { "token" }
- *   The token is a one-time device key. The page shows it once.
- *
- * POST /api/v1/account/devices/{id}/revoke
- *   200 or 204
- *
- * GET /api/v1/account/stats
- *   200 {
- *     "stars_verified", "stars_submitted", "batches_verified", "candidates_unverified"
- *   }
+ * Devices are linked by the worker's device flow; the browser never sees a token.
  * Personal stats are never replaced with the public sample numbers.
  */
 (function () {
   var MR = window.MR;
   var PATHS = {
-    signup: "/api/v1/account/signup",
-    login: "/api/v1/account/login",
-    logout: "/api/v1/account/logout",
-    me: "/api/v1/account/me",
-    devices: "/api/v1/account/devices",
-    stats: "/api/v1/account/stats",
+    signup: "/api/v1/signup",
+    login: "/api/v1/login",
+    logout: "/api/v1/logout",
+    me: "/api/v1/me",
+    devices: "/api/v1/me/devices",
+    stats: "/api/v1/me/stats",
+    device: function (code) {
+      return "/api/v1/device?code=" + encodeURIComponent(code);
+    },
+    approve: "/api/v1/device/approve",
     revoke: function (id) {
-      return "/api/v1/account/devices/" + encodeURIComponent(id) + "/revoke";
+      return "/api/v1/me/devices/" + encodeURIComponent(id) + "/revoke";
     }
   };
 
@@ -231,9 +209,9 @@
     var src = (payload && payload.stats) || payload || {};
     var rows = [
       ["Stars agreed", numOf(src, "stars_verified", "stars_agreed", "tics_agreed")],
-      ["Stars submitted", numOf(src, "stars_submitted", "tics_submitted")],
+      ["Stars pending", numOf(src, "stars_pending", "stars_submitted", "tics_submitted")],
       ["Batches agreed", numOf(src, "batches_verified", "batches_agreed", "units_agreed")],
-      ["Unverified candidates", numOf(src, "candidates_unverified", "candidates_new")]
+      ["Batches pending", numOf(src, "batches_pending", "batches_submitted")]
     ];
     host.replaceChildren();
     rows.forEach(function (row) {
@@ -264,7 +242,7 @@
     devices.forEach(function (device) {
       var item = document.createElement("li");
       var text = document.createElement("div");
-      var name = device.name || device.display_name || "Device";
+      var name = device.name || device.hostname || device.display_name || "Device";
       text.appendChild(MR.el("strong", "", name));
       var seen = formatWhen(device.last_seen_at || device.last_seen || device.linked_at || device.created_at);
       if (seen) text.appendChild(MR.el("div", "note", seen));
@@ -409,29 +387,38 @@
       if (gate) gate.hidden = true;
       if (app) app.hidden = false;
     });
+    var codeInput = form.device_code;
+    var hostNote = document.getElementById("device-host");
+    var fromUrl = new URLSearchParams(window.location.search).get("code") || "";
+    if (fromUrl && codeInput) {
+      codeInput.value = fromUrl;
+      request(PATHS.device(fromUrl)).then(function (result) {
+        if (result.res.ok && hostNote && result.payload && result.payload.hostname) {
+          hostNote.textContent = "Computer asking to link: " + String(result.payload.hostname).slice(0, 80);
+          hostNote.hidden = false;
+        }
+      }).catch(function () {});
+    }
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       show(alert, "error", "");
       var button = form.querySelector("button[type=submit]");
       busy(button, true, "Linking…");
-      request(PATHS.devices, {
+      var code = codeInput.value.trim();
+      request(PATHS.approve, {
         method: "POST",
-        body: { name: form.device_name.value.trim() }
+        body: { code: code }
       }).then(function (result) {
-        if (!result.res.ok && result.res.status !== 201 && result.res.status !== 204) {
-          show(alert, "error", safeMessage(result.payload, fallbackFor(result.res.status, "link")));
+        if (!result.res.ok) {
+          var msg = result.res.status === 404 || result.res.status === 410
+            ? "That link code was not found or has expired. Start the link again on the worker."
+            : fallbackFor(result.res.status, "link");
+          show(alert, "error", safeMessage(result.payload, msg));
           return;
         }
-        var token = readToken(result.payload);
-        var box = document.getElementById("token-reveal");
-        var input = document.getElementById("device-token");
-        if (box && input && token) {
-          input.value = token;
-          box.hidden = false;
-          show(alert, "ok", "Copy this device key now. It is shown once. Paste it into the program on that computer.");
-        } else if (result.res.ok || result.res.status === 201 || result.res.status === 204) {
-          show(alert, "ok", "The server linked the device. It did not return a one-time key. Check My account for the device list.");
-        }
+        var host = result.payload && result.payload.hostname;
+        show(alert, "ok", (host ? String(host).slice(0, 80) + " is linked." : "This computer is linked.") +
+          " The worker saves its own key and starts on its own. You can revoke it from My account.");
         form.reset();
       }).catch(function (err) {
         show(alert, "error", err.message);
