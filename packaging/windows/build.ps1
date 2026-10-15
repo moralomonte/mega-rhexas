@@ -44,7 +44,11 @@ if ($LASTEXITCODE -ne 0) { throw "get-pip failed" }
 $python = Join-Path $App "python.exe"
 & $python -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-& $python -m pip install ($Root + "[desktop]")
+# The embeddable ._pth ignores PYTHONPATH, so an isolated build env cannot see
+# its own setuptools. Install the backend here and build without isolation.
+& $python -m pip install "setuptools>=68" wheel
+if ($LASTEXITCODE -ne 0) { throw "setuptools install failed" }
+& $python -m pip install --no-build-isolation ($Root + "[desktop]")
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
 & $python -c "import numpy, astropy, lightkurve, rhexas, pystray; from PIL import Image; print('bundled', rhexas.__version__)"
