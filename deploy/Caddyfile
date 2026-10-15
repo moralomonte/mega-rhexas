@@ -1,7 +1,6 @@
 # Public coordinator. DNS: A record "api" on megarhexas.com → this host.
-# The apex megarhexas.com is not served here; it is the public site.
-# The coordinator answers that site's browser calls with CORS and a session cookie.
-# Override the name with the DOMAIN environment variable if you are testing elsewhere.
+# The apex site is deploy/Caddyfile.site (systemd + Caddy). This Compose file
+# publishes only the API. Override the name with the DOMAIN environment variable.
 {$DOMAIN:api.megarhexas.com} {
 	encode gzip
 	reverse_proxy coord:8787

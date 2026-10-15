@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05060f">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="A plain-language tour of Mega Rhexas: transits, what your computer does, two checks, unverified candidates, pace, and privacy.">
+<meta property="og:title" content="How it works · Mega Rhexas">
+<meta property="og:description" content="A plain-language tour of Mega Rhexas: transits, what your computer does, two checks, unverified candidates, pace, and privacy.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://megarhexas.com/how-it-works">
+<title>How it works · Mega Rhexas</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="canonical" href="https://megarhexas.com/how-it-works">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; form-action 'self'">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<canvas id="stars" aria-hidden="true"></canvas>
+<header class="site-header">
+  <a class="brand" href="/">
+    <img class="trisk spin" src="/img/triskelion.svg" width="42" height="42" alt="">
+    <span class="brand-name">Mega Rhexas<small>Public NASA TESS data</small></span>
+  </a>
+  <nav class="site-nav" aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/how-it-works">How it works</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a class="nav-join" href="/signup">Join</a>
+    <a href="/login" id="nav-session">Log in</a>
+  </nav>
+</header>
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <header class="section">
+      <p class="kicker">Plain language</p>
+      <h1>How it works</h1>
+      <p class="lede">A short tour of the search. The words are simple on purpose.</p>
+      <nav class="jumps" aria-label="On this page">
+        <a href="#transit">A transit</a>
+        <a href="#your-computer">Your computer</a>
+        <a href="#two-checks">Two checks</a>
+        <a href="#candidates">Candidates</a>
+        <a href="#pace">Pace</a>
+        <a href="#privacy">Privacy</a>
+      </nav>
+      <p><a class="soon" href="#technical-details">Technical details (coming soon)</a></p>
+    </header>
+
+    <section class="section" id="transit">
+      <div class="story">
+        <div>
+          <h2>A transit</h2>
+          <p>A planet can pass between us and its star. For a short while the star looks a tiny bit dimmer. Then it is bright again. That dimming is a transit.</p>
+          <p>NASA’s TESS mission watches a great many stars and writes down their brightness. Those records are public. Mega Rhexas searches them for transits.</p>
+          <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
+        </div>
+        <figure class="illus card">
+          <svg viewBox="0 0 360 240" aria-hidden="true">
+            <circle cx="120" cy="92" r="46" fill="#ffd166"/>
+            <circle cx="120" cy="92" r="70" fill="none" stroke="rgba(165,243,252,.45)"/>
+            <g class="planet">
+              <circle cx="120" cy="92" r="12" fill="#070814" stroke="#67e8f9" stroke-width="2"/>
+            </g>
+            <path d="M24 190 C70 186 90 188 120 190 C150 194 160 210 180 214 C200 218 214 196 240 190 C280 182 310 188 340 190" fill="none" stroke="#22d3ee" stroke-width="3" stroke-linecap="round"/>
+            <ellipse class="dip-glow" cx="180" cy="210" rx="18" ry="8" fill="#ffd166"/>
+          </svg>
+          <figcaption>Illustration, not a real star. The brightness dips, then comes back.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="your-computer">
+      <h2>What your computer does</h2>
+      <p>The program on your computer does four things, then starts again.</p>
+      <ol class="steps">
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <circle cx="30" cy="22" r="4" fill="#ffd166"/>
+            <circle cx="52" cy="16" r="3" fill="#a5f3fc"/>
+            <circle cx="74" cy="24" r="3.5" fill="#c4b5fd"/>
+            <path d="M54 36 v18" stroke="#22d3ee" stroke-width="2"/>
+            <path d="M48 48 l6 8 6-8" fill="none" stroke="#22d3ee" stroke-width="2"/>
+            <rect x="36" y="58" width="40" height="16" rx="4" fill="none" stroke="#e7ecff" stroke-width="2"/>
+          </svg>
+          <h3>1. Download</h3>
+          <p>It downloads a few hundred stars. That is about a gigabyte.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <path d="M16 48 C40 46 52 50 70 48 C84 46 90 62 102 66 C112 70 120 52 148 48" fill="none" stroke="#22d3ee" stroke-width="2"/>
+            <circle cx="108" cy="36" r="16" fill="none" stroke="#ffd166" stroke-width="2"/>
+            <path d="M120 48 l14 14" stroke="#ffd166" stroke-width="2"/>
+          </svg>
+          <h3>2. Look</h3>
+          <p>It looks for a dip that repeats.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <rect x="28" y="40" width="36" height="28" rx="4" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <path d="M46 40 V22" stroke="#22d3ee" stroke-width="2"/>
+            <path d="M38 30 l8-10 8 10" fill="none" stroke="#22d3ee" stroke-width="2"/>
+            <circle cx="110" cy="36" r="3" fill="#ffd166"/>
+          </svg>
+          <h3>3. Send a tiny result</h3>
+          <p>The result is much smaller than the star files.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <rect x="28" y="26" width="26" height="34" rx="3" fill="none" stroke="#9aa3c7" stroke-width="2" stroke-dasharray="3 3" opacity=".55"/>
+            <rect x="46" y="20" width="26" height="34" rx="3" fill="none" stroke="#9aa3c7" stroke-width="2" stroke-dasharray="3 3" opacity=".8"/>
+            <circle cx="112" cy="40" r="16" fill="none" stroke="#34d399" stroke-width="2"/>
+            <path d="M104 40 l6 6 12-14" fill="none" stroke="#34d399" stroke-width="2"/>
+          </svg>
+          <h3>4. Delete the big files</h3>
+          <p>After a successful send, the big files go away.</p>
+        </li>
+      </ol>
+      <p class="note">You can close the laptop. The search pauses. When you are back, you can continue.</p>
+    </section>
+
+    <section class="section" id="two-checks">
+      <div class="story flip">
+        <div>
+          <h2>Why two people check each batch</h2>
+          <p>Every batch of stars goes to two different people. Each one searches it alone.</p>
+          <p>The batch counts only when both see the same dip. The timing, the strength, and the depth have to match.</p>
+          <p>If they do not match, neither person gets credit for that try. The stars are checked again.</p>
+          <p>One person working alone cannot finish a batch. It waits for a second person.</p>
+        </div>
+        <figure class="illus card">
+          <svg viewBox="0 0 360 220" aria-hidden="true">
+            <circle cx="64" cy="70" r="16" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M36 140 c6-28 18-40 28-40 s22 12 28 40" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <circle cx="296" cy="70" r="16" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <path d="M268 140 c6-28 18-40 28-40 s22 12 28 40" fill="none" stroke="#c4b5fd" stroke-width="2"/>
+            <rect x="132" y="58" width="96" height="72" rx="12" fill="rgba(255,209,102,.08)" stroke="#ffd166" stroke-width="2"/>
+            <path d="M150 94 l10 10 18-22" fill="none" stroke="#34d399" stroke-width="3"/>
+            <path d="M188 94 l10 10 18-22" fill="none" stroke="#34d399" stroke-width="3"/>
+          </svg>
+          <figcaption>Two people. One batch. Both have to agree.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="candidates">
+      <div class="story">
+        <div>
+          <h2>What happens to a candidate</h2>
+          <p>A star with a repeating dip that passes the checks is called a candidate.</p>
+          <p>Every candidate here is unverified. It is not a confirmed planet. Astronomers still have to study it.</p>
+          <p>This site does not announce a discovery. A candidate stays unverified until astronomers confirm it.</p>
+        </div>
+        <figure class="illus card">
+          <svg viewBox="0 0 360 220" aria-hidden="true">
+            <rect x="28" y="40" width="168" height="132" rx="18" fill="rgba(124,92,255,.1)" stroke="#c4b5fd" stroke-width="2"/>
+            <circle cx="78" cy="96" r="22" fill="#ffd166"/>
+            <circle cx="78" cy="96" r="34" fill="none" stroke="rgba(255,209,102,.45)"/>
+            <path d="M114 84 h64 M114 104 h44" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"/>
+            <rect x="114" y="124" width="68" height="26" rx="13" fill="rgba(255,209,102,.16)" stroke="#ffd166"/>
+            <text x="148" y="142" text-anchor="middle" fill="#ffd166" font-size="12" font-family="Segoe UI, system-ui, sans-serif">unverified</text>
+            <path d="M208 106 h36" stroke="#9aa3c7" stroke-width="2"/>
+            <path d="M236 98 l12 8 -12 8" fill="none" stroke="#9aa3c7" stroke-width="2"/>
+            <path d="M270 156 v-36" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M270 120 a26 26 0 1 1 52 0" fill="none" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M262 156 h68" stroke="#a5f3fc" stroke-width="2"/>
+            <circle cx="296" cy="108" r="7" fill="none" stroke="#ffd166" stroke-width="2"/>
+          </svg>
+          <figcaption>A candidate waits. Astronomers do the confirming.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="pace">
+      <h2>How much it uses your computer</h2>
+      <p>You choose the pace on your own computer. It does not change anyone else’s search.</p>
+      <ul class="paces">
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <rect x="40" y="18" width="18" height="52" rx="9" fill="rgba(255,255,255,.08)" stroke="#9aa3c7"/>
+            <rect x="40" y="48" width="18" height="22" rx="9" fill="#34d399"/>
+          </svg>
+          <h3>Eco</h3>
+          <p>The computer rests between stars. It keeps the batch it already has. It stays quiet so you can keep working.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <rect x="40" y="18" width="18" height="52" rx="9" fill="rgba(255,255,255,.08)" stroke="#9aa3c7"/>
+            <rect x="40" y="36" width="18" height="34" rx="9" fill="#22d3ee"/>
+          </svg>
+          <h3>Live</h3>
+          <p>The usual pace. This is how hard the program runs when you start it.</p>
+        </li>
+        <li>
+          <svg viewBox="0 0 160 84" aria-hidden="true">
+            <rect x="40" y="18" width="18" height="52" rx="9" fill="rgba(255,255,255,.08)" stroke="#9aa3c7"/>
+            <rect x="40" y="22" width="18" height="48" rx="9" fill="#c4b5fd"/>
+          </svg>
+          <h3>Turbo</h3>
+          <p>The computer works harder. Other programs may slow down. Use this when you are away from the keyboard.</p>
+        </li>
+      </ul>
+      <p class="note">A batch is about a gigabyte and is deleted after the result is sent. The program stops if the disk is almost full.</p>
+    </section>
+
+    <section class="section" id="privacy">
+      <div class="story flip">
+        <div>
+          <h2>Privacy</h2>
+          <p>The big star files stay on your computer until they are deleted. They are not uploaded.</p>
+          <p>The server receives the small result: the dip measurements for that batch. It does not receive your photos, documents, or other files.</p>
+          <p>The leaderboard shows the display name you pick. It does not show your email.</p>
+          <p>There are no coins and no crypto. Credit is a count of stars that two people agreed on.</p>
+          <p>The beta is invite-only for now.</p>
+        </div>
+        <figure class="illus card">
+          <svg viewBox="0 0 360 220" aria-hidden="true">
+            <rect x="28" y="36" width="176" height="140" rx="16" fill="rgba(34,211,238,.05)" stroke="#a5f3fc" stroke-width="2"/>
+            <path d="M28 62 h176" stroke="#a5f3fc" stroke-width="2"/>
+            <rect x="48" y="84" width="36" height="48" rx="5" fill="none" stroke="#9aa3c7" stroke-width="2"/>
+            <rect x="96" y="92" width="36" height="40" rx="5" fill="none" stroke="#9aa3c7" stroke-width="2"/>
+            <path d="M148 108 h62" stroke="#22d3ee" stroke-width="2"/>
+            <path d="M202 100 l12 8 -12 8" fill="none" stroke="#22d3ee" stroke-width="2"/>
+            <rect x="230" y="86" width="64" height="44" rx="10" fill="rgba(34,211,238,.14)" stroke="#22d3ee" stroke-width="2"/>
+            <path d="M168 128 v-10 a12 12 0 0 1 24 0 v10" fill="none" stroke="#ffd166" stroke-width="2"/>
+            <rect x="160" y="126" width="40" height="18" rx="4" fill="#070814" stroke="#ffd166" stroke-width="2"/>
+          </svg>
+          <figcaption>Big files stay on your computer. A small result leaves.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="technical-details">
+      <div class="card">
+        <h2>Technical details (coming soon)</h2>
+        <p>The search settings, the file formats, and the exact agreement rules will live on their own page. That page is not written yet.</p>
+        <p class="note">The short version is the rest of this page.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="cta-band">
+        <div>
+          <h2>Join the search</h2>
+          <p>Create an account with your invite code, download the program, and link your computer.</p>
+        </div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="/signup">Join the search</a>
+          <a class="btn btn-ghost js-download" href="https://github.com/moralomonte/mega-rhexas/releases/latest">Download</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-grid">
+    <div class="footer-brand">
+      <img class="trisk spin" src="/img/triskelion.svg" width="36" height="36" alt="">
+      <p>Volunteers’ computers search public NASA TESS star data for planets passing in front of their stars.</p>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="/how-it-works">How it works</a>
+      <a href="/leaderboard">Leaderboard</a>
+      <a href="/signup">Join the search</a>
+      <a href="/link-device">Link a device</a>
+      <a href="https://github.com/moralomonte/mega-rhexas">Source code</a>
+    </nav>
+  </div>
+  <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
+  <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
+  <p>The beta is invite-only for now. There are no coins and no crypto.</p>
+</footer>
+<script src="/js/common.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#05060f">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Link a computer to your Mega Rhexas account. Approve a worker's link code. Nothing to copy.">
+<meta property="og:title" content="Link a device · Mega Rhexas">
+<meta property="og:description" content="Link a computer to your Mega Rhexas account. Approve a worker's link code. Nothing to copy.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://megarhexas.com/link-device">
+<title>Link a device · Mega Rhexas</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/favicon.svg">
+<link rel="stylesheet" href="/css/site.css">
+<link rel="canonical" href="https://megarhexas.com/link-device">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; form-action 'self'">
+</head>
+<body data-page="link">
+<a class="skip" href="#main">Skip to content</a>
+<canvas id="stars" aria-hidden="true"></canvas>
+<header class="site-header">
+  <a class="brand" href="/">
+    <img class="trisk spin" src="/img/triskelion.svg" width="42" height="42" alt="">
+    <span class="brand-name">Mega Rhexas<small>Public NASA TESS data</small></span>
+  </a>
+  <nav class="site-nav" aria-label="Primary">
+    <a href="/">Home</a>
+    <a href="/how-it-works">How it works</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a class="nav-join" href="/signup">Join</a>
+    <a href="/login" id="nav-session">Log in</a>
+  </nav>
+</header>
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <div id="logged-out" class="auth-shell">
+      <div>
+        <p class="kicker">This computer</p>
+        <h1>Link a device</h1>
+        <p class="lede" id="gate-note">Log in to link a computer to your account.</p>
+        <ol>
+          <li>Start the worker with “Sign in with megarhexas.com” (or <code>rhexas worker --login</code>).</li>
+          <li>It opens this page with a link code.</li>
+          <li>Approve “Link this computer”. Nothing to copy.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h2>Log in first</h2>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="/login">Log in</a>
+          <a class="btn btn-ghost" href="/signup">Sign up</a>
+        </div>
+      </div>
+    </div>
+    <div id="logged-in" hidden class="auth-shell">
+      <div>
+        <p class="kicker">This computer</p>
+        <h1>Link a device</h1>
+        <p class="lede">The worker on that computer shows a short link code and opens this page. Approve it here and the worker saves its own key. There is nothing to copy.</p>
+        <ol>
+          <li>Start the worker with “Sign in with megarhexas.com” (or <code>rhexas worker --login</code>).</li>
+          <li>Check that the code below matches the one the worker shows.</li>
+          <li>Press “Link this computer”.</li>
+          <li>You can revoke a computer later from <a href="/account">My account</a>.</li>
+        </ol>
+      </div>
+      <form class="card" id="link-form" method="post" action="/link-device">
+        <h2>Link code</h2>
+        <label for="device_code">Code shown by the worker</label>
+        <input id="device_code" name="device_code" autocomplete="off" required maxlength="40" placeholder="ABCD-EFGH" spellcheck="false">
+        <p class="note" id="device-host" hidden></p>
+        <p class="alert error" id="form-alert" hidden tabindex="-1" role="alert"></p>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit">Link this computer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-grid">
+    <div class="footer-brand">
+      <img class="trisk spin" src="/img/triskelion.svg" width="36" height="36" alt="">
+      <p>Volunteers’ computers search public NASA TESS star data for planets passing in front of their stars.</p>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="/how-it-works">How it works</a>
+      <a href="/leaderboard">Leaderboard</a>
+      <a href="/signup">Join the search</a>
+      <a href="/link-device">Link a device</a>
+      <a href="https://github.com/moralomonte/mega-rhexas">Source code</a>
+    </nav>
+  </div>
+  <p>Mega Rhexas reads public NASA TESS data. It is not part of NASA, and NASA has not endorsed it.</p>
+  <p>Candidates are unverified until astronomers confirm them. This site does not announce a discovery.</p>
+  <p>The beta is invite-only for now. There are no coins and no crypto.</p>
+</footer>
+<script src="/js/common.js" defer></script>
+<script src="/js/account.js" defer></script>
+</body>
+</html>
