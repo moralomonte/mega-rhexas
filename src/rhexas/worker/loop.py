@@ -207,8 +207,12 @@ def default_filter(cfg: Config, tics) -> int:
     return run(cfg, plots=0, tics=set(tics))
 
 
-def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None):
-    """Ping the coordinator until the returned event is set. ``interval <= 0`` disables it."""
+def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None, progress: HeartbeatProgress | None = None):
+    """Ping the coordinator until the returned event is set. ``interval <= 0`` disables it.
+
+    ``progress`` is sent only after the worker has a fraction. A call with no progress
+    matches workers that predate the field.
+    """
     if interval <= 0:
         return None
 
@@ -217,7 +221,11 @@ def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=No
     def loop():
         while not stop.wait(interval):
             try:
-                client.heartbeat(assignment_id)
+                snap = progress.get() if progress is not None else None
+                if snap:
+                    client.heartbeat(assignment_id, progress=snap)
+                else:
+                    client.heartbeat(assignment_id)
             except Exception as exc:
                 print(f"heartbeat failed: {exc}", flush=True)
                 if on_result is not None:
@@ -298,7 +306,23 @@ def _advance(path: Path, state: dict, stage: str) -> dict:
     return state
 
 
-def _watch_downloads(live, folder: Path, total: int, stop: threading.Event) -> None:
+class HeartbeatProgress:
+    """Latest fraction the heartbeat thread can attach. Safe to update from the download watcher."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._value: dict | None = None
+
+    def set(self, phase: str, done: int, total: int) -> None:
+        with self._lock:
+            self._value = {"phase": str(phase), "done": int(done), "total": int(total)}
+
+    def get(self) -> dict | None:
+        with self._lock:
+            return None if self._value is None else dict(self._value)
+
+
+def _watch_downloads(live, folder: Path, total: int, stop: threading.Event, progress: HeartbeatProgress | None = None) -> None:
     """Count FITS files already on disk so the dashboard can move during a download."""
     started = time.time()
     while not stop.is_set():
@@ -308,12 +332,15 @@ def _watch_downloads(live, folder: Path, total: int, stop: threading.Event) -> N
             found = 0
         if stop.is_set():
             return
+        done = min(found, total)
+        if progress is not None:
+            progress.set("download", done, total)
         elapsed = time.time() - started
         rate = (found / elapsed) if elapsed >= 1 and found else None
         eta = ((total - found) / rate / 60.0) if rate else None
         _live_call(
             live, "update_batch", stage="downloading", progress_kind="files",
-            stars_done=min(found, total), stars_total=total,
+            stars_done=done, stars_total=total,
             per_s=round(rate, 3) if rate else None,
             eta_min=round(eta, 1) if eta is not None else None,
         )
@@ -321,7 +348,8 @@ def _watch_downloads(live, folder: Path, total: int, stop: threading.Event) -> N
             return
 
 
-def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None) -> None:
+def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None,
+             progress: HeartbeatProgress | None = None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
     live = live or _Quiet()
     path = _state_path(cache)
@@ -339,9 +367,11 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="downloading", progress_kind="files",
             stars_done=0, stars_total=n_tics, per_s=None, eta_min=None,
         )
+        if progress is not None:
+            progress.set("download", 0, n_tics)
         stop_watch = threading.Event()
         watch = threading.Thread(
-            target=_watch_downloads, args=(live, ucfg.sector_data, n_tics, stop_watch),
+            target=_watch_downloads, args=(live, ucfg.sector_data, n_tics, stop_watch, progress),
             name="rhexas-download-watch", daemon=True,
         )
         watch.start()
@@ -358,6 +388,8 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="searching", progress_kind="stars",
             stars_total=n_tics, per_s=None, eta_min=None,
         )
+        if progress is not None:
+            progress.set("search", 0, n_tics)
         spec = None
         try:
             from .live import live_spec
@@ -369,6 +401,8 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             done = (n_tics - todo) + k if todo <= n_tics else k
             rate = (k / elapsed) if elapsed > 0 else 0.0
             eta = ((todo - k) / rate / 60.0) if rate > 0 else None
+            if progress is not None:
+                progress.set("search", done, n_tics)
             _live_call(
                 live, "update_batch", stage="searching", progress_kind="stars",
                 stars_done=done, stars_total=n_tics,
@@ -387,8 +421,12 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="searched", progress_kind="stars",
             stars_done=n_tics, stars_total=n_tics, eta_min=0,
         )
+        if progress is not None:
+            progress.set("search", n_tics, n_tics)
     if stage == "searched":
         _live_call(live, "update_batch", stage="filtering", progress_kind="stars", eta_min=0, per_s=None)
+        if progress is not None:
+            progress.set("filter", n_tics, n_tics)
         filt(ucfg, tic_set)
         state = _advance(path, state, "filtered")
         stage = "filtered"
@@ -397,6 +435,8 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         candidates = read_candidates(ucfg.sector_results)
         _live_call(live, "record_candidates", assignment, candidates)
         _live_call(live, "update_batch", stage="uploading", progress_kind="stars", eta_min=0, per_s=None)
+        if progress is not None:
+            progress.set("upload", n_tics, n_tics)
         result = client.submit(assignment["assignment_id"], stars, candidates)
         _live_call(live, "note_submit", result if isinstance(result, dict) else {}, len(stars))
         delete_lightcurves(ucfg.sector_data, tic_set)
@@ -505,12 +545,17 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 f"({assignment['n_tics']} stars) stage {assignment.get('stage')}",
                 flush=True,
             )
+            beat = HeartbeatProgress()
             stop = start_heartbeat(
                 client, assignment["assignment_id"], heartbeat_s,
                 on_result=lambda ok, detail: _live_call(live, "set_connection", ok, detail),
+                progress=beat,
             )
             try:
-                run_unit(cfg, cache, client, assignment, download=download, search=search, filt=filt, live=live)
+                run_unit(
+                    cfg, cache, client, assignment,
+                    download=download, search=search, filt=filt, live=live, progress=beat,
+                )
             except ProtocolError as exc:
                 if stop is not None:
                     stop.set()

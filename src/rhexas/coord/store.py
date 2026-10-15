@@ -63,7 +63,10 @@ CREATE TABLE IF NOT EXISTS assignments (
     leased_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     submitted_at TEXT,
-    result_id INTEGER
+    result_id INTEGER,
+    progress_phase TEXT,
+    progress_done INTEGER,
+    progress_total INTEGER
 );
 CREATE TABLE IF NOT EXISTS results (
     id INTEGER PRIMARY KEY,
@@ -137,6 +140,119 @@ def iso(moment: datetime) -> str:
 
 def parse_iso(text: str) -> datetime:
     return datetime.fromisoformat(text)
+
+
+# Heartbeat ``phase`` values the worker sends, and the word shown on the status page.
+_PHASE_WORD = {
+    "download": "downloaded",
+    "downloading": "downloaded",
+    "downloaded": "downloaded",
+    "files": "downloaded",
+    "search": "searched",
+    "searching": "searched",
+    "searched": "searched",
+    "stars": "searched",
+    "filter": "filtering",
+    "filtering": "filtering",
+    "filtered": "filtered",
+    "upload": "uploading",
+    "uploading": "uploading",
+    "uploaded": "uploaded",
+}
+
+
+def format_ago(when: str | None, now: datetime) -> str:
+    """Relative time for the status page and CLI. ``when`` is a coordinator timestamp."""
+    if not when:
+        return "never"
+    try:
+        seen = parse_iso(when)
+    except ValueError:
+        return "never"
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    seconds = int((now - seen).total_seconds())
+    if seconds < 45:
+        return "just now"
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)} min ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        unit = "hour" if hours == 1 else "hours"
+        return f"{hours} {unit} ago"
+    days = seconds // 86400
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} ago"
+
+
+def activity_line(sector: int, unit_id: int, phase: str | None, done, total) -> str:
+    """What a leased worker is doing. Progress is optional; old heartbeats omit it."""
+    base = f"working on sector {int(sector)} unit {int(unit_id)}"
+    word = _PHASE_WORD.get((phase or "").strip().lower(), "")
+    if done is None or total is None:
+        return base
+    try:
+        done_i = int(done)
+        total_i = int(total)
+    except (TypeError, ValueError):
+        return base
+    if word:
+        return f"{base}, {done_i}/{total_i} {word}"
+    return f"{base}, {done_i}/{total_i}"
+
+
+def _presence(last_seen: str | None, busy: bool, now: datetime, window_s: int) -> str:
+    """online: heartbeat is fresh and a batch is leased. idle: fresh, waiting. offline: quiet."""
+    if not last_seen:
+        return "offline"
+    try:
+        seen = parse_iso(last_seen)
+    except ValueError:
+        return "offline"
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    if (now - seen).total_seconds() > window_s:
+        return "offline"
+    return "online" if busy else "idle"
+
+
+def _count_field(value) -> int:
+    """Non-negative integer from a heartbeat progress field. Rejects bools and fractions."""
+    if isinstance(value, bool) or value is None:
+        raise ValueError
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError
+        value = int(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text.isdigit():
+            raise ValueError
+        value = int(text)
+    elif not isinstance(value, int):
+        raise ValueError
+    if value < 0 or value > 50_000_000:
+        raise ValueError
+    return value
+
+
+def _clean_progress(progress) -> tuple[str, int, int] | None:
+    """Normalize an optional heartbeat progress object. Junk is ignored, not an error."""
+    if not isinstance(progress, dict):
+        return None
+    phase = str(progress.get("phase") or progress.get("stage") or "").strip().lower()
+    if len(phase) > 32 or any(not (ch.isalnum() or ch in "-_") for ch in phase):
+        phase = ""
+    try:
+        done = _count_field(progress.get("done", progress.get("completed")))
+        total = _count_field(progress.get("total"))
+    except ValueError:
+        return None
+    if total and done > total:
+        done = total
+    if not phase and done == 0 and total == 0:
+        return None
+    return phase, done, total
 
 
 def hash_token(token: str) -> str:
@@ -258,11 +374,8 @@ class Store:
             self._event(conn, "warn", f"revoked {name}")
 
     def list_workers(self) -> list[dict]:
-        rows = self.conn.execute(
-            """SELECT name, created_at, revoked_at, last_seen_at, stars_searched, candidates_found, units_agreed
-               FROM workers ORDER BY id"""
-        ).fetchall()
-        return [dict(row) for row in rows]
+        """Invite list for ``token list``. Includes revoked rows and the same display split as the page."""
+        return self._worker_rows(self.clock(), include_revoked=True)
 
     def authenticate(self, token: str) -> dict | None:
         if not token or not token.startswith("rhx_"):
@@ -355,7 +468,8 @@ class Store:
             self._touch(conn, worker_id, now)
             return self._live_lease(conn, worker_id)
 
-    def heartbeat(self, worker_id: int, assignment_id: int, project: str | None = None) -> dict:
+    def heartbeat(self, worker_id: int, assignment_id: int, project: str | None = None, progress=None) -> dict:
+        """Extend a lease. ``progress`` is optional, so workers from before that field still check in."""
         with self._tx() as conn:
             now = self.clock()
             self._expire(conn, now)
@@ -368,7 +482,17 @@ class Store:
                 self._event(conn, "warn", f"lease hit its maximum and was reissued (unit {assignment['unit_id']})")
                 raise CoordError("lease reached its maximum and was reissued", 409)
             expires = min(now + timedelta(seconds=self.settings.lease_s), cap)
-            conn.execute("UPDATE assignments SET expires_at=? WHERE id=?", (iso(expires), assignment_id))
+            cleaned = _clean_progress(progress)
+            if cleaned is None:
+                conn.execute("UPDATE assignments SET expires_at=? WHERE id=?", (iso(expires), assignment_id))
+            else:
+                phase, done, total = cleaned
+                conn.execute(
+                    """UPDATE assignments
+                       SET expires_at=?, progress_phase=?, progress_done=?, progress_total=?
+                       WHERE id=?""",
+                    (iso(expires), phase, done, total, assignment_id),
+                )
             self._touch(conn, worker_id, now)
             return {"expires_at": iso(expires)}
 
@@ -470,39 +594,25 @@ class Store:
         if project is not None:
             project = self._require_project(project)
         now = self.clock()
-        where = "WHERE project=?" if project else ""
-        args = (project,) if project else ()
-        sectors = [
-            {
-                "project": row["project"],
-                "sector": int(row["sector"]),
-                "units": int(row["units"]),
-                "agreed": int(row["agreed"] or 0),
-                "tics": int(row["tics"] or 0),
-                "tics_agreed": int(row["tics_agreed"] or 0),
-            }
-            for row in self.conn.execute(
-                f"""SELECT project, sector,
-                          COUNT(*) AS units,
-                          SUM(CASE WHEN state='agreed' THEN 1 ELSE 0 END) AS agreed,
-                          SUM(n_tics) AS tics,
-                          SUM(CASE WHEN state='agreed' THEN n_tics ELSE 0 END) AS tics_agreed
-                   FROM units {where} GROUP BY project, sector ORDER BY sector DESC""",
-                args,
-            )
-        ]
-        totals = self.conn.execute(
-            f"""SELECT COUNT(*) AS units,
-                      SUM(CASE WHEN state='agreed' THEN 1 ELSE 0 END) AS agreed,
-                      SUM(n_tics) AS tics,
-                      SUM(CASE WHEN state='agreed' THEN n_tics ELSE 0 END) AS tics_agreed
-               FROM units {where}""",
-            args,
-        ).fetchone()
+        sectors = self._sector_progress(project, now)
+        totals = {
+            "units": 0,
+            "agreed": 0,
+            "tics": 0,
+            "tics_agreed": 0,
+            "units_submitted": 0,
+            "tics_submitted": 0,
+            "units_in_progress": 0,
+            "tics_in_progress": 0,
+        }
+        for sector in sectors:
+            for key in totals:
+                totals[key] += int(sector[key] or 0)
         if project:
             leased = self.conn.execute(
-                "SELECT COUNT(*) AS n FROM assignments WHERE status='leased' AND project=?",
-                (project,),
+                """SELECT COUNT(*) AS n FROM assignments
+                   WHERE status='leased' AND expires_at>=? AND project=?""",
+                (iso(now), project),
             ).fetchone()["n"]
             new = self.conn.execute(
                 """SELECT COUNT(*) AS n FROM candidates c
@@ -512,23 +622,29 @@ class Store:
             ).fetchone()["n"]
         else:
             leased = self.conn.execute(
-                "SELECT COUNT(*) AS n FROM assignments WHERE status='leased'"
+                "SELECT COUNT(*) AS n FROM assignments WHERE status='leased' AND expires_at>=?",
+                (iso(now),),
             ).fetchone()["n"]
             new = self.conn.execute(
                 "SELECT COUNT(*) AS n FROM candidates WHERE status='NEW'"
             ).fetchone()["n"]
         workers = self.workers_public(now=now)
-        online = sum(1 for worker in workers if worker["online"])
         counted = project or DEFAULT_PROJECT
         return {
             "project": project or "all",
-            "units_total": int(totals["units"] or 0),
-            "units_agreed": int(totals["agreed"] or 0),
+            "units_total": totals["units"],
+            "units_agreed": totals["agreed"],
+            "units_submitted": totals["units_submitted"],
+            "units_in_progress": totals["units_in_progress"],
             "assignments_leased": int(leased or 0),
-            "tics_total": int(totals["tics"] or 0),
-            "tics_agreed": int(totals["tics_agreed"] or 0),
+            "tics_total": totals["tics"],
+            "tics_agreed": totals["tics_agreed"],
+            "tics_submitted": totals["tics_submitted"],
+            "tics_in_progress": totals["tics_in_progress"],
             "workers_known": len(workers),
-            "workers_online": online,
+            "workers_online": sum(1 for worker in workers if worker["presence"] == "online"),
+            "workers_idle": sum(1 for worker in workers if worker["presence"] == "idle"),
+            "workers_offline": sum(1 for worker in workers if worker["presence"] == "offline"),
             "candidates_new": int(new or 0),
             "lease_hours": self.settings.lease_s / 3600,
             "replicas": self.replica_count(counted),
@@ -537,24 +653,146 @@ class Store:
 
     def workers_public(self, now: datetime | None = None) -> list[dict]:
         moment = now or self.clock()
-        cutoff = iso(moment - timedelta(seconds=self.settings.online_window_s))
+        rows = [row for row in self._worker_rows(moment, include_revoked=False)]
+        rows.sort(key=lambda row: (
+            {"online": 0, "idle": 1, "offline": 2}[row["presence"]],
+            -int(row["stars_submitted"]),
+            row["name"],
+        ))
+        return rows
+
+    def _sector_progress(self, project: str | None, now: datetime) -> list[dict]:
+        """Per sector: verified (agreed), submitted by one worker, and leased but not yet submitted.
+
+        A unit's stars sit in exactly one of those three, or in none when nobody has it.
+        Agreement still moves a unit into verified; this split is only for display.
+        """
+        where = ""
+        args: list = [iso(now)]
+        if project:
+            where = "WHERE u.project=?"
+            args.append(project)
         rows = self.conn.execute(
-            """SELECT id, name, last_seen_at, stars_searched, candidates_found, units_agreed, revoked_at
-               FROM workers ORDER BY candidates_found DESC, stars_searched DESC, name"""
+            f"""SELECT u.project AS project, u.sector AS sector,
+                       COUNT(*) AS units,
+                       SUM(CASE WHEN u.state='agreed' THEN 1 ELSE 0 END) AS agreed,
+                       SUM(u.n_tics) AS tics,
+                       SUM(CASE WHEN u.state='agreed' THEN u.n_tics ELSE 0 END) AS tics_agreed,
+                       SUM(CASE WHEN u.state!='agreed' AND IFNULL(sub.n, 0) > 0 THEN 1 ELSE 0 END) AS units_submitted,
+                       SUM(CASE WHEN u.state!='agreed' AND IFNULL(sub.n, 0) > 0 THEN u.n_tics ELSE 0 END) AS tics_submitted,
+                       SUM(CASE WHEN u.state!='agreed' AND IFNULL(sub.n, 0) = 0 AND IFNULL(lease.n, 0) > 0
+                                THEN 1 ELSE 0 END) AS units_in_progress,
+                       SUM(CASE WHEN u.state!='agreed' AND IFNULL(sub.n, 0) = 0 AND IFNULL(lease.n, 0) > 0
+                                THEN u.n_tics ELSE 0 END) AS tics_in_progress
+                FROM units u
+                LEFT JOIN (
+                    SELECT unit_id, generation, COUNT(*) AS n
+                    FROM assignments
+                    WHERE status='submitted'
+                    GROUP BY unit_id, generation
+                ) sub ON sub.unit_id = u.id AND sub.generation = u.generation
+                LEFT JOIN (
+                    SELECT unit_id, generation, COUNT(*) AS n
+                    FROM assignments
+                    WHERE status='leased' AND expires_at >= ?
+                    GROUP BY unit_id, generation
+                ) lease ON lease.unit_id = u.id AND lease.generation = u.generation
+                {where}
+                GROUP BY u.project, u.sector
+                ORDER BY u.sector DESC""",
+            args,
         ).fetchall()
+        return [
+            {
+                "project": row["project"],
+                "sector": int(row["sector"]),
+                "units": int(row["units"] or 0),
+                "agreed": int(row["agreed"] or 0),
+                "units_submitted": int(row["units_submitted"] or 0),
+                "units_in_progress": int(row["units_in_progress"] or 0),
+                "tics": int(row["tics"] or 0),
+                "tics_agreed": int(row["tics_agreed"] or 0),
+                "tics_submitted": int(row["tics_submitted"] or 0),
+                "tics_in_progress": int(row["tics_in_progress"] or 0),
+            }
+            for row in rows
+        ]
+
+    def _worker_rows(self, now: datetime, *, include_revoked: bool) -> list[dict]:
+        """Display counts. Submitted includes later-verified work; scoring columns are unchanged."""
+        bases = self.conn.execute(
+            """SELECT id, name, created_at, revoked_at, last_seen_at,
+                      stars_searched, candidates_found, units_agreed
+               FROM workers ORDER BY id"""
+        ).fetchall()
+        stats = {
+            int(row["worker_id"]): row
+            for row in self.conn.execute(
+                """SELECT r.worker_id AS worker_id,
+                          SUM(CASE WHEN r.verdict IN ('pending', 'agreed') THEN u.n_tics ELSE 0 END) AS stars_submitted,
+                          SUM(CASE WHEN r.verdict='agreed' THEN u.n_tics ELSE 0 END) AS stars_verified,
+                          SUM(CASE WHEN r.verdict IN ('pending', 'agreed') THEN 1 ELSE 0 END) AS batches_submitted,
+                          SUM(CASE WHEN r.verdict='agreed' THEN 1 ELSE 0 END) AS batches_verified,
+                          SUM(CASE WHEN r.verdict IN ('pending', 'agreed') THEN r.n_candidates ELSE 0 END) AS candidates_submitted
+                   FROM results r
+                   JOIN units u ON u.id = r.unit_id
+                   GROUP BY r.worker_id"""
+            )
+        }
+        leases: dict[int, sqlite3.Row] = {}
+        for row in self.conn.execute(
+            """SELECT a.worker_id, u.sector, u.id AS unit_id,
+                      a.progress_phase, a.progress_done, a.progress_total
+               FROM assignments a
+               JOIN units u ON u.id = a.unit_id
+               WHERE a.status='leased' AND a.expires_at >= ?
+               ORDER BY a.leased_at DESC""",
+            (iso(now),),
+        ):
+            leases.setdefault(int(row["worker_id"]), row)
         out = []
-        for row in rows:
-            if row["revoked_at"]:
+        for row in bases:
+            if row["revoked_at"] and not include_revoked:
                 continue
-            seen = row["last_seen_at"]
+            worker_id = int(row["id"])
+            stat = stats.get(worker_id)
+            lease = leases.get(worker_id)
+            revoked = bool(row["revoked_at"])
+            if revoked:
+                presence = "offline"
+                activity = "—"
+            else:
+                presence = _presence(
+                    row["last_seen_at"], lease is not None, now, self.settings.online_window_s,
+                )
+                if lease is not None:
+                    activity = activity_line(
+                        int(lease["sector"]), int(lease["unit_id"]),
+                        lease["progress_phase"], lease["progress_done"], lease["progress_total"],
+                    )
+                elif presence == "idle":
+                    activity = "waiting for work"
+                else:
+                    activity = "—"
             out.append({
-                "id": int(row["id"]),
+                "id": worker_id,
                 "name": row["name"],
+                "created_at": row["created_at"],
+                "revoked_at": row["revoked_at"],
                 "stars_searched": int(row["stars_searched"]),
                 "candidates_found": int(row["candidates_found"]),
+                "candidates_agreed": int(row["candidates_found"]),
                 "units_agreed": int(row["units_agreed"]),
-                "last_seen_at": seen,
-                "online": bool(seen and seen >= cutoff),
+                "stars_submitted": int(stat["stars_submitted"] or 0) if stat else 0,
+                "stars_verified": int(stat["stars_verified"] or 0) if stat else 0,
+                "batches_submitted": int(stat["batches_submitted"] or 0) if stat else 0,
+                "batches_verified": int(stat["batches_verified"] or 0) if stat else 0,
+                "candidates_submitted": int(stat["candidates_submitted"] or 0) if stat else 0,
+                "last_seen_at": row["last_seen_at"],
+                "last_seen": format_ago(row["last_seen_at"], now),
+                "online": presence == "online",
+                "presence": presence,
+                "activity": activity,
             })
         return out
 
@@ -762,9 +1000,14 @@ class Store:
         )
 
     def _migrate(self) -> None:
-        """Add project and payload columns on a database created before them."""
+        """Add columns on a database created before them. Every change is an ALTER, never a rebuild."""
         names = self._columns("units")
         if not names:
+            self._add_columns("assignments", {
+                "progress_phase": "TEXT",
+                "progress_done": "INTEGER",
+                "progress_total": "INTEGER",
+            })
             return
         if "project" not in names:
             self.conn.execute("ALTER TABLE units ADD COLUMN project TEXT NOT NULL DEFAULT 'exoplanets'")
@@ -784,9 +1027,23 @@ class Store:
                 self.conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN project TEXT NOT NULL DEFAULT 'exoplanets'"
                 )
+        # Nullable progress columns. Older workers never send them; a live database keeps its rows.
+        self._add_columns("assignments", {
+            "progress_phase": "TEXT",
+            "progress_done": "INTEGER",
+            "progress_total": "INTEGER",
+        })
 
     def _columns(self, table: str) -> set[str]:
         return {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+
+    def _add_columns(self, table: str, columns: dict[str, str]) -> None:
+        have = self._columns(table)
+        if not have:
+            return
+        for name, decl in columns.items():
+            if name not in have:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     def _owned_lease(self, conn, worker_id: int, assignment_id: int):
         assignment = conn.execute("SELECT * FROM assignments WHERE id=?", (int(assignment_id),)).fetchone()

@@ -172,9 +172,13 @@ def _token(store: Store, args) -> int:
         for row in rows:
             state = "revoked" if row["revoked_at"] else "active"
             print(
-                f"{row['name']}\t{state}\tstars={row['stars_searched']}"
-                f"\tcandidates={row['candidates_found']}\tunits={row['units_agreed']}"
-                f"\tlast={row['last_seen_at'] or '-'}"
+                f"{row['name']}\t{state}\t"
+                f"stars={row['stars_submitted']} submitted/{row['stars_verified']} verified\t"
+                f"batches={row['batches_submitted']} submitted/{row['batches_verified']} verified\t"
+                f"candidates={row['candidates_submitted']} submitted/{row['candidates_agreed']} agreed\t"
+                f"activity={row['activity']}\t"
+                f"seen={row['last_seen']}\t"
+                f"{row['presence']}"
             )
         return 0
     if args.token_cmd == "revoke":
@@ -204,16 +208,31 @@ def _admin_token(store: Store, path: Path, *, reset: bool) -> int:
 def _status(store: Store) -> int:
     snap = store.status()
     print(
-        f"units {snap['units_agreed']}/{snap['units_total']} agreed, "
-        f"{snap['assignments_leased']} leased, "
-        f"stars {snap['tics_agreed']}/{snap['tics_total']}, "
+        f"units {snap['units_agreed']} verified, "
+        f"{snap['units_submitted']} submitted, "
+        f"{snap['units_in_progress']} in progress, "
+        f"{snap['units_total']} total"
+    )
+    print(
+        f"stars {snap['tics_agreed']} verified, "
+        f"{snap['tics_submitted']} submitted, "
+        f"{snap['tics_in_progress']} in progress, "
+        f"{snap['tics_total']} total"
+    )
+    print(
         f"new candidates {snap['candidates_new']}, "
-        f"workers online {snap['workers_online']}/{snap['workers_known']}"
+        f"workers online {snap['workers_online']}, "
+        f"idle {snap['workers_idle']}, "
+        f"offline {snap['workers_offline']} "
+        f"({snap['workers_known']} known)"
     )
     for sector in snap["sectors"]:
         print(
-            f"  sector {sector['sector']}: {sector['agreed']}/{sector['units']} units, "
-            f"{sector['tics_agreed']}/{sector['tics']} stars"
+            f"  sector {sector['sector']}: "
+            f"units {sector['agreed']} verified, {sector['units_submitted']} submitted, "
+            f"{sector['units_in_progress']} in progress, {sector['units']} total; "
+            f"stars {sector['tics_agreed']} verified, {sector['tics_submitted']} submitted, "
+            f"{sector['tics_in_progress']} in progress, {sector['tics']} total"
         )
     return 0
 

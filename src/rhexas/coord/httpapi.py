@@ -170,7 +170,10 @@ class App:
         except (TypeError, ValueError) as exc:
             raise CoordError("assignment_id must be an integer", 400) from exc
         if action == "heartbeat":
-            return _json(200, self.store.heartbeat(worker["id"], assignment_id, project))
+            # ``progress`` is optional. Workers that only send assignment_id still renew the lease.
+            return _json(200, self.store.heartbeat(
+                worker["id"], assignment_id, project, progress=payload.get("progress"),
+            ))
         if action == "release":
             self.store.release(worker["id"], assignment_id, project)
             return _json(200, {"status": "released"})
