@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mega-rhexas"
-version = "1.0.0"
+version = "0.3.3"
 description = "Local TESS SPOC transit search: download, BLS, filter, vet, a read-only dashboard, and an invite-only friends-beta coordinator, worker, and local worker dashboard."
 readme = "README.md"
 requires-python = ">=3.11"

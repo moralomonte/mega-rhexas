@@ -225,6 +225,19 @@ def test_update_check_offers_a_download_and_does_not_fetch_the_installer():
     assert is_newer("1.10.0", "1.2.0") is True
     assert is_newer("1.2.0", "1.10.0") is False
     assert is_newer(__version__, __version__) is False
+    assert is_newer("0.3.10", "0.3.3") is True
+    assert is_newer("v0.3.3", "0.3.10") is False
+    assert is_newer("1.0.0", "0.3.3") is True
+    assert is_newer("0.3.3", "1.0.0") is False
+    assert is_newer("v0.3.3", "0.3.3") is False
+
+
+def test_versions_agree_across_package_and_installer():
+    import re
+    root = Path(__file__).resolve().parents[1]
+    py = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
+    iss = re.search(r'#define MyAppVersion "([^"]+)"', (root / "packaging/windows/mega-rhexas.iss").read_text(encoding="utf-8")).group(1)
+    assert py == iss == __version__
 
 
 def test_tray_menu_and_pause_are_separate_from_eco(tmp_path, monkeypatch):
