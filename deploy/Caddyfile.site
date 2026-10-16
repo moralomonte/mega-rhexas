@@ -11,8 +11,8 @@
 		X-Frame-Options DENY
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		# style-src allows inline style attributes because the sector bars set width from script.
-		# script-src stays 'self': the pages load only /js/*.js.
-		Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		# script-src: site scripts plus Google Analytics (gtag.js host + hash of the inline config).
+		Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.megarhexas.com https://api.github.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; script-src 'self' https://www.googletagmanager.com 'sha256-6RVrg9KgScsch/LxF0hD7opJH9Wj+CA82xpLSkGTp8A='; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 	@assets path /css/* /js/* /img/* /favicon.svg
