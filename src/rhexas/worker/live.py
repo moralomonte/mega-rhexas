@@ -777,6 +777,7 @@ def publish_star(spec: dict, row: dict, time_values, flux_values, *, processing:
         "n_transits": _finite(row.get("n_transits")),
         "odd_even_sigma": _finite(row.get("odd_even_sigma")),
         "sec_sigma": _finite(row.get("sec_sigma")),
+        "aperture": row.get("_aperture") if isinstance(row.get("_aperture"), list) else None,
         "pgram": None,
         "project": spec.get("project") or "exoplanets",
         "sector": int(spec.get("sector") or 0),

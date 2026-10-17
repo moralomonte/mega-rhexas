@@ -368,10 +368,10 @@ if(lastNew!=null&&c.total>lastNew){const h=$('hero');h.classList.add('glow');set
 // ===== v3: star images =====
 let PIX=null,PIXF=0,CUTIMG=null,CUTTIC=null,PIXTIC=null;
 function loadStar(d){if(!d||d.tic==null)return;$('img_tic').textContent='TIC '+d.tic;
-if(PIXTIC!==d.tic){PIXTIC=d.tic;fetch('/api/pixels?tic='+d.tic).then(r=>r.json()).then(p=>{PIX=p;PIXF=0;$('pix_lbl').textContent=p.kind=='tpf'?'TESS pixels · transit flipbook':'TESS aperture (no pixel file yet)';
-$('pix_note').textContent=p.kind=='tpf'?'Flipbook loops ±3 transit durations; red frame = in transit. Cyan outline = photometric aperture.':'Pixel movies need the star\'s target-pixel file (downloaded for vetted candidates). Showing the pipeline aperture.'}).catch(()=>{})}
+if(PIXTIC!==d.tic){PIXTIC=d.tic;fetch('/api/pixels?tic='+d.tic).then(r=>r.json()).then(p=>{PIX=p;PIXF=0;$('pix_lbl').textContent=p.kind=='tpf'?'TESS pixels · transit flipbook':(p.aperture?'TESS aperture · light-curve file':'TESS aperture (no pixel file yet)');
+$('pix_note').textContent=p.kind=='tpf'?'Flipbook loops ±3 transit durations; red frame = in transit. Cyan outline = photometric aperture.':(p.note||'Pixel movies need the star\'s target-pixel file (downloaded for vetted candidates). Showing the pipeline aperture.')}).catch(()=>{})}
 if(CUTTIC!==d.tic&&d.ra!=null){CUTTIC=d.tic;CUTIMG=null;$('cut_lbl').textContent='Sky survey unavailable (offline) · TESS stars shown'}}
-function drawPix(){const cv=$('pixc');const[x,w,h]=setup(cv);x.fillStyle='#03040a';x.fillRect(0,0,w,h);if(!PIX||!PIX.aperture)return;
+function drawPix(){const cv=$('pixc');const[x,w,h]=setup(cv);x.fillStyle='#03040a';x.fillRect(0,0,w,h);if(!PIX)return;if(!PIX.aperture){x.fillStyle='#8b93b8';x.font='12px Segoe UI';x.fillText('No aperture stored for this star yet',12,24);return}
 const ap=PIX.aperture,H=ap.length,W=ap[0].length,s=Math.min(w/W,h/H)*.95,ox=(w-s*W)/2,oy=(h-s*H)/2;let img,intr=false,lab='';
 if(PIX.kind=='tpf'){const n=PIX.frames.length;PIXF=(PIXF+1)%n;img=PIX.frames[PIXF];intr=PIX.intransit[PIXF];lab=`${PIX.dt_h[PIXF]>=0?'+':''}${PIX.dt_h[PIXF].toFixed(1)} h`;
 const v=PIX.median.flat().sort((a,b)=>a-b),lo=v[Math.floor(v.length*.05)],hi=v[v.length-1];for(let j=0;j<H;j++)for(let i=0;i<W;i++){x.fillStyle=cmap(Math.sqrt(Math.max(0,(img[j][i]-lo)/(hi-lo))));x.fillRect(ox+i*s,oy+(H-1-j)*s,s+.5,s+.5)}}

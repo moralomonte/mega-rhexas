@@ -450,6 +450,40 @@ def test_page_reuses_the_mission_control_screen():
     assert "localStorage.mode" not in text
 
 
+def test_publish_star_stores_aperture_for_the_star_panel(tmp_path):
+    from rhexas.worker.present import pixels_payload
+
+    spec = {"db": str(tmp_path / DB_NAME), "project": "exoplanets", "sector": 107, "unit_id": 3}
+    spec.update({
+        "sde_min": 6, "snr_min": 7, "min_transits": 3, "max_depth": 0.05,
+        "odd_even_max_sigma": 3, "secondary_max_sigma": 3, "max_duration_fraction": 0.12,
+    })
+    time_values, flux = _curve()
+    publish_star(spec, _passing_row(_aperture=[[0, 1, 0], [1, 1, 0]]), time_values, flux, processing=False)
+    snap = snapshot(tmp_path)
+    assert snap["current_star"]["aperture"] == [[0, 1, 0], [1, 1, 0]]
+    payload = pixels_payload(snap, 42)
+    assert payload["kind"] == "aperture"
+    assert payload["aperture"] == [[0, 1, 0], [1, 1, 0]]
+    assert pixels_payload(snap, 999)["aperture"] is None
+
+
+def test_attach_aperture_reads_pipeline_bits(tmp_path):
+    import numpy as np
+    from astropy.io import fits
+
+    from rhexas.search import _attach_aperture
+
+    path = tmp_path / "star_lc.fits"
+    fits.writeto(path, np.zeros((2, 2)))
+    fits.append(path, np.array([[1, 2], [3, 6]]))
+    # Name the second extension APERTURE the way SPOC files do.
+    with fits.open(path, mode="update") as hdul:
+        hdul[1].name = "APERTURE"
+    row = {}
+    _attach_aperture(row, path)
+    assert row["_aperture"] == [[0, 1], [1, 1]]
+
 def test_mission_events_follow_the_worker_snapshot(tmp_path):
     from rhexas.worker.present import detail_payload, mission_cands, mission_lc, mission_state
 

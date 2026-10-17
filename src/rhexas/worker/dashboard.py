@@ -25,6 +25,7 @@ from .present import (
     mission_lc,
     mission_logs,
     mission_sky,
+    pixels_payload,
     mission_state,
     mode_event,
     sectors_payload,
@@ -328,11 +329,12 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 self._send(200, body, "application/json; charset=utf-8")
                 return
             if path == "/api/pixels":
-                body = dumps_safe({
-                    "kind": "aperture",
-                    "aperture": None,
-                    "note": "Pixel movies stay on the sector dashboard. This page follows the worker cache.",
-                })
+                tic = (parse_qs(parts.query).get("tic") or ["0"])[0]
+                try:
+                    tic_i = int(tic)
+                except ValueError:
+                    tic_i = 0
+                body = dumps_safe(pixels_payload(snapshot(cache, fallback=fallback), tic_i))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
             if path == "/api/cutout":

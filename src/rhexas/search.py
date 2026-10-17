@@ -49,7 +49,7 @@ def _publish_live(row: dict, t, y, *, processing: bool) -> None:
         return
 
 
-_LIVE_KEYS = ("ra", "dec", "tmag", "_pgram_p", "_pgram_w")
+_LIVE_KEYS = ("ra", "dec", "tmag", "_pgram_p", "_pgram_w", "_aperture")
 
 
 def _meta_float(meta, *names):
@@ -83,6 +83,19 @@ def _attach_pgram(row: dict, periods, power) -> None:
         idx.sort()
     row["_pgram_p"] = [round(float(periods[i]), 5) for i in idx]
     row["_pgram_w"] = [round(float(power[i]), 3) for i in idx]
+
+
+def _attach_aperture(row: dict, path) -> None:
+    """Pipeline aperture (bit 2) from the SPOC light-curve file, for the dashboard."""
+    try:
+        from astropy.io import fits
+        with fits.open(path) as hdul:
+            data = hdul["APERTURE"].data
+        if data is None:
+            return
+        row["_aperture"] = [[1 if int(v) & 2 else 0 for v in r] for r in np.asarray(data).tolist()]
+    except Exception:
+        return
 
 
 def _strip_live_keys(row: dict) -> None:
@@ -137,6 +150,7 @@ def analyze(path):
         y = lc.flux.value
         dy = lc.flux_err.value
         _attach_coords(row, lc.meta)
+        _attach_aperture(row, path)
         _publish_live(row, t, y, processing=True)
         row.update(bls_metrics(t, y, dy, s))
     except Exception as e:

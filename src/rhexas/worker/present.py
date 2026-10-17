@@ -435,6 +435,27 @@ def detail_payload(snap: dict, tic: int) -> dict:
     }
 
 
+def pixels_payload(snap: dict, tic: int) -> dict:
+    """Aperture view for one star. Pixel movies need a target-pixel file, which workers do not keep."""
+    view = None
+    star = snap.get("current_star")
+    if isinstance(star, dict) and int(star.get("tic") or 0) == int(tic):
+        view = star
+    if view is None:
+        view = _view(snap, tic)
+    aperture = view.get("aperture") if isinstance(view, dict) else None
+    if not isinstance(aperture, list) or not aperture:
+        aperture = None
+    return {
+        "kind": "aperture",
+        "aperture": aperture,
+        "note": (
+            "Pipeline aperture from this star's light-curve file. Pixel movies need a target-pixel file."
+            if aperture else "No aperture stored for this star yet."
+        ),
+    }
+
+
 def sectors_payload(snap: dict, port: int) -> dict:
     batch = snap.get("batch") if isinstance(snap.get("batch"), dict) else {}
     sector = int(batch.get("sector") or 0)
