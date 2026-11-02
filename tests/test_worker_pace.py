@@ -256,3 +256,25 @@ def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
         httpd.shutdown()
         thread.join(timeout=3)
         httpd.server_close()
+
+
+def test_pause_button_sits_in_the_top_bar_after_the_speed_buttons():
+    page = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
+    line = next(l for l in page.splitlines() if 'id="speed"' in l)
+    assert line.index('data-m="turbo"') < line.index('id="wpause"')
+    assert page.count('id="wpause"') == 1
+    assert "function onState(s){ST=s;if(s&&s.resources)paintPause(" in page
+
+
+def test_tray_icon_ships_as_package_data_and_has_a_fallback(tmp_path, monkeypatch):
+    import tomllib
+    from rhexas.desktop import tray
+    root = Path(__file__).resolve().parents[1]
+    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "icons/*" in data["tool"]["setuptools"]["package-data"]["rhexas.desktop"]
+    assert tray.icon_path() == tray._ICON
+    fallback = tmp_path / "triskelion.ico"
+    fallback.write_bytes(tray._ICON.read_bytes())
+    monkeypatch.setattr(tray, "_ICON", tmp_path / "missing.ico")
+    monkeypatch.setattr(tray, "_FALLBACK_ICON", fallback)
+    assert tray.icon_path() == fallback

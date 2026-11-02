@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import sys
 import threading
 from pathlib import Path
 
@@ -9,6 +10,15 @@ MENU_LABELS = ("Open dashboard", "Eco", "Live", "Turbo", "Pause", "Quit")
 
 # Native 16 and 32 (and the other sizes) from site/img/triskelion.svg.
 _ICON = Path(__file__).resolve().parent / "icons" / "triskelion.ico"
+# The installer also copies the icon next to pythonw.exe; use it if package data is missing.
+_FALLBACK_ICON = Path(sys.prefix) / "triskelion.ico"
+
+
+def icon_path() -> Path | None:
+    for path in (_ICON, _FALLBACK_ICON):
+        if path.is_file():
+            return path
+    return None
 
 
 def triskelion_image():
@@ -22,9 +32,10 @@ def triskelion_image():
         from PIL import Image
     except ImportError:
         return None
-    if not _ICON.is_file():
+    path = icon_path()
+    if path is None:
         return None
-    blob = _ICON.read_bytes()
+    blob = path.read_bytes()
     image = Image.open(io.BytesIO(blob))
     if (32, 32) in image.info.get("sizes", ()):
         image.size = (32, 32)
@@ -51,12 +62,12 @@ def start_tray(*, on_open, on_mode, on_toggle_pause, on_quit, mode, paused):
     """
     try:
         import pystray
-    except ImportError:
-        print("tray icon is unavailable; the dashboard is still open in the browser", flush=True)
+    except ImportError as exc:
+        print(f"tray icon is unavailable ({exc}); the dashboard is still open in the browser", flush=True)
         return None
     image = triskelion_image()
     if image is None:
-        print("tray icon is unavailable; the dashboard is still open in the browser", flush=True)
+        print(f"tray icon is unavailable (no icon at {_ICON}); the dashboard is still open in the browser", flush=True)
         return None
 
     def _mode(name: str):

@@ -34,7 +34,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
-CloseApplications=no
+CloseApplications=force
+RestartApplications=no
 
 [Tasks]
 Name: startup; Description: "Start Mega Rhexas when I sign in"; GroupDescription: "Options:"; Flags: unchecked
@@ -49,3 +50,18 @@ Name: "{userstartup}\Mega Rhexas"; Filename: "{app}\pythonw.exe"; Parameters: "-
 
 [Run]
 Filename: "{app}\pythonw.exe"; Parameters: "-m rhexas desktop"; Description: "Start Mega Rhexas"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent
+
+[Code]
+// Stop a running copy (any process started from this app folder) so files
+// such as libcrypto-3.dll are not locked while they are replaced.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+  Cmd: String;
+begin
+  Result := '';
+  Cmd := '-NoProfile -ExecutionPolicy Bypass -Command "$d=''' + ExpandConstant('{app}') + '\''; ' +
+    'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | ' +
+    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 1"';
+  Exec('powershell.exe', Cmd, '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
