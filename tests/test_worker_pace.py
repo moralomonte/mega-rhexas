@@ -228,3 +228,31 @@ def test_pool_size_changes_at_the_next_wave(tmp_path, monkeypatch):
     assert opened == [1, 3]
     text = (cfg.sector_results / "bls_raw.csv").read_text(encoding="utf-8")
     assert text.count("tess-") == 4
+
+
+def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
+    page = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="wpause"' in page
+    assert "/api/pause" in page
+    assert "Resume worker" in page
+    assert ">freeze log<" in page
+    store = Store(tmp_path)
+    httpd, port = bind_server("127.0.0.1", 0, make_handler(tmp_path, {}))
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+    thread.start()
+    try:
+        status, body = _post(port, "/api/pause", {"paused": True})
+        assert status == 200
+        assert json.loads(body) == {"ok": True, "paused": True}
+        assert store.user_paused() is True
+        status, body = _post(port, "/api/pause", {"paused": False})
+        assert status == 200
+        assert json.loads(body) == {"ok": True, "paused": False}
+        assert store.user_paused() is False
+        status, _body = _post(port, "/api/pause", {"paused": "yes"})
+        assert status == 400
+    finally:
+        httpd.dashboard_stop.set()
+        httpd.shutdown()
+        thread.join(timeout=3)
+        httpd.server_close()

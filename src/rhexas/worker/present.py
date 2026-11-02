@@ -157,6 +157,7 @@ def mission_state(snap: dict) -> dict:
             "alive": alive,
             "mode": pace_mode,
             "paused": bool(res.get("paused")) or bool(res.get("user_paused")),
+            "user_paused": bool(res.get("user_paused")),
             "cache_bytes": int(cache_bytes),
             "max_cache_gb": cap,
             "cpu": _num(res.get("cpu_percent")),

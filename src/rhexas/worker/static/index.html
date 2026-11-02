@@ -144,7 +144,7 @@ canvas{width:100%;display:block}
 
 
 <section class="card s8"><h2>★ Candidates, unverified <span class="r kv" id="cand_kv"></span></h2><div class="cands" id="cands"><div class="empty">No candidates yet. A hit that passes the numeric cuts shows up here as candidates, unverified.</div></div></section>
-<section class="card s4"><h2>Known planets &amp; TOIs recovered</h2><div class="cands" id="known" style="grid-template-columns:1fr"><div class="empty">Recoveries of known planets show up here. They prove the search works.</div></div></section><section class="card s12"><h2>Console <span class="r tools"><input id="flt" placeholder="filter (e.g. TIC, error)"><button class="btn" id="dbg">verbose</button><button class="btn on" id="auto">auto-scroll</button><button class="btn" id="pause">pause</button><button class="btn" id="clr">clear</button><button class="btn" id="expand">expand ▾</button></span></h2><div class="console compact" id="con"></div></section>
+<section class="card s4"><h2>Known planets &amp; TOIs recovered</h2><div class="cands" id="known" style="grid-template-columns:1fr"><div class="empty">Recoveries of known planets show up here. They prove the search works.</div></div></section><section class="card s12"><h2>Console <span class="r tools"><input id="flt" placeholder="filter (e.g. TIC, error)"><button class="btn" id="dbg">verbose</button><button class="btn on" id="auto">auto-scroll</button><button class="btn" id="pause" title="Stop the console scrolling. The worker keeps running.">freeze log</button><button class="btn" id="clr">clear</button><button class="btn" id="expand">expand ▾</button></span></h2><div class="console compact" id="con"></div></section>
 <section class="card s12" id="this-worker"><h2>This worker</h2>
 <div class="worker-bottom">
 <div>
@@ -160,6 +160,7 @@ canvas{width:100%;display:block}
 </div>
 <div>
 <div class="kv" id="res_kv"></div>
+<div><button class="btn" id="wpause" title="Pause or resume the worker. Its current batch is kept.">Pause worker</button></div>
 <div class="bar" title="Cache size against the cap"><i id="cbar"></i></div>
 <div class="kv" id="cache_kv"></div>
 <canvas id="wcpu" height="70" style="margin-top:8px"></canvas>
@@ -246,7 +247,7 @@ function vis(l){const q=$('flt').value.toLowerCase();return(verbose||l.lvl!='deb
 function rerender(){con.innerHTML='';const fr=document.createDocumentFragment();LOGS.filter(vis).slice(-1500).forEach(l=>fr.appendChild(lineEl(l)));con.appendChild(fr);if(auto)con.scrollTop=1e9}
 function onLog(a){LOGS=LOGS.concat(a).slice(-4000);if(paused)return;const fr=document.createDocumentFragment();a.filter(vis).forEach(l=>fr.appendChild(lineEl(l)));con.appendChild(fr);while(con.childNodes.length>1500)con.removeChild(con.firstChild);if(auto)con.scrollTop=1e9}
 $('flt').oninput=rerender;$('dbg').onclick=e=>{verbose=!verbose;e.target.classList.toggle('on',verbose);rerender()};$('auto').onclick=e=>{auto=!auto;e.target.classList.toggle('on',auto)};
-$('pause').onclick=e=>{paused=!paused;e.target.classList.toggle('on',paused);e.target.textContent=paused?'resume':'pause';if(!paused)rerender()};$('clr').onclick=()=>{LOGS=[];con.innerHTML=''};
+$('pause').onclick=e=>{paused=!paused;e.target.classList.toggle('on',paused);e.target.textContent=paused?'unfreeze log':'freeze log';if(!paused)rerender()};$('clr').onclick=()=>{LOGS=[];con.innerHTML=''};
 con.onscroll=()=>{const atB=con.scrollHeight-con.scrollTop-con.clientHeight<30;if(!atB&&auto){auto=false;$('auto').classList.remove('on')}};
 // SSE
 fetch('/api/sectors').then(r=>r.json()).then(j=>{const se=$('sector');se.innerHTML=j.list.map(o=>`<option value="${o.port}" ${o.sector==j.current?'selected':''} style="background:#0b0d1c">Sector ${o.sector}${o.label?' · '+o.label:''}</option>`).join('');se.onchange=()=>{location.href=`${location.protocol}//${location.hostname}:${se.value}/`}}).catch(()=>{});
@@ -444,7 +445,9 @@ function hpin(m){HPIN=HPIN===m?null:m;HT0=performance.now();HLAST=-1;drawHist()}
 $('hb_sde').onclick=()=>hpin('sde');$('hb_snr').onclick=()=>hpin('snr');
 setInterval(drawHist,70);
 function cacheText(n){if(n==null)return '–';if(n<1e6)return (n/1e3).toFixed(0)+' KB';if(n<1e9)return (n/1e6).toFixed(1)+' MB';return (n/1e9).toFixed(2)+' GB'}
-function paintWorker(s){const w=s&&s.worker_panel;if(!w||!$('l_stars'))return;const n=v=>(+v||0).toLocaleString();
+let WPAUSED=false;function paintPause(v){WPAUSED=v;const b=$('wpause');if(!b)return;b.textContent=v?'Resume worker':'Pause worker';b.classList.toggle('on',v);b.style.background=v?'var(--warn)':'';b.style.color=v?'#000':''}
+if($('wpause'))$('wpause').onclick=async()=>{const want=!WPAUSED,b=$('wpause');b.disabled=true;try{const r=await fetch('/api/pause',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:want})});const j=await r.json();if(r.ok&&j.ok)paintPause(!!j.paused)}catch(e){}finally{b.disabled=false}};
+function paintWorker(s){const w=s&&s.worker_panel;if(!w||!$('l_stars'))return;paintPause(!!w.user_paused);const n=v=>(+v||0).toLocaleString();
 $('l_stars').textContent=n(w.stars_searched);$('l_sub').textContent=n(w.batches_submitted);$('l_agr').textContent=n(w.batches_agreed);$('l_ver').textContent=n(w.batches_verified);$('l_pend').textContent=n(w.contributions_pending);$('l_cver').textContent=n(w.contributions_verified);
 $('res_kv').textContent=(w.procs??'–')+' procs · '+(w.threads??'–')+' threads · '+(w.priority||'–')+' priority'+(w.pid?' · pid '+w.pid:'')+(w.paused?' · paused':'')+(w.alive?'':' · worker not running');
 const cap=w.max_cache_gb?w.max_cache_gb*1e9:0,used=+w.cache_bytes||0;const bar=$('cbar');bar.style.width=cap?Math.min(100,100*used/cap)+'%':'0%';bar.style.background=cap&&used>cap?'var(--warn)':'';
