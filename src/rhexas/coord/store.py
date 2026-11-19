@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .catalogs import FAIL_HOURS, FRESH_DAYS, STAR_SOURCES, index_catalog_file
 from .logic import (
     chunk_tics,
     measured_count,
@@ -23,6 +24,7 @@ from .logic import (
 )
 from .projects import DEFAULT_PROJECT, get_handler, parse_project
 from .settings import Settings
+from .vetting import REVIEW_STATUSES, STATUS_LABELS, build_groups
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -190,6 +192,35 @@ CREATE TABLE IF NOT EXISTS email_tokens (
 );
 """
 
+# New tables only. Applied again on startup. Candidate and result rows are not updated.
+_CATALOG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS catalog_cache (
+    tic INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (tic, source)
+);
+CREATE TABLE IF NOT EXISTS catalog_files (
+    name TEXT PRIMARY KEY,
+    fetched_at TEXT NOT NULL,
+    attempted_at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS candidate_reviews (
+    tic INTEGER PRIMARY KEY,
+    status TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_candidates_tic ON candidates(tic);
+"""
+
+_SCHEMA = _SCHEMA + _CATALOG_SCHEMA
+
 
 class CoordError(Exception):
     def __init__(self, message: str, status: int = 400):
@@ -209,6 +240,43 @@ def iso(moment: datetime) -> str:
 
 def parse_iso(text: str) -> datetime:
     return datetime.fromisoformat(text)
+
+
+def _finite_or_none(value):
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _catalog_file_due(row, ok_after: str, fail_after: str) -> bool:
+    """A list is due when it has never succeeded, or the success is older than 30 days.
+
+    A failed attempt in the last few hours waits, including a failed refresh of
+    a list we already have.
+    """
+    if row is None:
+        return True
+    size = row["size"] if "size" in row.keys() else len(row["body"] or "")
+    fresh = int(row["ok"]) == 1 and int(size or 0) > 0 and str(row["fetched_at"]) >= ok_after
+    if fresh:
+        return False
+    return str(row["attempted_at"]) < fail_after
+
+
+def _catalog_source_due(row, ok_after: str, fail_after: str) -> bool:
+    if row is None:
+        return True
+    if int(row["ok"]) == 1 and str(row["checked_at"]) >= ok_after:
+        return False
+    if int(row["ok"]) == 0 and str(row["checked_at"]) >= fail_after:
+        return False
+    return True
 
 
 # Heartbeat ``phase`` values the worker sends, and the word shown on the status page.
@@ -350,6 +418,7 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
+        self._catalog_index = {}
 
     def close(self) -> None:
         self.conn.close()
@@ -357,6 +426,7 @@ class Store:
     def init_schema(self) -> None:
         self.conn.executescript(_SCHEMA)
         self._migrate()
+        self._catalog_index = {}
 
     def replica_count(self, project: str) -> int:
         """How many distinct workers must finish a unit.
@@ -968,23 +1038,300 @@ class Store:
         return out
 
     def candidates_public(self, limit: int = 50, project: str | None = None) -> list[dict]:
+        """One row per TIC, highest review priority first.
+
+        The limit applies after sectors are merged. Worker odd/even fields are
+        read from the agreed result JSON and are not copied onto candidate rows.
+        """
         limit = max(1, min(int(limit), 200))
+        detections = self._candidate_detections(project)
+        if not detections:
+            return []
+        tics = sorted({int(row["tic"]) for row in detections})
+        groups = build_groups(
+            detections,
+            self._catalog_cache_for(tics),
+            self._reviews_for(tics),
+            self._catalog_file_indexes(),
+        )
+        groups.sort(key=lambda row: (-float(row["review_priority"]), int(row["tic"])))
+        return groups[:limit]
+
+    def set_candidate_review(self, tic: int, status: str | None, note: str) -> dict:
+        """Hand-set status and note for one TIC. Does not change candidate or result rows."""
+        tic = int(tic)
+        if self.conn.execute("SELECT 1 FROM candidates WHERE tic=? LIMIT 1", (tic,)).fetchone() is None:
+            raise CoordError("no agreed candidate for that TIC", 404)
+        if status is not None and status not in REVIEW_STATUSES:
+            raise CoordError("unknown status", 400)
+        if not isinstance(note, str):
+            raise CoordError("note must be text", 400)
+        note = note.strip()
+        if len(note) > 500:
+            raise CoordError("note is too long", 400)
+        now = iso(self.clock())
+        with self._tx() as conn:
+            existing = conn.execute("SELECT tic FROM candidate_reviews WHERE tic=?", (tic,)).fetchone()
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO candidate_reviews (tic, status, note, updated_at) VALUES (?, ?, ?, ?)",
+                    (tic, status, note, now),
+                )
+            else:
+                conn.execute(
+                    "UPDATE candidate_reviews SET status=?, note=?, updated_at=? WHERE tic=?",
+                    (status, note, now, tic),
+                )
+        label = "automatic" if status is None else STATUS_LABELS.get(status, status)
+        self.log_event("info", f"TIC {tic} review set to {label}")
+        return {"tic": tic, "status": status, "note": note, "updated_at": now}
+
+    def log_event(self, level: str, message: str) -> None:
+        self.conn.execute(
+            "INSERT INTO events (ts, level, message) VALUES (?, ?, ?)",
+            (iso(self.clock()), level, str(message)[:500]),
+        )
+        max_id = self.conn.execute("SELECT MAX(id) AS n FROM events").fetchone()["n"] or 0
+        if max_id > 2500:
+            self.conn.execute("DELETE FROM events WHERE id < ?", (max_id - 2000,))
+
+    def next_catalog_job(self) -> dict | None:
+        """The next stale list or star, or None when everything is fresh."""
+        now = self.clock()
+        ok_after = iso(now - timedelta(days=FRESH_DAYS))
+        fail_after = iso(now - timedelta(hours=FAIL_HOURS))
+        files = []
+        for name in ("exofop_toi", "exofop_ctoi", "nea_planets"):
+            row = self.conn.execute(
+                "SELECT fetched_at, attempted_at, ok, length(body) AS size FROM catalog_files WHERE name=?",
+                (name,),
+            ).fetchone()
+            if _catalog_file_due(row, ok_after, fail_after):
+                files.append(name)
+        chosen = None
+        need: list[str] = []
+        tic_rows = self.conn.execute("SELECT DISTINCT tic FROM candidates ORDER BY tic").fetchall()
+        if not tic_rows:
+            return None
+        for row in tic_rows:
+            tic = int(row["tic"])
+            cached = {
+                item["source"]: item
+                for item in self.conn.execute(
+                    "SELECT source, ok, checked_at FROM catalog_cache WHERE tic=?",
+                    (tic,),
+                )
+            }
+            missing = [source for source in STAR_SOURCES if _catalog_source_due(cached.get(source), ok_after, fail_after)]
+            if missing:
+                chosen = tic
+                need = missing
+                break
+        if chosen is None and not files:
+            return None
+        payload = None
+        if chosen is not None and "tic" not in need:
+            payload = self._tic_payload(chosen)
+        return {"tic": chosen, "need": need, "files": files, "tic_payload": payload}
+
+    def save_catalog(self, tic: int, outcome: dict) -> None:
+        now = iso(self.clock())
+        with self._tx() as conn:
+            for source, row in outcome.items():
+                if source not in STAR_SOURCES:
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {"error": "empty"}
+                conn.execute(
+                    """INSERT INTO catalog_cache (tic, source, checked_at, ok, payload_json)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(tic, source) DO UPDATE SET
+                           checked_at=excluded.checked_at,
+                           ok=excluded.ok,
+                           payload_json=excluded.payload_json""",
+                    (int(tic), source, now, 1 if row.get("ok") else 0, json.dumps(payload, default=str)),
+                )
+
+    def save_catalog_file(self, name: str, result: dict) -> None:
+        """Store a downloaded list. A failed refresh keeps the previous body."""
+        now = iso(self.clock())
+        existing = self.conn.execute(
+            "SELECT fetched_at, ok, body FROM catalog_files WHERE name=?",
+            (name,),
+        ).fetchone()
+        if result.get("ok") and result.get("body"):
+            fetched_at = now
+            ok = 1
+            body = result["body"]
+            error = ""
+        else:
+            error = str(result.get("error") or "download failed")[:300]
+            if existing is not None and int(existing["ok"]) and existing["body"]:
+                fetched_at = existing["fetched_at"]
+                ok = 1
+                body = existing["body"]
+            else:
+                fetched_at = now
+                ok = 0
+                body = ""
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO catalog_files (name, fetched_at, attempted_at, ok, error, body)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET
+                       fetched_at=excluded.fetched_at,
+                       attempted_at=excluded.attempted_at,
+                       ok=excluded.ok,
+                       error=excluded.error,
+                       body=excluded.body""",
+                (name, fetched_at, now, ok, error, body),
+            )
+        self._catalog_index.pop(name, None)
+
+    def _tic_payload(self, tic: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT ok, payload_json FROM catalog_cache WHERE tic=? AND source='tic'",
+            (int(tic),),
+        ).fetchone()
+        if row is None or not int(row["ok"]):
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict) or not payload.get("found"):
+            return None
+        return payload
+
+    def _candidate_detections(self, project: str | None) -> list[dict]:
         if project is not None:
             project = self._require_project(project)
             rows = self.conn.execute(
-                """SELECT c.sector, c.tic, c.period, c.depth, c.sde, c.snr, c.status, c.score, c.flags
-                   FROM candidates c JOIN units u ON u.id = c.unit_id
-                   WHERE u.project=?
-                   ORDER BY c.score DESC, c.id DESC LIMIT ?""",
-                (project, limit),
+                """SELECT c.* FROM candidates c
+                   JOIN units u ON u.id = c.unit_id
+                   WHERE u.project=?""",
+                (project,),
             ).fetchall()
         else:
-            rows = self.conn.execute(
-                """SELECT sector, tic, period, depth, sde, snr, status, score, flags
-                   FROM candidates ORDER BY score DESC, id DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+            rows = self.conn.execute("SELECT * FROM candidates").fetchall()
+        if not rows:
+            return []
+        vet = self._worker_vet_fields(sorted({int(row["unit_id"]) for row in rows}))
+        out = []
+        for row in rows:
+            item = dict(row)
+            item.update(vet.get((int(row["unit_id"]), int(row["generation"]), int(row["tic"])), {}))
+            out.append(item)
+        return out
+
+    def _worker_vet_fields(self, unit_ids: list[int]) -> dict[tuple, dict]:
+        """odd_even_sigma, sec_sigma, and duration from agreed result JSON.
+
+        Result rows are not rewritten. When both copies sent a value, the more
+        cautious one is kept (larger odd/even sigma, larger absolute secondary).
+        """
+        if not unit_ids:
+            return {}
+        marks = ",".join("?" for _ in unit_ids)
+        found: dict[tuple, dict] = {}
+        for result in self.conn.execute(
+            f"""SELECT unit_id, generation, candidates_json FROM results
+                WHERE verdict='agreed' AND unit_id IN ({marks})""",
+            unit_ids,
+        ):
+            try:
+                items = json.loads(result["candidates_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict) or "tic" not in item:
+                    continue
+                try:
+                    tic = int(item["tic"])
+                except (TypeError, ValueError):
+                    continue
+                key = (int(result["unit_id"]), int(result["generation"]), tic)
+                slot = found.setdefault(key, {})
+                for field in ("odd_even_sigma", "sec_sigma", "duration", "t0"):
+                    value = _finite_or_none(item.get(field))
+                    if value is None:
+                        continue
+                    previous = slot.get(field)
+                    if field == "sec_sigma":
+                        if previous is None or abs(value) > abs(previous):
+                            slot[field] = value
+                    elif field == "odd_even_sigma":
+                        if previous is None or value > previous:
+                            slot[field] = value
+                    elif previous is None:
+                        slot[field] = value
+        return found
+
+    def _catalog_cache_for(self, tics: list[int]) -> dict:
+        if not tics:
+            return {}
+        marks = ",".join("?" for _ in tics)
+        found: dict[int, dict] = {}
+        for row in self.conn.execute(
+            f"""SELECT tic, source, checked_at, ok, payload_json
+                FROM catalog_cache WHERE tic IN ({marks})""",
+            tics,
+        ):
+            try:
+                payload = json.loads(row["payload_json"])
+            except json.JSONDecodeError:
+                payload = {"error": "cached record could not be read"}
+            if not isinstance(payload, dict):
+                payload = {}
+            found.setdefault(int(row["tic"]), {})[row["source"]] = {
+                "ok": int(row["ok"]),
+                "checked_at": row["checked_at"],
+                "payload": payload,
+            }
+        return found
+
+    def _reviews_for(self, tics: list[int]) -> dict:
+        if not tics:
+            return {}
+        marks = ",".join("?" for _ in tics)
+        found = {}
+        for row in self.conn.execute(
+            f"SELECT tic, status, note, updated_at FROM candidate_reviews WHERE tic IN ({marks})",
+            tics,
+        ):
+            found[int(row["tic"])] = {
+                "status": row["status"],
+                "note": row["note"] or "",
+                "updated_at": row["updated_at"],
+            }
+        return found
+
+    def _catalog_file_indexes(self) -> dict:
+        out = {}
+        for name in ("exofop_toi", "exofop_ctoi", "nea_planets"):
+            row = self.conn.execute(
+                "SELECT fetched_at, attempted_at, ok, error, body FROM catalog_files WHERE name=?",
+                (name,),
+            ).fetchone()
+            if row is None:
+                out[name] = None
+                continue
+            body = row["body"] or ""
+            stamp = (row["fetched_at"], int(row["ok"]), len(body), row["error"] or "")
+            cached = self._catalog_index.get(name)
+            if cached and cached[0] == stamp:
+                out[name] = cached[1]
+                continue
+            parsed = {
+                "ok": int(row["ok"]),
+                "fetched_at": row["fetched_at"],
+                "error": row["error"] or "",
+                "by_tic": index_catalog_file(name, body) if int(row["ok"]) and body else {},
+            }
+            self._catalog_index[name] = (stamp, parsed)
+            out[name] = parsed
+        return out
 
     def contributions(self, project: str | None = None) -> list[dict]:
         """Append-only credit rows. This process does not delete them or edit outcomes.
@@ -1186,7 +1533,12 @@ class Store:
         )
 
     def _migrate(self) -> None:
-        """Add columns on a database created before them. Every change is an ALTER, never a rebuild."""
+        """Add columns and tables on a database created before them.
+
+        Every change is an ALTER or a CREATE TABLE IF NOT EXISTS. Candidate rows
+        and result rows are not updated.
+        """
+        self.conn.executescript(_CATALOG_SCHEMA)
         names = self._columns("units")
         if not names:
             self._add_columns("assignments", {
