@@ -83,7 +83,9 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
     cfg = resolve_worker(default_config(tmp_path), procs=2, threads=2, priority="low", environ={})
     current_pace(cfg, store, {})
     snap = snapshot(tmp_path)
-    assert snap["resources"]["mode"] == "turbo"
+    # The post is stored for an old client. The worker does not apply it.
+    assert store.requested_mode() == "turbo"
+    assert snap["resources"]["mode"] == "live"
     assert snap["resources"]["procs"] == 2
     assert snap["resources"]["threads"] == 2
     assert snap["resources"]["priority"] == "low"
@@ -92,14 +94,15 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
     store.request_mode("eco")
     current_pace(cfg, store, {})
     snap = snapshot(tmp_path)
-    assert snap["resources"]["mode"] == "eco"
+    assert store.requested_mode() == "eco"
+    assert snap["resources"]["mode"] == "live"
     assert snap["resources"]["procs"] == 2
     assert snap["resources"]["threads"] == 2
     assert snap["resources"]["priority"] == "low"
     assert snap["resources"]["paused"] is False
     from rhexas.worker.present import mission_state
     state = mission_state(snap)
-    assert state["pace_mode"] == "eco"
+    assert state["pace_mode"] == "live"
     assert "paused between stars" not in state["banner"]
     assert "rhx_" not in json.dumps(snap)
 
@@ -140,7 +143,7 @@ def test_turbo_reaches_the_search_and_eco_keeps_the_lease(tmp_path, monkeypatch)
     assert seen["procs"] == 2
     assert seen["threads"] == 2
     assert client.submitted == [8]
-    assert snapshot(cache)["resources"]["mode"] == "turbo"
+    assert snapshot(cache)["resources"]["mode"] == "live"
     assert snapshot(cache)["resources"]["paused"] is False
     assert b"rhx_" not in (cache / "worker.log").read_bytes()
 
@@ -155,7 +158,8 @@ def test_turbo_reaches_the_search_and_eco_keeps_the_lease(tmp_path, monkeypatch)
     assert seen["procs"] == 2
     assert seen["threads"] == 2
     assert client.submitted == [8]
-    assert snapshot(cache)["resources"]["mode"] == "eco"
+    assert Store(cache).requested_mode() == "eco"
+    assert snapshot(cache)["resources"]["mode"] == "live"
     assert snapshot(cache)["resources"]["priority"] == "low"
     assert snapshot(cache)["resources"]["paused"] is False
     assert not (cache / "state.json").exists()

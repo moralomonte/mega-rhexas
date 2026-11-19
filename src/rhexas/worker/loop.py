@@ -354,7 +354,11 @@ def default_search(cfg: Config, tics, procs: int) -> int:
 
 
 def current_pace(cfg: Config, live, memory: dict) -> dict:
-    """Read the dashboard's requested speed and publish the load now in effect."""
+    """Publish the load the worker was started with.
+
+    An old eco/live/turbo value left in the cache is not read. Animation speed
+    lives in the browser.
+    """
     from .live import pace_settings
     baseline = {
         "procs": cfg.worker.procs,
@@ -364,8 +368,7 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
     stored = _live_call(live, "baseline")
     if isinstance(stored, dict) and stored.get("procs"):
         baseline = stored
-    requested = _live_call(live, "requested_mode") or "live"
-    settings = pace_settings(str(requested), baseline)
+    settings = pace_settings("live", baseline)
     _live_call(live, "publish_pace", settings)
     signature = (
         settings["mode"], settings["procs"], settings["threads"],
@@ -600,19 +603,12 @@ def prefetch_hold(live, sleeper) -> None:
 
 
 def _prefetch_threads(cfg: Config, live) -> int:
-    """Download concurrency for the batch ahead. The started thread count, not an animation speed."""
-    from .live import pace_settings
+    """Download concurrency for the batch ahead. The started thread count."""
     baseline = _live_call(live, "baseline")
     if not isinstance(baseline, dict) or not baseline.get("threads"):
-        baseline = {
-            "procs": cfg.worker.procs,
-            "threads": cfg.worker.threads,
-            "priority": cfg.worker.priority,
-        }
-    requested = _live_call(live, "requested_mode") or "live"
-    settings = pace_settings(str(requested), baseline)
+        baseline = {"threads": cfg.worker.threads}
     try:
-        return max(1, int(settings["threads"]))
+        return max(1, int(baseline["threads"]))
     except (TypeError, ValueError):
         return max(1, int(cfg.worker.threads))
 

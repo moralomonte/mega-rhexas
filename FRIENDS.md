@@ -25,7 +25,7 @@ On Windows you do not need git, Python, or a command prompt.
 3. Leave **Start Mega Rhexas when I sign in** unchecked unless you want that. It is off by default.
 4. Open **Mega Rhexas** from the Start menu. Your browser opens the dashboard. Eco, Live, and Turbo are on that page. Live is already selected.
 5. The first time, choose **Sign in with megarhexas.com**. Finish signing in in the browser. The page continues on its own, and it does not show the saved login again. **Paste a token** is there if you already have one.
-6. Leave it running. The triskelion in the tray opens the dashboard, changes Eco / Live / Turbo, pauses, or quits. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
+6. Leave it running. The triskelion in the tray opens the dashboard, pauses, or quits. Eco, Live, and Turbo are only on the page, and they only change how fast that page moves. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
 
 The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and stops if the drive has under 5 GB free. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to sign in a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
 

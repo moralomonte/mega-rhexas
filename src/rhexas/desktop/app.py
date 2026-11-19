@@ -114,10 +114,8 @@ def _start_tray(cache, url: str, stop: threading.Event):
 
     return start_tray(
         on_open=lambda: webbrowser.open(url),
-        on_mode=lambda mode: Store(cache).request_mode(mode),
         on_toggle_pause=toggle,
         on_quit=on_quit,
-        mode=lambda: Store(cache).requested_mode(),
         paused=lambda: Store(cache).user_paused(),
     )
 

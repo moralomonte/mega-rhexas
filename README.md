@@ -23,12 +23,12 @@ and run it. The installer is per-user: it does not ask for an administrator pass
 turn it on.
 
 Opening Mega Rhexas starts the worker and the local dashboard (the same screen as
-`rhexas worker --dashboard`, with Eco, Live, and Turbo) and opens that page in the browser.
-A triskelion sits in the tray: Open dashboard, Eco, Live, Turbo, Pause, and Quit.
+`rhexas worker --dashboard`, with Eco, Live, and Turbo for animation speed) and opens that page in the browser.
+A triskelion sits in the tray: Open dashboard, Pause, and Quit.
 
 The first time, choose **Sign in with megarhexas.com**. A browser opens so you can sign in
 on the website. If you already have a token, choose **Paste a token**. Either way it is saved
-in your AppData folder and is not shown again. Cache, low priority, Live pace, a 20 GB cap, and the disk-space
+in your AppData folder and is not shown again. Cache, low priority, a 20 GB cap, and the disk-space
 guard are already set.
 
 The installer is about 100 MB (about 400 MB once installed) because it contains Python plus numpy, astropy, and lightkurve.

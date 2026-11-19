@@ -418,7 +418,11 @@ class Store:
             })
 
     def request_mode(self, mode: str) -> str:
-        """Remember a speed. Only eco, live, or turbo are stored. Pause is separate."""
+        """Accept a mode name from an older client. The worker does not read it.
+
+        The tray no longer writes this. ``/api/mode`` still stores eco, live, or
+        turbo so an old page does not get an error. Pause is a different field.
+        """
         if mode not in PACE_MODES:
             raise ValueError("mode must be eco, live, or turbo")
         with self._locked() as conn:
