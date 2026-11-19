@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from rhexas import __version__
+
 DB_NAME = "dashboard.sqlite"
 LOG_NAME = "worker.log"
 CANDIDATE_LABEL = "candidates, unverified"
@@ -1098,6 +1100,7 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         max_gb = None
     payload = {
         "version": 1,
+        "app_version": __version__,
         "label": CANDIDATE_LABEL,
         "updated": time.time(),
         "batch": batch,
