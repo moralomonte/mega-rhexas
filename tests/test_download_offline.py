@@ -1,11 +1,13 @@
 """Download selection, 429 backoff, and the disk guard. The HTTP client is a fake."""
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from rhexas.config import load_config
 from rhexas.disk import disk_limit_hit, project_gb
-from rhexas.download import consider_disk_limit, parse_curl_script, run, select_urls
+from rhexas.download import consider_disk_limit, fetch_one, parse_curl_script, run, select_urls
 from rhexas.tics import filename_from_url, tic_from_filename
 
 
@@ -136,3 +138,44 @@ def test_project_gb_counts_only_top_level_sector_files(tmp_path):
     (tmp_path / "other").mkdir()
     (tmp_path / "other" / "nope.fits").write_bytes(b"z" * 5000)
     assert project_gb(tmp_path, overhead_gb=4.5) == pytest.approx(1000 / 1e9 + 4.5)
+
+
+def test_pause_between_chunks_then_resume_finishes_the_file(tmp_path):
+    from rhexas.config import DownloadConfig
+    dest = tmp_path / "star_lc.fits"
+    part = dest.with_suffix(".part")
+    blocked = threading.Event()
+    release = threading.Event()
+
+    class _Chunks:
+        def __iter__(self):
+            yield b"AAAA"
+            yield b"BBBB"
+
+    class _Resp:
+        status_code = 200
+        chunks = _Chunks()
+
+    def hold():
+        if part.is_file() and part.stat().st_size >= 4 and not release.is_set():
+            blocked.set()
+            while not release.is_set():
+                time.sleep(0.01)
+
+    box = {}
+
+    def runner():
+        box["ok"] = fetch_one(
+            "https://example.invalid/star", dest, getter=lambda *a, **k: _Resp(),
+            sleeper=lambda _s: None, dl=DownloadConfig(), hold=hold,
+        )
+
+    thread = threading.Thread(target=runner)
+    thread.start()
+    assert blocked.wait(3)
+    assert not dest.exists()
+    assert part.read_bytes() == b"AAAA"
+    release.set()
+    thread.join(3)
+    assert box["ok"] is True
+    assert dest.read_bytes() == b"AAAABBBB"

@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .images import cutout_jpeg, resolve_pixels
 from .live import LOG_NAME, PACE_MODES, Store, redact, read_log_tail, snapshot
 from .present import (
     cycle_star,
@@ -25,7 +26,6 @@ from .present import (
     mission_lc,
     mission_logs,
     mission_sky,
-    pixels_payload,
     mission_state,
     mode_event,
     sectors_payload,
@@ -306,7 +306,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                     payload = board.snapshot()
                 self._json(200, payload)
                 return
-            if path == "/api/state":
+            if path in ("/api/state", "/api/status"):
                 body = dumps_safe(snapshot(cache, fallback=fallback))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
@@ -334,11 +334,11 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                     tic_i = int(tic)
                 except ValueError:
                     tic_i = 0
-                body = dumps_safe(pixels_payload(snapshot(cache, fallback=fallback), tic_i))
+                body = dumps_safe(resolve_pixels(cache, snapshot(cache, fallback=fallback), tic_i))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
             if path == "/api/cutout":
-                self._send(404, b"no cutout in the worker cache", "text/plain; charset=utf-8")
+                self._cutout(parse_qs(parts.query))
                 return
             spec = _FILES.get(path)
             if spec is None:
@@ -350,6 +350,23 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 self._send(404, b"not found", "text/plain; charset=utf-8")
                 return
             self._send(200, body, spec[1])
+
+        def _cutout(self, query: dict) -> None:
+            try:
+                tic = int((query.get("tic") or ["0"])[0])
+                ra = float((query.get("ra") or ["nan"])[0])
+                dec = float((query.get("dec") or ["nan"])[0])
+            except (TypeError, ValueError):
+                self._send(400, b"tic, ra, and dec are required", "text/plain; charset=utf-8")
+                return
+            try:
+                body = cutout_jpeg(cache, tic, ra, dec)
+            except Exception:
+                body = None
+            if not body:
+                self._send(404, b"sky survey unavailable", "text/plain; charset=utf-8")
+                return
+            self._send(200, body, "image/jpeg")
 
         def _ev(self, name: str, payload) -> None:
             body = dumps_safe(payload)

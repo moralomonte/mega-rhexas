@@ -7,6 +7,7 @@ left at its defaults.
 from __future__ import annotations
 
 import csv
+import threading
 import time
 import warnings
 from glob import glob
@@ -85,17 +86,27 @@ def _attach_pgram(row: dict, periods, power) -> None:
     row["_pgram_w"] = [round(float(power[i]), 3) for i in idx]
 
 
-def _attach_aperture(row: dict, path) -> None:
-    """Pipeline aperture (bit 2) from the SPOC light-curve file, for the dashboard."""
+def read_aperture(path) -> list | None:
+    """Pipeline aperture (bit 2) from a SPOC light-curve file. None when it is missing."""
     try:
         from astropy.io import fits
         with fits.open(path) as hdul:
-            data = hdul["APERTURE"].data
+            data = hdul["APERTURE"].data if "APERTURE" in hdul else None
         if data is None:
-            return
-        row["_aperture"] = [[1 if int(v) & 2 else 0 for v in r] for r in np.asarray(data).tolist()]
+            return None
+        mask = [[1 if int(v) & 2 else 0 for v in row] for row in np.asarray(data).tolist()]
     except Exception:
-        return
+        return None
+    if not mask or not any(bit for row in mask for bit in row):
+        return None
+    return mask
+
+
+def _attach_aperture(row: dict, path) -> None:
+    """Pipeline aperture (bit 2) from the SPOC light-curve file, for the dashboard."""
+    mask = read_aperture(path)
+    if mask:
+        row["_aperture"] = mask
 
 
 def _strip_live_keys(row: dict) -> None:
@@ -197,6 +208,80 @@ def _close_pool(pool) -> None:
             pass
 
 
+def _kill_pool(pool) -> None:
+    """Stop workers that are inside a BLS call. close() would wait for that call."""
+    if pool is None:
+        return
+    try:
+        pool.terminate()
+    except Exception:
+        pass
+    try:
+        pool.join()
+    except Exception:
+        pass
+
+
+def _directive(pace) -> dict:
+    if pace is None:
+        return {}
+    try:
+        directive = pace() or {}
+    except Exception:
+        return {}
+    return directive if isinstance(directive, dict) else {}
+
+
+def _mark_holding(directive: dict, holding: bool) -> None:
+    fn = directive.get("mark_holding")
+    if not callable(fn):
+        return
+    try:
+        fn(bool(holding))
+    except Exception:
+        pass
+
+
+def _still_paused(directive: dict) -> bool:
+    fn = directive.get("still_paused")
+    if callable(fn):
+        try:
+            return bool(fn())
+        except Exception:
+            return False
+    return bool(directive.get("paused"))
+
+
+def _next_result(iterator, pool, directive: dict):
+    """One row from the pool. ('paused', None) means the pool was stopped."""
+    box: dict = {}
+    ready = threading.Event()
+
+    def pull() -> None:
+        try:
+            box["row"] = next(iterator)
+        except StopIteration:
+            box["end"] = True
+        except Exception as exc:
+            box["err"] = exc
+        finally:
+            ready.set()
+
+    threading.Thread(target=pull, name="rhexas-bls-wait", daemon=True).start()
+    while not ready.wait(0.05):
+        if _still_paused(directive):
+            _kill_pool(pool)
+            return "paused", None
+    if box.get("end"):
+        return "end", None
+    if box.get("err"):
+        if _still_paused(directive):
+            _kill_pool(pool)
+            return "paused", None
+        raise box["err"]
+    return "row", box.get("row")
+
+
 def _apply_pool_priority(priority, current):
     if not priority or priority == current:
         return current
@@ -274,18 +359,16 @@ def run(cfg: Config, *, procs: int | None = None, limit: int = 0, out: str = "bl
             if new:
                 writer.writeheader()
             while pending:
-                try:
-                    directive = pace() or {}
-                except Exception:
-                    directive = {}
-                if not isinstance(directive, dict):
-                    directive = {}
-                if directive.get("paused"):
-                    _close_pool(pool)
-                    pool = None
-                    pool_procs = None
+                directive = _directive(pace)
+                if directive.get("paused") or _still_paused(directive):
+                    if pool is not None:
+                        _close_pool(pool)
+                        pool = None
+                        pool_procs = None
+                    _mark_holding(directive, True)
                     time.sleep(0.4)
                     continue
+                _mark_holding(directive, False)
                 try:
                     want = max(1, int(directive.get("procs") or procs))
                 except (TypeError, ValueError):
@@ -298,8 +381,28 @@ def run(cfg: Config, *, procs: int | None = None, limit: int = 0, out: str = "bl
                     pool_procs = want
                 wave = pending[:pool_procs]
                 pending = pending[pool_procs:]
-                for row in pool.imap_unordered(analyze, wave, chunksize=1):
-                    finished = _write_star(handle, writer, row, on_row, finished, total, started)
+                iterator = pool.imap_unordered(analyze, wave, chunksize=1)
+                written: set[str] = set()
+                aborted = False
+                while True:
+                    kind, row = _next_result(iterator, pool, directive)
+                    if kind == "paused":
+                        aborted = True
+                        _kill_pool(pool)
+                        pool = None
+                        pool_procs = None
+                        _mark_holding(directive, True)
+                        break
+                    if kind == "end":
+                        break
+                    if isinstance(row, dict):
+                        finished = _write_star(handle, writer, row, on_row, finished, total, started)
+                        if row.get("file"):
+                            written.add(str(row["file"]))
+                if aborted:
+                    leftover = [path for path in wave if Path(path).name not in written]
+                    pending = leftover + pending
+                    time.sleep(0.4)
     finally:
         _close_pool(pool)
     print("search finished", flush=True)

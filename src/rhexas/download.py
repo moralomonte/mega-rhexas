@@ -142,8 +142,12 @@ def _call_getter(getter, url: str, timeout: float, headers: dict | None):
             return getter(url)
 
 
-def _write_body(response, dest: Path, *, append: bool) -> None:
-    """Write the body to ``dest``. A ``chunks`` sequence of ``None`` is an SSL EOF mid-file."""
+def _write_body(response, dest: Path, *, append: bool, hold=None) -> None:
+    """Write the body to ``dest``. A ``chunks`` sequence of ``None`` is an SSL EOF mid-file.
+
+    ``hold`` runs before each chunk, so a pause stops a long transfer without
+    waiting for the whole file.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     mode = "ab" if append else "wb"
     pieces = getattr(response, "chunks", None)
@@ -155,11 +159,13 @@ def _write_body(response, dest: Path, *, append: bool) -> None:
             pieces = (getattr(response, "content", None) or b"",)
     with dest.open(mode) as handle:
         for chunk in pieces:
+            if hold is not None:
+                hold()
             if chunk is None:
                 raise ConnectionError("SSL EOF")
             if chunk:
                 handle.write(chunk)
-        handle.flush()
+                handle.flush()
 
 
 def fetch_one(url: str, dest: Path, *, getter, sleeper, dl, rng=None, hold=None, stop=None) -> bool:
@@ -202,7 +208,7 @@ def fetch_one(url: str, dest: Path, *, getter, sleeper, dl, rng=None, hold=None,
                 _close_response(response)
                 raise RuntimeError(f"HTTP {status}")
             append = status == 206 and offset > 0
-            _write_body(response, part, append=append)
+            _write_body(response, part, append=append, hold=hold)
         except Exception as exc:
             _close_response(response)
             delay = retry_delay(dl.retry_base_s, dl.throttle_factor, attempt, jitter=dl.jitter, rng=rng)

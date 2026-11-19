@@ -3,7 +3,7 @@
 ``rhexas desktop`` is the command the Windows shortcut runs. A macOS bundle
 should exec the same command. Defaults are the ones a non-technical person
 should get without editing a config file: cache in app-data, low priority,
-Live pace, a 20 GB cache cap, and the worker disk-space guard.
+a 20 GB cache cap, and the worker disk-space guard.
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int 
     threading.Thread(target=_check, name="rhexas-update", daemon=True).start()
     icon = _start_tray(cache, url, stop) if tray else None
     print(f"Mega Rhexas  {url}", flush=True)
-    print("cache in app data, low priority, Live pace, 20 GB cache cap, disk-space guard on", flush=True)
+    print("cache in app data, low priority, 20 GB cache cap, disk-space guard on", flush=True)
     try:
         if not gate.ready.is_set():
             print(

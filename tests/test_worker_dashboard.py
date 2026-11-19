@@ -441,13 +441,14 @@ def test_page_reuses_the_mission_control_screen():
     assert "passes vetting" not in text
     assert "★ NEW" not in text
     assert "getImageData" not in text
-    assert "/api/cutout" not in text
+    assert "/api/cutout" in text
+    assert "rhexas-anim" in text
     assert text.find('id="con"') < text.find('id="this-worker"')
     assert "This worker" in text
     assert "Pending until the coordinator agrees. Verified means it agreed." in text
     assert "GB cap" in text
-    assert "/api/mode" in text
-    assert "localStorage.mode" not in text
+    assert "localStorage.getItem('rhexas-anim')" in text
+    assert "/api/mode" not in text
 
 
 def test_publish_star_stores_aperture_for_the_star_panel(tmp_path):
@@ -547,14 +548,120 @@ def test_mission_events_follow_the_worker_snapshot(tmp_path):
 
 def test_pace_settings_follow_the_started_load():
     base = {"procs": 2, "threads": 2, "priority": "low"}
-    assert pace_settings("live", base) == {
-        "mode": "live", "procs": 2, "threads": 2, "priority": "low", "paused": False,
-    }
-    assert pace_settings("eco", base) == {
-        "mode": "eco", "procs": 1, "threads": 1, "priority": "idle", "paused": True,
-    }
+    same = {"procs": 2, "threads": 2, "priority": "low", "paused": False}
+    assert pace_settings("live", base) == {"mode": "live", **same}
+    assert pace_settings("eco", base) == {"mode": "eco", **same}
     turbo = pace_settings("turbo", base)
-    assert turbo["mode"] == "turbo" and turbo["paused"] is False
-    assert turbo["procs"] == 4 and turbo["threads"] == 4 and turbo["priority"] == "normal"
+    assert turbo == {"mode": "turbo", **same}
     assert pace_settings("nope", base)["mode"] == "live"
     assert pace_settings("turbo", {"procs": 8, "threads": 8, "priority": "low"})["procs"] == 8
+    assert pace_settings("eco", {"procs": 8, "threads": 8, "priority": "low"})["paused"] is False
+
+
+def test_aperture_from_disk_and_sky_cutout_cache(tmp_path):
+    import io
+    import zipfile
+    from urllib.error import URLError
+
+    import numpy as np
+    from astropy.io import fits
+
+    from rhexas.worker.images import cutout_jpeg, resolve_pixels
+
+    tic = 42
+    folder = tmp_path / "data" / "s0107"
+    folder.mkdir(parents=True)
+    path = folder / f"tess2026221103959-s0107-{tic:016d}-0309-s_lc.fits"
+    fits.writeto(path, np.zeros((2, 2)))
+    fits.append(path, np.array([[1, 2], [3, 6]]))
+    with fits.open(path, mode="update") as hdul:
+        hdul[1].name = "APERTURE"
+    calls = {"n": 0}
+
+    def boom(*_a, **_k):
+        calls["n"] += 1
+        raise URLError("offline")
+
+    payload = resolve_pixels(tmp_path, {"current_star": None, "views": {}}, tic, getter=boom)
+    assert payload["aperture"] == [[0, 1], [1, 1]]
+    assert calls["n"] == 0
+
+    snap = {"current_star": {"tic": 7, "ra": 12.5, "dec": -4.25, "sector": 1}, "views": {}, "batch": {}}
+    jpeg = b"\xff\xd8" + b"\x00" * 40
+    seen = {"n": 0}
+
+    def hips(url, timeout=0, params=None):
+        seen["n"] += 1
+        seen["url"] = url
+        seen["params"] = params
+        return 200, jpeg
+
+    body = cutout_jpeg(tmp_path, 7, 12.5, -4.25, getter=hips)
+    assert body[:2] == b"\xff\xd8"
+    assert "hips2fits" in seen["url"]
+    assert seen["params"]["hips"] == "CDS/P/DSS2/color"
+    again = cutout_jpeg(tmp_path, 7, 12.5, -4.25, getter=hips)
+    assert again == body
+    assert seen["n"] == 1
+
+    order = []
+
+    def fallback(url, timeout=0, params=None):
+        order.append(url)
+        if "hips2fits" in url:
+            raise URLError("page unavailable")
+        return 200, jpeg
+
+    other = tmp_path / "other"
+    fallen = cutout_jpeg(other, 3, 10, -20, getter=fallback)
+    assert fallen[:2] == b"\xff\xd8"
+    assert "hips2fits" in order[0] and "skyview" in order[1]
+
+    def offline(*_a, **_k):
+        raise URLError("offline")
+
+    missing = cutout_jpeg(tmp_path, 8, 1.0, 2.0, getter=offline)
+    assert missing is None
+    no_sky = resolve_pixels(tmp_path, {"current_star": {"tic": 9}, "views": {}}, 9, getter=offline)
+    assert no_sky["aperture"] is None
+    assert "No aperture stored" in no_sky["note"]
+
+    image = np.arange(25, dtype=float).reshape(5, 5)
+    mask = np.zeros((5, 5), dtype=int)
+    mask[2, 2] = 2
+    blob = io.BytesIO()
+    fits.HDUList([fits.PrimaryHDU(image), fits.ImageHDU(mask, name="APERTURE")]).writeto(blob)
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w") as archive:
+        archive.writestr("cut.fits", blob.getvalue())
+
+    def tess(url, timeout=0, params=None):
+        seen["tess"] = params
+        return 200, packed.getvalue()
+
+    cut = resolve_pixels(
+        tmp_path,
+        {"current_star": {"tic": 11, "ra": 20.0, "dec": -30.0, "sector": 5}, "views": {}, "batch": {}},
+        11,
+        getter=tess,
+    )
+    assert cut["kind"] == "cutout"
+    assert cut["image"][0][0] == 0
+    assert cut["aperture"][2][2] == 1
+    assert seen["tess"]["x"] == 5 and seen["tess"]["sector"] == 5
+    cached = resolve_pixels(
+        tmp_path,
+        {"current_star": {"tic": 11, "ra": 20.0, "dec": -30.0}, "views": {}},
+        11,
+        getter=offline,
+    )
+    assert cached["image"][0][0] == 0
+
+    timed = resolve_pixels(
+        tmp_path,
+        {"current_star": {"tic": 12, "ra": 1.0, "dec": 2.0, "sector": 6}, "views": {}},
+        12,
+        getter=offline,
+    )
+    assert timed["offline"] is True
+    assert "offline or timed out" in timed["note"]
