@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import time
 
-from .live import CANDIDATE_LABEL
+from .live import CANDIDATE_LABEL, pause_view
 
 _STAGES = {
     "claimed": "Downloading",
@@ -113,13 +113,16 @@ def mission_state(snap: dict) -> dict:
     bits.append(
         f"pending {int(life.get('contributions_pending') or 0)} · verified {int(life.get('contributions_verified') or 0)}"
     )
+    user_paused = bool(res.get("user_paused"))
+    holding = bool(res.get("holding")) and user_paused
+    switch = res.get("pause") if isinstance(res.get("pause"), dict) and res.get("pause", {}).get("state") else pause_view(user_paused, holding)
     banner = ""
     if not alive and stage != "Done":
         banner = "The worker process is not attached to this cache. Leave rhexas worker running and this page will follow it."
-    elif res.get("user_paused"):
-        banner = "Paused. Resume from the Mega Rhexas menu. This batch stays leased."
-    elif res.get("paused"):
-        banner = "Eco is paused between stars. This batch stays leased."
+    elif switch.get("state") == "paused":
+        banner = "Paused. Turn the worker back on from this page. This batch stays leased."
+    elif switch.get("state") == "pausing":
+        banner = "Pausing… the worker will stop at the next safe point. This batch stays leased."
     pace_mode = res.get("mode") if res.get("mode") in ("eco", "live", "turbo") else "live"
     return {
         "stage": stage,
@@ -142,6 +145,9 @@ def mission_state(snap: dict) -> dict:
         "coord_line": " · ".join(bits),
         "banner": banner,
         "pace_mode": pace_mode,
+        "user_paused": user_paused,
+        "holding": holding,
+        "pause": switch,
         "next_line": next_line(snap.get("next")),
         "worker_panel": {
             "stars_searched": int(life.get("stars_searched") or 0),
@@ -156,8 +162,10 @@ def mission_state(snap: dict) -> dict:
             "pid": int(res.get("pid") or 0),
             "alive": alive,
             "mode": pace_mode,
-            "paused": bool(res.get("paused")) or bool(res.get("user_paused")),
-            "user_paused": bool(res.get("user_paused")),
+            "paused": user_paused,
+            "user_paused": user_paused,
+            "holding": holding,
+            "pause": switch,
             "cache_bytes": int(cache_bytes),
             "max_cache_gb": cap,
             "cpu": _num(res.get("cpu_percent")),
@@ -451,7 +459,7 @@ def pixels_payload(snap: dict, tic: int) -> dict:
         "kind": "aperture",
         "aperture": aperture,
         "note": (
-            "Pipeline aperture from this star's light-curve file. Pixel movies need a target-pixel file."
+            "Pipeline aperture from this star's light curve."
             if aperture else "No aperture stored for this star yet."
         ),
     }

@@ -53,6 +53,14 @@ def _set_hold(fn) -> None:
 def _user_paused(live) -> bool:
     return bool(_live_call(live, "user_paused"))
 
+
+def _mark_holding(live, memory: dict, holding: bool) -> None:
+    """Publish that the worker is actually waiting. Repeat calls do not rewrite the row."""
+    if memory.get("holding") is bool(holding):
+        return
+    memory["holding"] = bool(holding)
+    _live_call(live, "set_holding", bool(holding))
+
 _FLOATS = (
     "period", "t0", "duration", "depth", "depth_err", "snr", "sde",
     "odd_even_sigma", "sec_sigma", "score",
@@ -346,7 +354,11 @@ def default_search(cfg: Config, tics, procs: int) -> int:
 
 
 def current_pace(cfg: Config, live, memory: dict) -> dict:
-    """Read the dashboard's requested speed and publish the load now in effect."""
+    """Publish the load the worker was started with.
+
+    An old eco/live/turbo value left in the cache is not read. Animation speed
+    lives in the browser.
+    """
     from .live import pace_settings
     baseline = {
         "procs": cfg.worker.procs,
@@ -356,8 +368,7 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
     stored = _live_call(live, "baseline")
     if isinstance(stored, dict) and stored.get("procs"):
         baseline = stored
-    requested = _live_call(live, "requested_mode") or "live"
-    settings = pace_settings(str(requested), baseline)
+    settings = pace_settings("live", baseline)
     _live_call(live, "publish_pace", settings)
     signature = (
         settings["mode"], settings["procs"], settings["threads"],
@@ -365,14 +376,11 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
     )
     if signature != memory.get("sig"):
         memory["sig"] = signature
-        if settings["paused"]:
-            print("pace eco: paused between stars; this batch stays leased", flush=True)
-        else:
-            print(
-                f"pace {settings['mode']}: procs={settings['procs']}  "
-                f"threads={settings['threads']}  priority={settings['priority']}",
-                flush=True,
-            )
+        print(
+            f"pace {settings['mode']}: procs={settings['procs']}  "
+            f"threads={settings['threads']}  priority={settings['priority']}",
+            flush=True,
+        )
     if settings["priority"] != memory.get("priority"):
         try:
             apply_priority(settings["priority"])
@@ -383,12 +391,17 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
 
 
 def wait_until_running(cfg: Config, live, memory: dict, sleeper) -> dict:
-    """Hold here while eco is selected, or the tray Pause is on. The lease stays."""
+    """Hold here while the user has paused the worker. The lease stays.
+
+    Animation speed does not pause. Only the user pause flag does.
+    """
     while True:
         _check_stop()
         settings = current_pace(cfg, live, memory)
-        if not settings["paused"] and not _user_paused(live):
+        if not _user_paused(live):
+            _mark_holding(live, memory, False)
             return settings
+        _mark_holding(live, memory, True)
         sleeper(0.4)
 
 
@@ -581,7 +594,7 @@ def _publish_saved_next(live, state: dict) -> None:
 
 
 def prefetch_hold(live, sleeper) -> None:
-    """Tray Pause and Quit apply to the prefetch download. Eco does not freeze it."""
+    """User pause and Quit apply to the prefetch download. Animation speed does not."""
     while True:
         _check_stop()
         if not _user_paused(live):
@@ -590,19 +603,12 @@ def prefetch_hold(live, sleeper) -> None:
 
 
 def _prefetch_threads(cfg: Config, live) -> int:
-    """Download concurrency for the batch ahead. Eco is one thread; turbo is the raised count."""
-    from .live import pace_settings
+    """Download concurrency for the batch ahead. The started thread count."""
     baseline = _live_call(live, "baseline")
     if not isinstance(baseline, dict) or not baseline.get("threads"):
-        baseline = {
-            "procs": cfg.worker.procs,
-            "threads": cfg.worker.threads,
-            "priority": cfg.worker.priority,
-        }
-    requested = _live_call(live, "requested_mode") or "live"
-    settings = pace_settings(str(requested), baseline)
+        baseline = {"threads": cfg.worker.threads}
     try:
-        return max(1, int(settings["threads"]))
+        return max(1, int(baseline["threads"]))
     except (TypeError, ValueError):
         return max(1, int(cfg.worker.threads))
 
@@ -916,7 +922,12 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             )
 
         def pace():
-            return current_pace(cfg, live, memory)
+            settings = dict(current_pace(cfg, live, memory))
+            # User pause is honored between stars and, via still_paused, during a BLS call.
+            settings["paused"] = bool(_user_paused(live))
+            settings["still_paused"] = lambda: bool(_user_paused(live))
+            settings["mark_holding"] = lambda holding: _mark_holding(live, memory, bool(holding))
+            return settings
 
         settings = wait_until_running(cfg, live, memory, pause_sleep)
         ucfg = _with_pace(ucfg, settings)
@@ -1068,11 +1079,13 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         while True:
             _check_stop()
             if _user_paused(live) and not pace_memory.get("announced_pause"):
-                print("paused. Resume from the Mega Rhexas menu to continue.", flush=True)
+                print("Paused. Turn the worker back on from the dashboard to continue.", flush=True)
                 pace_memory["announced_pause"] = True
             while _user_paused(live):
                 _check_stop()
+                _mark_holding(live, pace_memory, True)
                 sleeper(0.4)
+            _mark_holding(live, pace_memory, False)
             pace_memory["announced_pause"] = False
             try:
                 if promoted is not None:

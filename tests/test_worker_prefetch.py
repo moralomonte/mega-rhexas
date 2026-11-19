@@ -289,27 +289,16 @@ def test_prefetch_zero_waits_until_the_upload_finishes(tmp_path, monkeypatch):
     assert not (tmp_path / "worker-cache" / "next.json").exists()
 
 
-def test_eco_lowers_prefetch_download_threads(tmp_path, monkeypatch):
+def test_animation_mode_does_not_change_prefetch_threads(tmp_path, monkeypatch):
     monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
     client = QueueCoord([_batch(1, [1]), _batch(2, [2])])
     recorded = {}
-    started = time.monotonic()
 
     def download(cfg, tics):
         if set(tics) == {1}:
             Store(tmp_path / "worker-cache").request_mode("eco")
         else:
             recorded["threads"] = cfg.download.threads
-
-    def sleeper(seconds):
-        if recorded.get("threads") == 1:
-            Store(tmp_path / "worker-cache").request_mode("live")
-            return
-        if time.monotonic() - started > 5:
-            recorded["timeout"] = True
-            Store(tmp_path / "worker-cache").request_mode("live")
-            return
-        time.sleep(0.01)
 
     def search(cfg, tics, procs):
         _write_bls(cfg, tics)
@@ -319,11 +308,10 @@ def test_eco_lowers_prefetch_download_threads(tmp_path, monkeypatch):
 
     code = run_worker(
         _cfg(tmp_path, threads=4), once=True, client=client,
-        download=download, search=search, filt=filt, sleeper=sleeper, heartbeat_s=0,
+        download=download, search=search, filt=filt, heartbeat_s=0,
     )
     assert code == 0
-    assert recorded.get("threads") == 1
-    assert "timeout" not in recorded
+    assert recorded.get("threads") == 4
 
 
 def test_prefetch_hold_honors_tray_pause_and_quit_but_not_eco(tmp_path):

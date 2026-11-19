@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 
-MENU_LABELS = ("Open dashboard", "Eco", "Live", "Turbo", "Pause", "Quit")
+MENU_LABELS = ("Open dashboard", "Pause", "Quit")
 
 # Native 16 and 32 (and the other sizes) from site/img/triskelion.svg.
 _ICON = Path(__file__).resolve().parent / "icons" / "triskelion.ico"
@@ -54,11 +54,12 @@ def triskelion_image():
     return image
 
 
-def start_tray(*, on_open, on_mode, on_toggle_pause, on_quit, mode, paused):
+def start_tray(*, on_open, on_toggle_pause, on_quit, paused):
     """Start the tray on a background thread. Returns the icon, or None.
 
-    ``mode`` and ``paused`` are callables so the checkmarks follow the worker.
+    ``paused`` is a callable so the checkmark follows the worker.
     ``on_quit`` is called with the icon; it should stop the icon and the worker.
+    Animation speed is chosen on the dashboard page, not from this menu.
     """
     try:
         import pystray
@@ -70,17 +71,9 @@ def start_tray(*, on_open, on_mode, on_toggle_pause, on_quit, mode, paused):
         print(f"tray icon is unavailable (no icon at {_ICON}); the dashboard is still open in the browser", flush=True)
         return None
 
-    def _mode(name: str):
-        def handler(icon, item):
-            on_mode(name)
-        return handler
-
     menu = pystray.Menu(
         pystray.MenuItem("Open dashboard", lambda icon, item: on_open(), default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Eco", _mode("eco"), checked=lambda item: mode() == "eco", radio=True),
-        pystray.MenuItem("Live", _mode("live"), checked=lambda item: mode() == "live", radio=True),
-        pystray.MenuItem("Turbo", _mode("turbo"), checked=lambda item: mode() == "turbo", radio=True),
         pystray.MenuItem("Pause", lambda icon, item: on_toggle_pause(), checked=lambda item: bool(paused())),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", lambda icon, item: on_quit(icon)),

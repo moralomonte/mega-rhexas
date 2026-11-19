@@ -41,6 +41,16 @@ def test_builtin_defaults_are_the_operational_disk_limits(tmp_path):
     assert cfg.search.procs == 28
 
 
+def test_old_dashboard_mode_still_loads(tmp_path):
+    path = tmp_path / "rhexas.toml"
+    path.write_text('[dashboard]\nmode = "turbo"\n', encoding="utf-8")
+    cfg = load_config(path, environ={}, overrides={"root": tmp_path})
+    assert cfg.dashboard.mode == "turbo"
+    path.write_text('[dashboard]\nmode = "eco"\n', encoding="utf-8")
+    cfg = load_config(path, environ={}, overrides={"root": tmp_path})
+    assert cfg.dashboard.mode == "eco"
+
+
 def test_committed_toml_matches_builtin_defaults():
     cfg = load_config(ROOT / "rhexas.toml", environ={})
     plain = default_config(ROOT)

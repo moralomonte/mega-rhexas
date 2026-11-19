@@ -23,12 +23,12 @@ and run it. The installer is per-user: it does not ask for an administrator pass
 turn it on.
 
 Opening Mega Rhexas starts the worker and the local dashboard (the same screen as
-`rhexas worker --dashboard`, with Eco, Live, and Turbo) and opens that page in the browser.
-A triskelion sits in the tray: Open dashboard, Eco, Live, Turbo, Pause, and Quit.
+`rhexas worker --dashboard`, with Eco, Live, and Turbo for animation speed) and opens that page in the browser.
+A triskelion sits in the tray: Open dashboard, Pause, and Quit.
 
 The first time, choose **Sign in with megarhexas.com**. A browser opens so you can sign in
 on the website. If you already have a token, choose **Paste a token**. Either way it is saved
-in your AppData folder and is not shown again. Cache, low priority, Live pace, a 20 GB cap, and the disk-space
+in your AppData folder and is not shown again. Cache, low priority, a 20 GB cap, and the disk-space
 guard are already set.
 
 The installer is about 100 MB (about 400 MB once installed) because it contains Python plus numpy, astropy, and lightkurve.
@@ -345,7 +345,7 @@ rhexas worker-dashboard --dashboard-host 0.0.0.0
 
 `--dashboard-host` is opt-in. Leave it unset and the page is only reachable on this computer. Set it (for example `0.0.0.0`, or a LAN address) when another machine on your network should open the page.
 
-The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page is the same mission-control screen as `rhexas dashboard`. The speed buttons write one small row back: `eco`, `live`, or `turbo`. The worker reads that row between stars. Eco pauses there and drops to one idle process, and the leased batch stays. Live is the procs, threads, and priority the worker was started with. Turbo raises that load and uses normal priority. The highlighted button is the mode the worker is actually running. The request carries only the mode name, so opening the page on the LAN with `--dashboard-host` does not reveal the invite. Pixel movies and survey cutouts stay on the sector page, because the worker cache does not keep those files. Updates arrive over server-sent events.
+The worker writes `worker-cache/dashboard.sqlite` and `worker-cache/worker.log` while it searches. The page is the same mission-control screen as `rhexas dashboard`. Eco, Live, and Turbo only change how fast that page animates. The choice is stored in the browser. They do not change process priority, thread count, or whether the worker is paused. The Running/Paused switch is separate: it posts to the worker and stays on Pausing until the worker has actually stopped. The current-star panel loads the pipeline aperture from the light curve (or a small TESS cutout) and a DSS2 sky image. Older clients can still post a mode name; the worker accepts it and keeps the effort it was started with. Updates arrive over server-sent events.
 
 Hits are labeled **candidates, unverified**. They are not confirmed planets. The three chips are verified contributions, pending contributions, and batches submitted. Those states are there for a future account.
 

@@ -68,11 +68,12 @@ PACE_MODES = ("eco", "live", "turbo")
 
 
 def pace_settings(mode: str, baseline: dict | None) -> dict:
-    """Load for one speed, relative to the settings the worker was started with.
+    """Label remembered for older clients. It does not change the worker.
 
-    eco pauses between stars, keeps the leased batch, and drops to one idle
-    process. live is that started load. turbo raises it and uses normal priority.
-    Any other name is live. The numbers are chosen here, not taken from the browser.
+    Eco, live, and turbo are animation speeds on the dashboard. The worker keeps
+    the procs, threads, and priority it was started with, and it does not pause
+    because a page asked for one of those names. Any other name is stored as live.
+    ``paused`` stays false so an old eco request cannot freeze the batch.
     """
     base = baseline if isinstance(baseline, dict) else {}
     try:
@@ -87,17 +88,20 @@ def pace_settings(mode: str, baseline: dict | None) -> dict:
     if priority not in ("idle", "low", "normal"):
         priority = "low"
     name = mode if mode in PACE_MODES else "live"
-    if name == "eco":
-        return {"mode": "eco", "procs": 1, "threads": 1, "priority": "idle", "paused": True}
-    if name == "turbo":
-        return {
-            "mode": "turbo",
-            "procs": min(8, max(procs * 2, procs + 1)),
-            "threads": min(8, max(threads * 2, threads + 1)),
-            "priority": "normal",
-            "paused": False,
-        }
-    return {"mode": "live", "procs": procs, "threads": threads, "priority": priority, "paused": False}
+    return {"mode": name, "procs": procs, "threads": threads, "priority": priority, "paused": False}
+
+
+def pause_view(user_paused: bool, holding: bool) -> dict:
+    """What the Running/Paused switch should show.
+
+    A leftover ``holding`` flag must not keep the switch on Paused after resume.
+    Pausing means the flag is set and the worker has not reached a wait yet.
+    """
+    if not user_paused:
+        return {"state": "running", "label": "Running", "on": True}
+    if holding:
+        return {"state": "paused", "label": "Paused", "on": False}
+    return {"state": "pausing", "label": "Pausing…", "on": False}
 
 
 def redact(text: str) -> str:
@@ -414,7 +418,11 @@ class Store:
             })
 
     def request_mode(self, mode: str) -> str:
-        """Remember a speed. Only eco, live, or turbo are stored. Pause is separate."""
+        """Accept a mode name from an older client. The worker does not read it.
+
+        The tray no longer writes this. ``/api/mode`` still stores eco, live, or
+        turbo so an old page does not get an error. Pause is a different field.
+        """
         if mode not in PACE_MODES:
             raise ValueError("mode must be eco, live, or turbo")
         with self._locked() as conn:
@@ -434,13 +442,16 @@ class Store:
         return "live"
 
     def request_user_pause(self, paused: bool) -> bool:
-        """Tray Pause. This is not Eco: Eco is a speed, Pause freezes the worker."""
+        """User pause. This is not an animation speed: it freezes the worker."""
         with self._locked() as conn:
             row = _read_kv(conn, "control") or {}
             if not isinstance(row, dict):
                 row = {}
             row["user_paused"] = bool(paused)
             row["pause_at"] = time.time()
+            if not paused:
+                # Resume must not wait for the worker to notice a stale hold.
+                row["holding"] = False
             _write_kv(conn, "control", row)
         return bool(paused)
 
@@ -448,6 +459,18 @@ class Store:
         with self._locked() as conn:
             row = _read_kv(conn, "control")
         return bool(isinstance(row, dict) and row.get("user_paused"))
+
+    def set_holding(self, holding: bool) -> None:
+        """The worker is actually waiting on the user pause, not merely asked to."""
+        with self._locked() as conn:
+            row = _read_kv(conn, "control") or {}
+            if not isinstance(row, dict):
+                row = {}
+            if bool(row.get("holding")) == bool(holding):
+                return
+            row["holding"] = bool(holding)
+            row["holding_at"] = time.time()
+            _write_kv(conn, "control", row)
 
     def baseline(self) -> dict:
         with self._locked() as conn:
@@ -954,6 +977,7 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
     }
     control = kv.get("control") if isinstance(kv.get("control"), dict) else {}
     user_paused = bool(control.get("user_paused"))
+    holding = bool(control.get("holding")) and user_paused
     cache_bytes, cpu = _sample_machine(cache)
     log_tail, log_size = read_log_tail(cache)
     max_gb = worker.get("max_cache_gb", fallback.get("max_cache_gb"))
@@ -988,8 +1012,10 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
             "pid": worker.get("pid") or 0,
             "worker_alive": _worker_alive(worker.get("pid")),
             "mode": worker.get("mode") if worker.get("mode") in PACE_MODES else "live",
-            "paused": bool(worker.get("paused")),
+            "paused": False,
             "user_paused": user_paused,
+            "holding": holding,
+            "pause": pause_view(user_paused, holding),
         },
         "log_tail": log_tail,
         "log_size": log_size,

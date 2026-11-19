@@ -264,15 +264,17 @@ def test_versions_agree_across_package_and_installer():
     assert py == iss == __version__
 
 
-def test_tray_menu_and_pause_are_separate_from_eco(tmp_path, monkeypatch):
+def test_tray_menu_is_open_pause_and_quit(tmp_path, monkeypatch):
     monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
-    assert MENU_LABELS == ("Open dashboard", "Eco", "Live", "Turbo", "Pause", "Quit")
+    assert MENU_LABELS == ("Open dashboard", "Pause", "Quit")
+    assert "Eco" not in MENU_LABELS
     cache = tmp_path / "cache"
     store = Store(cache)
-    store.request_user_pause(True)
+    # An old tray click left a mode in the cache. Loading it must not change the worker.
     store.request_mode("turbo")
-    assert store.user_paused() is True
     assert store.requested_mode() == "turbo"
+    store.request_user_pause(True)
+    assert store.user_paused() is True
     sleeps = []
 
     def sleeper(seconds):
@@ -280,11 +282,14 @@ def test_tray_menu_and_pause_are_separate_from_eco(tmp_path, monkeypatch):
         if len(sleeps) >= 1:
             store.request_user_pause(False)
 
-    cfg = resolve_worker(default_config(tmp_path), token="rhx_test", environ={})
+    cfg = resolve_worker(default_config(tmp_path), token="rhx_test", procs=2, threads=2, priority="low", environ={})
     settings = wait_until_running(cfg, store, {}, sleeper)
     assert sleeps
     assert store.user_paused() is False
-    assert settings["mode"] == "turbo"
+    assert settings["mode"] == "live"
+    assert settings["procs"] == 2
+    assert settings["threads"] == 2
+    assert settings["priority"] == "low"
     assert settings["paused"] is False
 
 
