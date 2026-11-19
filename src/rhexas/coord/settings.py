@@ -29,6 +29,10 @@ class Settings:
     online_window_s: int = 600
     # None: each project handler chooses (exoplanets checks twice, others once).
     replicas: int | None = None
+    # Leases one worker may hold at once, including the unit it is scanning.
+    # A claim that does not ask for prefetch still stops at one, so a v0.3 worker
+    # keeps a single unit. 4 is one scan plus the worker's default queue of 3.
+    max_outstanding: int = 4
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,7 @@ db = "coord.sqlite"
 lease_hours = 12         # a worker must heartbeat before this, or the batch is reissued
 max_lease_hours = 36     # heartbeats cannot hold a batch longer than this
 unit_size = 500          # TIC IDs per work unit
+max_outstanding = 4      # leases one online worker may hold (1 scanning + queued)
 
 # A second worker's top BLS hit must land inside these windows.
 period_rtol = 0.002      # 0.2% relative on the top period
@@ -199,7 +204,7 @@ def load_coord_file(path: Path | str | None = None, *, environ: dict | None = No
     allowed = {
         "host", "port", "db", "lease_hours", "max_lease_hours", "unit_size",
         "period_rtol", "sde_atol", "depth_rtol", "depth_atol", "max_miss_fraction",
-        "online_window_s", "replicas",
+        "online_window_s", "replicas", "max_outstanding",
     }
     extra = set(block) - allowed
     if extra:
@@ -238,6 +243,8 @@ def _settings_from(block: dict) -> Settings:
         updates["online_window_s"] = _as_int(block["online_window_s"])
     if "replicas" in block:
         updates["replicas"] = _as_int(block["replicas"])
+    if "max_outstanding" in block:
+        updates["max_outstanding"] = _as_int(block["max_outstanding"])
     if not updates:
         return current
     return Settings(**{f.name: updates.get(f.name, getattr(current, f.name)) for f in fields(Settings)})
@@ -357,6 +364,8 @@ def _validate(settings: Settings) -> None:
         raise ConfigError("max_lease_hours must be >= lease_hours")
     if settings.replicas is not None and not 1 <= settings.replicas <= 8:
         raise ConfigError("replicas must be from 1 to 8")
+    if settings.max_outstanding < 1:
+        raise ConfigError("max_outstanding must be >= 1")
     if settings.period_rtol < 0 or settings.sde_atol < 0 or settings.depth_rtol < 0 or settings.depth_atol < 0:
         raise ConfigError("agreement tolerances must be >= 0")
     if not (0 <= settings.max_miss_fraction <= 1):

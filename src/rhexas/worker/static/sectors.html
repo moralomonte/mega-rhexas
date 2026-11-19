@@ -1,0 +1,133 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/img/triskelion.svg"><title>Mega Rhexas · Sectors</title>
+<style>
+:root{--bg:#05060f;--glass:rgba(255,255,255,.045);--bd:rgba(255,255,255,.09);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--ok:#34d399;--warn:#fbbf24;--err:#f87171}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+body{background:radial-gradient(1200px 500px at 80% -10%,#1a1040,transparent 55%),#05060f}
+.wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
+a.back{color:var(--tx);text-decoration:none;border:1px solid var(--bd);background:var(--glass);border-radius:999px;padding:6px 14px;font-weight:600}
+.card{margin-top:16px;background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:20px;padding:16px 18px}
+.top{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;justify-content:space-between}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}.stat span{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
+.bar{height:8px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden;margin-top:8px;max-width:420px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--c1),var(--c2))}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{background:var(--glass);border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.on{background:#7c5cff33;border-color:#7c5cff}
+label.cap{font-size:12px;color:var(--mut)}
+input[type=number]{background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:6px 8px;width:88px;font:inherit}
+.note{color:var(--mut);font-size:12px;margin:8px 0 0}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.st{font-weight:700}
+.st.Done{color:var(--ok)}.st.Scanning{color:var(--c2)}.st.Downloading{color:#a78bfa}.st.Uploading{color:var(--warn)}
+.empty{color:var(--mut);padding:28px 8px;text-align:center}
+.err{color:var(--err);min-height:1.2em}
+@media(max-width:800px){.wrap{padding:10px}table{display:block;overflow:auto}}
+</style></head><body>
+<div class="wrap">
+<header>
+<a class="back" href="/">← Dashboard</a>
+<h1>Sectors <small>Units on this computer</small></h1>
+</header>
+<section class="card">
+<div class="top">
+<div class="stat"><span>Disk used</span><b id="used">–</b><div class="bar" title="Sector data against the storage cap"><i id="bar"></i></div></div>
+<div class="tools">
+<label class="cap">Storage cap
+<input id="cap" type="number" min="1" step="1" value="20"> GB
+</label>
+<button class="btn" id="save" type="button">Save cap</button>
+<label class="cap"><input id="prev" type="checkbox"> Show previous sectors</label>
+<button class="btn" id="clear-all" type="button">Clear all finished</button>
+</div>
+</div>
+<p class="note" id="meta"></p>
+<p class="err" id="msg"></p>
+<table>
+<thead><tr>
+<th>Sector</th><th>Unit</th><th>Search</th><th>Status</th><th>Stars</th><th>Disk</th><th>Download</th><th>Upload</th><th>Dates</th><th></th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</section>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+function gb(n){if(n==null)return '–';if(n<1e6)return (n/1e3).toFixed(0)+' KB';if(n<1e9)return (n/1e6).toFixed(1)+' MB';return (n/1e9).toFixed(2)+' GB'}
+function when(v){if(!v)return '';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString()}
+function dates(u){
+  const bits=[];
+  if(u.claimed_at)bits.push('claimed '+when(u.claimed_at));
+  if(u.ready_at)bits.push('ready '+when(u.ready_at));
+  if(u.scan_started_at)bits.push('scan '+when(u.scan_started_at));
+  if(u.uploaded_at)bits.push('sent '+when(u.uploaded_at));
+  return bits.join(' · ')||'–';
+}
+function upload(u){
+  const sent=u.results_sent?'results sent':'not sent';
+  const conf=u.results_confirmed?'confirmed':'not confirmed';
+  return sent+' · '+conf;
+}
+let SHOW=false, LAST=null;
+function paint(data){
+  LAST=data;
+  const used=data.disk_bytes||0, cap=data.cap_bytes||0;
+  $('used').textContent=gb(used)+(data.cap_gb!=null?' / '+data.cap_gb+' GB':'');
+  $('bar').style.width=cap?Math.min(100,100*used/cap)+'%':'0%';
+  $('cap').value=data.cap_gb!=null?data.cap_gb:'';
+  $('meta').textContent='Leave at least '+(data.floor_gb||10)+' GB free. Up to '+(data.queue_max??3)+' units download ahead of the one being scanned. Clearing deletes local files only after the coordinator has confirmed every result, and never the unit being scanned.';
+  const rows=(data.units||[]).filter(u=>SHOW||u.status!=='Done');
+  const body=$('rows');
+  body.innerHTML='';
+  if(!rows.length){body.innerHTML='<tr><td class="empty" colspan="10">'+(SHOW?'No units on this computer yet.':'No current units. Turn on “Show previous sectors” for finished ones.')+'</td></tr>';return}
+  for(const u of rows){
+    const tr=document.createElement('tr');
+    const stars=(u.stars_done!=null?u.stars_done:0)+'/'+(u.stars_total!=null?u.stars_total:(u.n_tics||0));
+    const dl=(u.download_done!=null?u.download_done:0)+'/'+(u.download_total!=null?u.download_total:(u.n_tics||0));
+    tr.innerHTML=`<td class="num">${u.sector??'–'}</td><td class="num">${u.unit_id??'–'}</td><td>${u.project||'–'}</td><td class="st ${u.status||''}">${u.status||'–'}</td><td class="num">${stars}</td><td class="num">${gb(u.bytes||0)}</td><td class="num">${dl}</td><td>${upload(u)}</td><td>${dates(u)}</td><td></td>`;
+    const cell=tr.lastChild;
+    if(u.status==='Done'){
+      const b=document.createElement('button');
+      b.className='btn';b.type='button';b.textContent='Clear';
+      b.disabled=!u.clear_ok;
+      b.title=u.clear_ok?'Delete this unit’s local files':'Waiting for the coordinator to confirm every result';
+      b.onclick=()=>clearOne(u.assignment_id);
+      cell.appendChild(b);
+    }
+    body.appendChild(tr);
+  }
+}
+async function load(){
+  try{paint(await (await fetch('/api/holdings')).json())}catch(e){$('msg').textContent='Could not read local sectors.'}
+}
+async function clearOne(id){
+  $('msg').textContent='';
+  const res=await fetch('/api/holdings/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assignment_id:id})});
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok||!body.ok)$('msg').textContent=body.error==='not confirmed'?'The coordinator has not confirmed every result for that unit yet.':(body.error||'Not cleared.');
+  load();
+}
+$('prev').onchange=()=>{SHOW=$('prev').checked;if(LAST)paint(LAST)};
+$('clear-all').onclick=async()=>{
+  $('msg').textContent='';
+  const res=await fetch('/api/holdings/clear-finished',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const body=await res.json().catch(()=>({}));
+  const n=(body.cleared||[]).length;
+  $('msg').textContent=n?('Cleared '+n+' finished unit'+(n===1?'':'s')+'.'):'No finished unit was ready to clear.';
+  load();
+};
+$('save').onclick=async()=>{
+  $('msg').textContent='';
+  const res=await fetch('/api/holdings/cap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_cache_gb:+$('cap').value})});
+  const body=await res.json().catch(()=>({}));
+  if(!res.ok||!body.ok)$('msg').textContent=body.error||'Cap was not saved.';
+  load();
+};
+load();setInterval(load,2000);
+</script></body></html>

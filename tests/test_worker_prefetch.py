@@ -190,8 +190,8 @@ def test_prefetch_skips_when_the_cache_cap_would_be_exceeded(tmp_path, monkeypat
     )
     assert code == 0
     snap = client.snapshot()
-    assert snap["claims"] == [True]
-    assert snap["released"] == [2]
+    assert snap["claims"] == []
+    assert snap["released"] == []
     assert downloads == []
     assert not (cache / "next.json").exists()
     assert client.submitted == [1]
@@ -243,8 +243,9 @@ def test_restart_resumes_the_current_batch_and_the_prefetched_one(tmp_path, monk
             else:
                 notes.append("both leases were not heartbeated")
                 quit_event.set()
-            if client.snapshot()["claims"]:
-                notes.append(f"claimed before resume search: {client.snapshot()['claims']}")
+            held_ids = {int(item["assignment_id"]) for item in client.held}
+            if held_ids != {1, 2}:
+                notes.append(f"resume changed the leases: {sorted(held_ids)}")
                 quit_event.set()
         else:
             quit_event.set()
@@ -311,7 +312,7 @@ def test_animation_mode_does_not_change_prefetch_threads(tmp_path, monkeypatch):
         download=download, search=search, filt=filt, heartbeat_s=0,
     )
     assert code == 0
-    assert recorded.get("threads") == 4
+    assert recorded.get("threads") == 1
 
 
 def test_prefetch_hold_honors_tray_pause_and_quit_but_not_eco(tmp_path):

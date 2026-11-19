@@ -650,7 +650,7 @@ def test_cli_status_and_token_list_show_the_split(tmp_path, capsys):
 
 
 def test_prefetch_claim_holds_two_leases_and_keeps_replica_rules(tmp_path):
-    store = _store(tmp_path)
+    store = _store(tmp_path, max_outstanding=2)
     try:
         store.enroll_tics(107, [1, 2, 3, 4, 5, 6], unit_size=2)
         tokens, ids = _ids(store, "ada", "ada2", "bea")
@@ -698,6 +698,59 @@ def test_prefetch_claim_holds_two_leases_and_keeps_replica_rules(tmp_path):
         assert [row["assignment_id"] for row in body["assignments"]] == [
             first["assignment_id"], second["assignment_id"],
         ]
+    finally:
+        store.close()
+
+
+def test_worker_holds_several_units_until_the_cap_and_offline_leases_expire(tmp_path):
+    clock = Clock()
+    store = Store(tmp_path / "coord.sqlite", Settings(max_outstanding=3, lease_s=3600), clock=clock)
+    store.init_schema()
+    try:
+        store.enroll_tics(84, [1, 2, 3, 4, 5, 6], unit_size=2)
+        tokens, ids = _ids(store, "ada", "bea")
+        first = store.claim(ids["ada"])
+        assert store.claim(ids["ada"])["assignment_id"] == first["assignment_id"]
+        second = store.claim(ids["ada"], prefetch=True)
+        third = store.claim(ids["ada"], prefetch=True)
+        assert store.claim(ids["ada"], prefetch=True) is None
+        assert [row["tics"] for row in store.leases(ids["ada"])] == [[1, 2], [3, 4], [5, 6]]
+        clock.now = clock.now + timedelta(seconds=3500)
+        for row in store.leases(ids["ada"]):
+            store.heartbeat(ids["ada"], row["assignment_id"])
+        assert len(store.leases(ids["ada"])) == 3
+        store.release(ids["ada"], third["assignment_id"])
+        assert [row["assignment_id"] for row in store.leases(ids["ada"])] == [
+            first["assignment_id"], second["assignment_id"],
+        ]
+        again = store.claim(ids["ada"], prefetch=True)
+        assert again["tics"] == [5, 6]
+        clock.now = clock.now + timedelta(seconds=3601)
+        assert store.leases(ids["ada"]) == []
+        reclaimed = store.claim(ids["bea"])
+        assert reclaimed["tics"] == [1, 2]
+        done = store.submit(ids["bea"], reclaimed["assignment_id"], [_star(1), _star(2)], [])
+        assert done["receipt"]["complete"] is True
+        assert done["receipt"]["n_expected"] == 2
+        assert done["receipt"]["n_received"] == 2
+        partial = store.claim(ids["bea"])
+        incomplete = store.submit(ids["bea"], partial["assignment_id"], [_star(3)], [])
+        assert incomplete["receipt"]["complete"] is False
+        app = App(store)
+        asked = app.handle(
+            "POST", "/api/v1/projects/exoplanets/tasks/receipt", "",
+            {"Authorization": f"Bearer {tokens['bea']}"},
+            json.dumps({"assignment_id": reclaimed["assignment_id"]}).encode(),
+        )
+        assert asked.status == 200
+        assert json.loads(asked.body)["receipt"]["complete"] is True
+        peeked = app.handle(
+            "POST", "/api/v1/projects/exoplanets/tasks/peek", "",
+            {"Authorization": f"Bearer {tokens['ada']}"},
+            b"{}",
+        )
+        assert peeked.status == 200
+        assert json.loads(peeked.body)["preview"]["n_tics"] == 2
     finally:
         store.close()
 

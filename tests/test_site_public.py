@@ -75,8 +75,8 @@ def test_how_it_works_is_plain_and_has_the_placeholder():
     ):
         assert heading in text
     assert "Technical details (coming soon)" in text
-    assert ">Eco<" in text and ">Live<" in text and ">Turbo<" in text
-    assert "deletes the big files" in text.lower() or "Delete the big files" in text
+    assert ">Slow<" in text and ">Normal<" in text and ">Realtime<" in text
+    assert "do not change how hard the search runs" in text
 
 
 def test_account_pages_call_the_coordinator_contract():

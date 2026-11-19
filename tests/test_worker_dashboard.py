@@ -432,9 +432,13 @@ def test_page_reuses_the_mission_control_screen():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
     original = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "index.html").read_text(encoding="utf-8")
-    for marker in ('id="sky"', 'id="pgc"', 'id="hist"', 'id="lcc"', 'id="fdc"', "trspin", "Eco", "auto-scroll", "EventSource"):
+    for marker in ('id="sky"', 'id="pgc"', 'id="hist"', 'id="lcc"', 'id="fdc"', "trspin", "auto-scroll", "EventSource"):
         assert marker in text
         assert marker in original
+    assert ">Slow<" in text and ">Normal<" in text and ">Realtime<" in text
+    assert 'id="sectors"' in text and 'href="/sectors"' in text
+    assert "localStorage.getItem('rhexas.visual')" in text
+    assert "fetch('/api/mode'" not in text
     assert "candidates, unverified" in text
     assert "coin" not in text.lower()
     assert "discovery" not in text.lower()
@@ -448,6 +452,7 @@ def test_page_reuses_the_mission_control_screen():
     assert "Pending until the coordinator agrees. Verified means it agreed." in text
     assert "GB cap" in text
     assert "localStorage.getItem('rhexas-anim')" in text
+    assert "rhexas.visual" in text
     assert "/api/mode" not in text
 
 
@@ -546,14 +551,15 @@ def test_mission_events_follow_the_worker_snapshot(tmp_path):
     assert numeric_pass(_passing_row(), limits)
 
 
-def test_pace_settings_follow_the_started_load():
+def test_pace_settings_ignore_picture_speed():
     base = {"procs": 2, "threads": 2, "priority": "low"}
     same = {"procs": 2, "threads": 2, "priority": "low", "paused": False}
     assert pace_settings("live", base) == {"mode": "live", **same}
     assert pace_settings("eco", base) == {"mode": "eco", **same}
     turbo = pace_settings("turbo", base)
     assert turbo == {"mode": "turbo", **same}
-    assert pace_settings("nope", base)["mode"] == "live"
+    for name in ("slow", "normal", "realtime", "nope"):
+        assert pace_settings(name, base) == {"mode": "live", **same}
     assert pace_settings("turbo", {"procs": 8, "threads": 8, "priority": "low"})["procs"] == 8
     assert pace_settings("eco", {"procs": 8, "threads": 8, "priority": "low"})["paused"] is False
 

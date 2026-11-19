@@ -13,6 +13,7 @@ db = "coord.sqlite"
 lease_hours = 12         # a worker must heartbeat before this, or the batch is reissued
 max_lease_hours = 36     # heartbeats cannot hold a batch longer than this
 unit_size = 500          # TIC IDs per work unit
+max_outstanding = 4      # leases one worker may hold at once; a plain claim still takes only one
 
 # A second worker's top BLS hit must land inside these windows.
 period_rtol = 0.002      # 0.2% relative on the top period

@@ -129,8 +129,12 @@ def test_worker_searches_a_batch_uploads_it_and_deletes_fits(tmp_path, monkeypat
     assert by_tic[7]["period"] == 1.5
     assert by_tic[7]["error"] is None
     assert uploaded["candidates"][0]["status"] == "NEW"
-    assert all(not path.exists() for path in written)
+    assert all(path.exists() for path in written)
     assert not (tmp_path / "worker-cache" / "state.json").exists()
+    ledger = json.loads((tmp_path / "worker-cache" / "units.json").read_text(encoding="utf-8"))
+    assert ledger["units"][0]["stage"] == "done"
+    assert ledger["units"][0]["results_sent"] is True
+    assert ledger["units"][0]["results_confirmed"] is False
 
 
 def test_worker_resumes_after_download_without_fetching_again(tmp_path, monkeypatch):

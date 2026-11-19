@@ -287,10 +287,10 @@ def test_tray_menu_is_open_pause_and_quit(tmp_path, monkeypatch):
     assert sleeps
     assert store.user_paused() is False
     assert settings["mode"] == "live"
-    assert settings["procs"] == 2
-    assert settings["threads"] == 2
-    assert settings["priority"] == "low"
     assert settings["paused"] is False
+    assert settings["procs"] == cfg.worker.procs
+    assert settings["threads"] == cfg.worker.threads
+    assert settings["priority"] == cfg.worker.priority
 
 
 def test_quit_event_stops_before_claiming_work(tmp_path, monkeypatch):

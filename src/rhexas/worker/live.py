@@ -68,12 +68,12 @@ PACE_MODES = ("eco", "live", "turbo")
 
 
 def pace_settings(mode: str, baseline: dict | None) -> dict:
-    """Label remembered for older clients. It does not change the worker.
+    """Picture speed does not change the worker.
 
-    Eco, live, and turbo are animation speeds on the dashboard. The worker keeps
-    the procs, threads, and priority it was started with, and it does not pause
-    because a page asked for one of those names. Any other name is stored as live.
-    ``paused`` stays false so an old eco request cannot freeze the batch.
+    Eco, live, turbo, and Slow, Normal, Realtime are animation names. The worker
+    keeps the procs, threads, and priority it was started with. ``paused`` stays
+    false so a picture-speed request cannot freeze the batch. An unknown name is
+    stored as live.
     """
     base = baseline if isinstance(baseline, dict) else {}
     try:

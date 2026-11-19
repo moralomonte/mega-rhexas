@@ -23,7 +23,7 @@ from pathlib import Path
 
 from rhexas.config import Config
 
-from .cache import delete_lightcurves, directory_bytes, enforce_cache_cap
+from .cache import delete_lightcurves, directory_bytes
 from .client import CoordinatorClient, ProtocolError
 from .priority import apply_priority
 
@@ -183,20 +183,18 @@ def read_candidates(results_dir: Path) -> list[dict]:
 
 
 def ensure_space(cache: Path, cfg: Config) -> None:
+    """Refuse a download that would leave under 10 GB free. Do not delete sector files."""
+    from .holdings import free_floor_gb
     data = Path(cache) / "data"
     data.mkdir(parents=True, exist_ok=True)
-    enforce_cache_cap(data, int(cfg.worker.max_cache_gb * 1e9))
-    need = cfg.worker.min_free_gb * 1e9
+    need = free_floor_gb(cfg.worker.min_free_gb) * 1e9
     free = shutil.disk_usage(data).free
     if free >= need:
         return
-    enforce_cache_cap(data, 0)
-    free = shutil.disk_usage(data).free
-    if free < need:
-        raise RuntimeError(
-            f"only {free / 1e9:.1f} GB free after emptying the worker cache; "
-            f"worker.min_free_gb is {cfg.worker.min_free_gb}"
-        )
+    raise RuntimeError(
+        f"only {free / 1e9:.1f} GB free; a download must leave at least "
+        f"{free_floor_gb(cfg.worker.min_free_gb):.0f} GB"
+    )
 
 
 def _state_path(cache: Path) -> Path:
@@ -205,6 +203,34 @@ def _state_path(cache: Path) -> Path:
 
 def _next_path(cache: Path) -> Path:
     return Path(cache) / "next.json"
+
+
+def _queue_path(cache: Path) -> Path:
+    return Path(cache) / "queue.json"
+
+
+def _read_queue(cache: Path) -> list[dict]:
+    """Units downloaded ahead of the one being scanned, oldest first."""
+    data = _read_state(_queue_path(cache))
+    rows = data.get("units") if isinstance(data, dict) else data
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict) and row.get("assignment_id") is not None]
+    nxt = _read_state(_next_path(cache))
+    if isinstance(nxt, dict) and nxt.get("assignment_id") is not None:
+        return [nxt]
+    return []
+
+
+def _write_queue(cache: Path, rows: list[dict]) -> None:
+    path = _queue_path(cache)
+    if rows:
+        _write_state(path, {"units": rows})
+    else:
+        _clear_state(path)
+    if rows:
+        _write_state(_next_path(cache), rows[0])
+    else:
+        _clear_state(_next_path(cache))
 
 
 def _read_state(path: Path) -> dict | None:
@@ -356,8 +382,8 @@ def default_search(cfg: Config, tics, procs: int) -> int:
 def current_pace(cfg: Config, live, memory: dict) -> dict:
     """Publish the load the worker was started with.
 
-    An old eco/live/turbo value left in the cache is not read. Animation speed
-    lives in the browser.
+    Slow, Normal, Realtime, and an old eco/live/turbo value are not read.
+    Procs, threads, priority, and the poll wait stay on the config.
     """
     from .live import pace_settings
     baseline = {
@@ -371,8 +397,7 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
     settings = pace_settings("live", baseline)
     _live_call(live, "publish_pace", settings)
     signature = (
-        settings["mode"], settings["procs"], settings["threads"],
-        settings["priority"], settings["paused"],
+        settings["procs"], settings["threads"], settings["priority"],
     )
     if signature != memory.get("sig"):
         memory["sig"] = signature
@@ -393,7 +418,7 @@ def current_pace(cfg: Config, live, memory: dict) -> dict:
 def wait_until_running(cfg: Config, live, memory: dict, sleeper) -> dict:
     """Hold here while the user has paused the worker. The lease stays.
 
-    Animation speed does not pause. Only the user pause flag does.
+    Picture speed does not pause. Only the user pause flag does.
     """
     while True:
         _check_stop()
@@ -444,11 +469,14 @@ def estimate_batch_bytes(data_dir: Path, n_tics: int) -> int:
     return each * max(int(n_tics), 0)
 
 
-def prefetch_block(cache: Path, cfg: Config, n_tics: int) -> str | None:
-    """None when the next batch fits. Otherwise ``cache cap`` or ``free space``.
+def prefetch_block(cache: Path, cfg: Config, n_tics: int, *, queued: int = 0, queue_max: int | None = None) -> str | None:
+    """None when the next batch fits. Otherwise ``queue``, ``cache cap``, or ``free space``.
 
     This does not delete files. The batch already being searched stays on disk.
+    Free space left behind is at least 10 GB, and at least ``min_free_gb`` when
+    that is higher. The cap is the Sectors-page value when one has been saved.
     """
+    from .holdings import free_floor_gb, queue_block, runtime_cap_gb
     data = Path(cache) / "data"
     try:
         data.mkdir(parents=True, exist_ok=True)
@@ -457,13 +485,19 @@ def prefetch_block(cache: Path, cfg: Config, n_tics: int) -> str | None:
         free = shutil.disk_usage(data).free
     except OSError:
         return "free space"
-    cap = int(float(cfg.worker.max_cache_gb) * 1e9)
-    if used + extra > cap:
-        return "cache cap"
-    need = float(cfg.worker.min_free_gb) * 1e9
-    if free - extra < need:
-        return "free space"
-    return None
+    cap_gb = runtime_cap_gb(cache, cfg.worker.max_cache_gb)
+    limit = cfg.worker.queue_max if queue_max is None else queue_max
+    if int(cfg.worker.prefetch) <= 0:
+        limit = 0
+    return queue_block(
+        queued=int(queued),
+        queue_max=int(limit),
+        used_bytes=used,
+        extra_bytes=extra,
+        cap_bytes=int(cap_gb * 1e9),
+        free_bytes=free,
+        floor_bytes=int(free_floor_gb(cfg.worker.min_free_gb) * 1e9),
+    )
 
 
 def _call_claim(client, *, prefetch: bool) -> dict:
@@ -574,14 +608,75 @@ def _resume_or_claim(client, cache: Path) -> tuple[dict | None, dict | None]:
     return active, pre
 
 
+def _replace_queued(cache: Path, state: dict) -> None:
+    rows = _read_queue(cache)
+    aid = int(state.get("assignment_id") or 0)
+    found = False
+    for index, row in enumerate(rows):
+        if int(row.get("assignment_id") or 0) == aid:
+            rows[index] = state
+            found = True
+            break
+    if not found:
+        rows.append(state)
+    _write_queue(cache, rows)
+
+
 def _promote_next(cache: Path) -> dict | None:
-    """Make the prefetched batch the current one. Its stage is kept, so a finished download is not repeated."""
-    pre = _read_state(_next_path(cache))
-    if not pre:
-        return None
-    _write_state(_state_path(cache), pre)
-    _clear_state(_next_path(cache))
-    return pre
+    """Make the oldest queued batch the current one. Its stage is kept, so a finished download is not repeated."""
+    rows = _read_queue(cache)
+    if not rows:
+        pre = _read_state(_next_path(cache))
+        if not pre:
+            return None
+        rows = [pre]
+    nxt = rows.pop(0)
+    _write_state(_state_path(cache), nxt)
+    _write_queue(cache, rows)
+    return nxt
+
+
+def _remember(cache: Path, assignment: dict, **fields) -> None:
+    """Record a unit for the Sectors page. A failure here must not stop the search."""
+    try:
+        from .holdings import upsert_unit
+        upsert_unit(cache, assignment, **fields)
+    except Exception:
+        return
+
+
+def _confirm_receipt(client, assignment_id: int, submit_body) -> dict:
+    """The coordinator's receipt. A body without one is asked for again."""
+    from .holdings import apply_receipt
+    body = submit_body if isinstance(submit_body, dict) else {}
+    receipt = body.get("receipt") if isinstance(body.get("receipt"), dict) else None
+    if receipt is None or "complete" not in receipt:
+        fn = getattr(client, "receipt", None)
+        if fn is not None:
+            try:
+                fresh = fn(int(assignment_id))
+            except Exception:
+                fresh = None
+            if isinstance(fresh, dict):
+                body = fresh if isinstance(fresh.get("receipt"), dict) else {"receipt": fresh}
+    return apply_receipt(body)
+
+
+def release_queued(client, cache: Path, *, keep: int | None = None) -> None:
+    """Hand queued units back. The unit being scanned is left leased."""
+    rows = _read_queue(cache)
+    kept = []
+    for state in rows:
+        try:
+            aid = int(state.get("assignment_id"))
+        except (TypeError, ValueError):
+            continue
+        if keep is not None and aid == int(keep):
+            kept.append(state)
+            continue
+        _release_lease(client, aid)
+        discard_local(cache, state)
+    _write_queue(cache, kept)
 
 
 def _publish_saved_next(live, state: dict) -> None:
@@ -603,14 +698,13 @@ def prefetch_hold(live, sleeper) -> None:
 
 
 def _prefetch_threads(cfg: Config, live) -> int:
-    """Download concurrency for the batch ahead. The started thread count."""
-    baseline = _live_call(live, "baseline")
-    if not isinstance(baseline, dict) or not baseline.get("threads"):
-        baseline = {"threads": cfg.worker.threads}
-    try:
-        return max(1, int(baseline["threads"]))
-    except (TypeError, ValueError):
-        return max(1, int(cfg.worker.threads))
+    """Background downloads stay on one thread so the scan is not crowded out.
+
+    Picture speed does not change this number.
+    """
+    del cfg, live
+    from .holdings import BACKGROUND_DOWNLOAD_THREADS
+    return BACKGROUND_DOWNLOAD_THREADS
 
 
 def _invoke_download(download, ucfg: Config, tics: set[int], hold) -> None:
@@ -625,7 +719,7 @@ def _invoke_download(download, ucfg: Config, tics: set[int], hold) -> None:
 class _PrefetchJob:
     """Claim the next batch and download it while the current one is searched."""
 
-    def __init__(self, cfg: Config, cache: Path, client, live, download, sleeper, watch):
+    def __init__(self, cfg: Config, cache: Path, client, live, download, sleeper, watch, watch_drop=None):
         self.cfg = cfg
         self.cache = cache
         self.client = client
@@ -633,6 +727,7 @@ class _PrefetchJob:
         self.download = download
         self.sleeper = sleeper
         self.watch = watch
+        self.watch_drop = watch_drop or (lambda _assignment_id: None)
         self._started = False
         self._thread: threading.Thread | None = None
 
@@ -640,15 +735,16 @@ class _PrefetchJob:
         if self._started:
             return
         self._started = True
-        if existing and str(existing.get("stage") or "") in ("downloaded", "searched", "filtered"):
-            _publish_saved_next(self.live, existing)
+        ahead = _read_queue(self.cache)
+        if existing and not any(
+            int(row.get("assignment_id") or 0) == int(existing.get("assignment_id") or -1) for row in ahead
+        ):
+            ahead = [existing, *ahead]
+            _write_queue(self.cache, ahead)
+        if depth < 1 and not ahead:
             return
-        if depth < 1 and not existing:
-            return
-        target = self._resume if existing else self._claim_and_download
-        arg = existing if existing else active
         self._thread = threading.Thread(
-            target=target, args=(arg,), name="rhexas-prefetch", daemon=True,
+            target=self._fill, args=(active, depth), name="rhexas-prefetch", daemon=True,
         )
         self._thread.start()
 
@@ -657,57 +753,154 @@ class _PrefetchJob:
         if thread is not None:
             thread.join()
 
-    def _claim_and_download(self, active: dict) -> None:
+    def _fill(self, active: dict, depth: int) -> None:
+        """Download queued units, in order, then reserve more while the cap allows."""
         try:
             _check_stop()
-            held = {int(active["assignment_id"])}
-            body = _call_claim(self.client, prefetch=True)
-            assignment = body.get("assignment") if isinstance(body, dict) else None
-            if not isinstance(assignment, dict) or assignment.get("assignment_id") is None:
-                return
-            if int(assignment["assignment_id"]) in held:
-                return
-            n = int(assignment.get("n_tics") or len(assignment.get("tics") or []))
-            reason = prefetch_block(self.cache, self.cfg, n)
-            if reason:
-                print(f"prefetch skipped: {reason}", flush=True)
-                _release_lease(self.client, int(assignment["assignment_id"]))
-                return
-            state = {**assignment, "stage": "claimed"}
-            _write_state(_next_path(self.cache), state)
-            print(
-                f"prefetch unit {state['assignment_id']} sector {state.get('sector')} ({n} stars)",
-                flush=True,
-            )
-            self._download(state)
+            self._release_overflow(active, depth)
+            for state in list(_read_queue(self.cache)):
+                _check_stop()
+                if self._download(state) is False:
+                    self._drop(state)
+                    return
+            while depth >= 1:
+                _check_stop()
+                prefetch_hold(self.live, self.sleeper)
+                self._release_overflow(active, depth)
+                ahead = _read_queue(self.cache)
+                held = {int(active["assignment_id"])}
+                held.update(int(row["assignment_id"]) for row in ahead)
+                if len(ahead) >= depth:
+                    return
+                estimate_n = self._estimate_n(active, ahead)
+                reason = prefetch_block(
+                    self.cache, self.cfg, estimate_n, queued=len(ahead), queue_max=depth,
+                )
+                if reason:
+                    print(f"prefetch skipped: {reason}", flush=True)
+                    return
+                body = _call_claim(self.client, prefetch=True)
+                assignment = body.get("assignment") if isinstance(body, dict) else None
+                if not isinstance(assignment, dict) or assignment.get("assignment_id") is None:
+                    return
+                if int(assignment["assignment_id"]) in held:
+                    return
+                n = int(assignment.get("n_tics") or len(assignment.get("tics") or []))
+                reason = prefetch_block(
+                    self.cache, self.cfg, n, queued=len(ahead), queue_max=depth,
+                )
+                if reason:
+                    print(f"prefetch skipped: {reason}", flush=True)
+                    _release_lease(self.client, int(assignment["assignment_id"]))
+                    return
+                state = {**assignment, "stage": "queued"}
+                ahead.append(state)
+                _write_queue(self.cache, ahead)
+                _remember(self.cache, state, stage="queued")
+                print(
+                    f"prefetch unit {state['assignment_id']} sector {state.get('sector')} ({n} stars)",
+                    flush=True,
+                )
+                self.watch(state, HeartbeatProgress())
+                if self._download(state) is False:
+                    self._drop(state)
+                    return
         except WorkerStopped:
             return
         except Exception as exc:
             print(f"prefetch failed: {exc}", flush=True)
 
-    def _resume(self, state: dict) -> None:
+    def _estimate_n(self, active: dict, ahead: list[dict]) -> int:
+        """Star count used before a lease. Peek when the coordinator offers it."""
+        fn = getattr(self.client, "peek", None)
+        if fn is not None:
+            try:
+                body = fn()
+            except Exception:
+                body = None
+            preview = body.get("preview") if isinstance(body, dict) else None
+            if isinstance(preview, dict) and preview.get("n_tics"):
+                try:
+                    return max(1, int(preview["n_tics"]))
+                except (TypeError, ValueError):
+                    pass
+        sample = ahead[-1] if ahead else active
         try:
-            _check_stop()
-            self._download(state)
-        except WorkerStopped:
+            return max(1, int(sample.get("n_tics") or len(sample.get("tics") or []) or 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _drop(self, state: dict) -> None:
+        """Return a queued unit we will not download."""
+        try:
+            aid = int(state["assignment_id"])
+        except (KeyError, TypeError, ValueError):
             return
-        except Exception as exc:
-            print(f"prefetch failed: {exc}", flush=True)
+        _release_lease(self.client, aid)
+        self.watch_drop(aid)
+        discard_local(self.cache, state)
+        _write_queue(self.cache, [
+            row for row in _read_queue(self.cache)
+            if int(row.get("assignment_id") or 0) != aid
+        ])
+
+    def _release_overflow(self, active: dict, depth: int) -> None:
+        """Give back queued units that no longer fit the cap, the free-disk floor, or the queue length."""
+        from .holdings import free_floor_gb, runtime_cap_gb
+        ahead = [
+            row for row in _read_queue(self.cache)
+            if int(row.get("assignment_id") or 0) != int(active.get("assignment_id") or -1)
+        ]
+        data = Path(self.cache) / "data"
+        cap = int(runtime_cap_gb(self.cache, self.cfg.worker.max_cache_gb) * 1e9)
+        floor = int(free_floor_gb(self.cfg.worker.min_free_gb) * 1e9)
+
+        def too_much() -> str | None:
+            if len(ahead) > max(depth, 0):
+                return "queue"
+            try:
+                used = directory_bytes(data)
+                free = shutil.disk_usage(data if data.exists() else self.cache).free
+            except OSError:
+                return None
+            if used > cap:
+                return "cache cap"
+            if free < floor:
+                return "free space"
+            return None
+
+        changed = False
+        while ahead and (reason := too_much()):
+            state = ahead.pop()
+            print(f"releasing queued unit {state.get('assignment_id')}: {reason}", flush=True)
+            _release_lease(self.client, int(state["assignment_id"]))
+            self.watch_drop(int(state["assignment_id"]))
+            discard_local(self.cache, state)
+            changed = True
+        if changed or len(_read_queue(self.cache)) != len(ahead):
+            _write_queue(self.cache, ahead)
 
     def _download(self, state: dict) -> None:
         stage = str(state.get("stage") or "claimed")
-        if stage in ("downloaded", "searched", "filtered"):
+        if stage in ("downloaded", "searched", "filtered", "ready"):
             _publish_saved_next(self.live, state)
-            return
+            return True
         n = int(state.get("n_tics") or len(state.get("tics") or []))
-        reason = prefetch_block(self.cache, self.cfg, n)
+        ahead = _read_queue(self.cache)
+        others = [row for row in ahead if int(row.get("assignment_id") or 0) != int(state.get("assignment_id") or -1)]
+        reason = prefetch_block(
+            self.cache, self.cfg, n, queued=len(others), queue_max=max(len(ahead), 1),
+        )
         if reason:
             print(f"prefetch paused: {reason}", flush=True)
             _publish_saved_next(self.live, state)
-            return
+            return False
         progress = HeartbeatProgress()
         progress.set("download", 0, n)
         self.watch(state, progress)
+        state = {**state, "stage": "downloading"}
+        _replace_queued(self.cache, state)
+        _remember(self.cache, state, stage="downloading", download_done=0, download_total=n)
         _live_call(self.live, "set_next", state, stage="downloading", stars_done=0, stars_total=n)
         ucfg = unit_config(self.cfg, state, self.cache)
         threads = _prefetch_threads(self.cfg, self.live)
@@ -717,6 +910,7 @@ class _PrefetchJob:
 
         def on_progress(done, total):
             _live_call(self.live, "update_next", stage="downloading", stars_done=done, stars_total=total)
+            _remember(self.cache, state, stage="downloading", download_done=done, download_total=total)
 
         watcher = threading.Thread(
             target=_watch_downloads,
@@ -727,15 +921,33 @@ class _PrefetchJob:
         )
         watcher.start()
         try:
-            prefetch_hold(self.live, self.sleeper)
-            _invoke_download(self.download, ucfg, tics, lambda: prefetch_hold(self.live, self.sleeper))
+            attempt = 0
+            while True:
+                prefetch_hold(self.live, self.sleeper)
+                try:
+                    _invoke_download(self.download, ucfg, tics, lambda: prefetch_hold(self.live, self.sleeper))
+                    break
+                except WorkerStopped:
+                    raise
+                except Exception as exc:
+                    attempt += 1
+                    print(f"prefetch download retry {attempt}: {exc}", flush=True)
+                    if attempt >= 3:
+                        raise
+                    self.sleeper(min(5.0, 0.2 * attempt))
         finally:
             stop_watch.set()
             watcher.join(timeout=2)
-        state = _advance(_next_path(self.cache), state, "downloaded")
+        state = {**state, "stage": "downloaded"}
+        _replace_queued(self.cache, state)
+        _remember(
+            self.cache, state, stage="ready", download_done=n, download_total=n,
+            ready_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
         progress.set("download", n, n)
         _live_call(self.live, "update_next", stage="ready", stars_done=n, stars_total=n)
         print(f"prefetch unit {state['assignment_id']} ready", flush=True)
+        return True
 
 
 def _advance(path: Path, state: dict, stage: str) -> dict:
@@ -862,6 +1074,7 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             before_search()
 
     _live_call(live, "begin_batch", assignment, stage)
+    _remember(cache, assignment, stage=stage, claimed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     if stage != "claimed":
         arm()
     if stage == "claimed":
@@ -871,6 +1084,8 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="downloading", progress_kind="files",
             stars_done=0, stars_total=n_tics, per_s=None, eta_min=None,
         )
+        _remember(cache, assignment, stage="downloading", download_done=0, download_total=n_tics,
+                  claimed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         if progress is not None:
             progress.set("download", 0, n_tics)
         stop_watch = threading.Event()
@@ -899,6 +1114,10 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="searching", progress_kind="stars",
             stars_total=n_tics, per_s=None, eta_min=None,
         )
+        _remember(
+            cache, assignment, stage="searching", stars_done=0, stars_total=n_tics,
+            scan_started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
         if progress is not None:
             progress.set("search", 0, n_tics)
         spec = None
@@ -924,6 +1143,7 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         def pace():
             settings = dict(current_pace(cfg, live, memory))
             # User pause is honored between stars and, via still_paused, during a BLS call.
+            # Picture speed does not change procs.
             settings["paused"] = bool(_user_paused(live))
             settings["still_paused"] = lambda: bool(_user_paused(live))
             settings["mark_holding"] = lambda holding: _mark_holding(live, memory, bool(holding))
@@ -968,14 +1188,19 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         candidates = read_candidates(ucfg.sector_results)
         _live_call(live, "record_candidates", assignment, candidates)
         _live_call(live, "update_batch", stage="uploading", progress_kind="stars", eta_min=0, per_s=None)
+        _remember(cache, assignment, stage="uploading")
         if progress is not None:
             progress.set("upload", n_tics, n_tics)
         result = client.submit(assignment["assignment_id"], stars, candidates)
         _live_call(live, "note_submit", result if isinstance(result, dict) else {}, len(stars))
-        delete_lightcurves(ucfg.sector_data, tic_set)
-        shutil.rmtree(ucfg.results_root, ignore_errors=True)
+        confirmed = _confirm_receipt(client, int(assignment["assignment_id"]), result if isinstance(result, dict) else {})
         _clear_state(path)
-        enforce_cache_cap(cache / "data", int(cfg.worker.max_cache_gb * 1e9))
+        _remember(
+            cache, assignment, stage="done", results_sent=True,
+            results_confirmed=confirmed["results_confirmed"], receipt=confirmed["receipt"],
+            stars_done=n_tics, stars_total=n_tics,
+            uploaded_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
         _live_call(
             live, "update_batch", stage="uploaded", active=False, progress_kind="stars",
             stars_done=n_tics, stars_total=n_tics, eta_min=0, per_s=None,
@@ -1050,7 +1275,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             print(f"process priority: {cfg.worker.priority}", flush=True)
         except Exception as exc:
             print(f"could not set process priority ({exc}); continuing", flush=True)
-        depth = 1 if int(cfg.worker.prefetch) >= 1 else 0
+        depth = int(cfg.worker.queue_max) if int(cfg.worker.prefetch) >= 1 else 0
         print(
             f"coordinator {cfg.worker.coordinator_url}  procs={cfg.worker.procs}  "
             f"threads={cfg.worker.threads}  cache={cache}  prefetch={depth}",
@@ -1135,7 +1360,12 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                     nxt_progress.set("download", n_next, n_next)
                 watch(resumed_next, nxt_progress)
                 _publish_saved_next(live, resumed_next)
-            prefetcher = _PrefetchJob(cfg, cache, client, live, download, sleeper, watch)
+            def watch_drop(assignment_id, _leases=leases):
+                _leases.discard(int(assignment_id))
+
+            prefetcher = _PrefetchJob(
+                cfg, cache, client, live, download, sleeper, watch, watch_drop,
+            )
 
             def begin_prefetch(active=assignment, nxt=resumed_next, job=prefetcher, slots=depth):
                 job.start(active, nxt, slots)
@@ -1148,6 +1378,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 )
             except WorkerStopped:
                 prefetcher.wait()
+                release_queued(client, cache)
                 return 0
             except ProtocolError as exc:
                 prefetcher.wait()
@@ -1176,7 +1407,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 continue
             prefetcher.wait()
             finished = int(assignment["assignment_id"])
-            print(f"unit {assignment['assignment_id']} uploaded; light curves deleted", flush=True)
+            print(f"unit {assignment['assignment_id']} uploaded; light curves kept until cleared", flush=True)
             if once:
                 return 0
             nxt = _promote_next(cache)
@@ -1185,6 +1416,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                 _live_call(live, "clear_next")
                 promoted = nxt
     except WorkerStopped:
+        release_queued(client, cache)
         return 0
     finally:
         if beat_stop is not None:
@@ -1197,7 +1429,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
 
 def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None, procs=None, threads=None,
                    priority=None, max_cache_gb=None, min_free_gb=None, poll_s=None, cache_dir_value=None,
-                   prefetch=None, environ=None) -> Config:
+                   prefetch=None, queue_max=None, environ=None) -> Config:
     env = os.environ if environ is None else environ
     worker = cfg.worker
     updates = {}
@@ -1227,6 +1459,8 @@ def resolve_worker(cfg: Config, *, coordinator=None, token=None, token_file=None
         updates["cache_dir"] = str(cache_dir_value)
     if prefetch is not None:
         updates["prefetch"] = 1 if int(prefetch) >= 1 else 0
+    if queue_max is not None:
+        updates["queue_max"] = max(0, int(queue_max))
     return replace(cfg, worker=replace(worker, **updates))
 
 

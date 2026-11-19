@@ -125,7 +125,8 @@ class WorkerConfig:
     min_free_gb: float = 5.0
     poll_s: float = 60.0
     cache_dir: str = "worker-cache"
-    prefetch: int = 1  # 0 waits for the upload; 1 downloads the next batch during search
+    prefetch: int = 1  # 0 waits for the upload; 1 fills the download-ahead queue during search
+    queue_max: int = 3  # hard maximum of units downloaded ahead of the one being scanned
 
 
 @dataclass(frozen=True)
@@ -454,6 +455,8 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("worker.poll_s must be >= 0")
     if cfg.worker.prefetch not in (0, 1):
         raise ConfigError("worker.prefetch must be 0 or 1")
+    if cfg.worker.queue_max < 0:
+        raise ConfigError("worker.queue_max must be >= 0")
 
 
 def read_toml(path: Path) -> dict:
@@ -574,6 +577,7 @@ _WORKER_CAST = {
     "poll_s": _as_float,
     "cache_dir": _as_str,
     "prefetch": _as_int,
+    "queue_max": _as_int,
 }
 _MULTI_CAST = {
     "period_min_days": _as_float,

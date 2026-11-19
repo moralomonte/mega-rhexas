@@ -12,8 +12,8 @@ A Mac build should:
    `~/Library/Application Support/Mega Rhexas`
    (`token` next to `cache/`).
 4. Put the same tray actions on the status item: Open dashboard, Pause, Quit.
-   `rhexas.desktop.tray.MENU_LABELS` is that list. Animation speed stays on the
-   dashboard page.
+   `rhexas.desktop.tray.MENU_LABELS` is that list. Slow, Normal, and Realtime
+   live on the dashboard and do not change how hard the search runs.
 5. Offer the `.dmg` or `.pkg` from the GitHub release. Do not install it silently.
    The update check already prefers an `.exe` named like `Setup`; teach
    `offer_from_release` to prefer a `.dmg` when adding this build.

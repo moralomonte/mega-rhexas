@@ -9,7 +9,7 @@ from .projects import DEFAULT_PROJECT
 from .store import CoordError, Store
 from .vetting import PRIORITY_HELP, REVIEW_STATUSES
 
-_TASKS = {"claim", "current", "heartbeat", "submit", "release"}
+_TASKS = {"claim", "current", "heartbeat", "submit", "release", "peek", "receipt"}
 
 _PAGE = "status.html"
 _FAVICON = "favicon.svg"
@@ -217,13 +217,17 @@ class App:
             return _error(404, "not found", "not_found")
         payload = _payload(body or b"{}")
         if action == "claim":
-            # ``prefetch`` asks for the second lease. Omitted, claim stays one lease.
+            # ``prefetch`` asks for another lease, up to max_outstanding.
+            # Omitted, claim stays one lease so a v0.3 worker is unchanged.
             assignment = self.store.claim(
                 worker["id"], project=project, prefetch=payload.get("prefetch") is True,
             )
             if assignment is None:
                 return _json(200, {"assignment": None, "retry_after_s": 60})
             return _json(200, {"assignment": assignment})
+        if action == "peek":
+            preview = self.store.peek(worker["id"], project=project)
+            return _json(200, {"preview": preview})
         assignment_id = payload.get("assignment_id")
         if assignment_id is None:
             raise CoordError("assignment_id is required", 400)
@@ -239,6 +243,8 @@ class App:
         if action == "release":
             self.store.release(worker["id"], assignment_id, project)
             return _json(200, {"status": "released"})
+        if action == "receipt":
+            return _json(200, self.store.receipt(worker["id"], assignment_id, project))
         if action == "submit":
             return _json(200, self.store.submit(
                 worker["id"], assignment_id, payload.get("stars"), payload.get("candidates"), project,
