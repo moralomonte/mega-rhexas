@@ -50,7 +50,7 @@ def _publish_live(row: dict, t, y, *, processing: bool) -> None:
         return
 
 
-_LIVE_KEYS = ("ra", "dec", "tmag", "_pgram_p", "_pgram_w", "_aperture")
+_LIVE_KEYS = ("ra", "dec", "tmag", "_pgram_p", "_pgram_w", "_aperture", "_centroid")
 
 
 def _meta_float(meta, *names):
@@ -109,6 +109,49 @@ def _attach_aperture(row: dict, path) -> None:
         row["_aperture"] = mask
 
 
+def read_mom_centroid(path):
+    """MOM_CENTR1/MOM_CENTR2 from a SPOC light curve. None when the columns are absent."""
+    try:
+        from astropy.io import fits
+        with fits.open(path, memmap=False) as hdul:
+            chosen = None
+            for hdu in hdul:
+                names = getattr(getattr(hdu, "columns", None), "names", None) or []
+                lookup = {str(name).upper(): name for name in names}
+                if "TIME" in lookup:
+                    chosen = (hdu, lookup)
+                    break
+            if chosen is None:
+                return None
+            hdu, lookup = chosen
+            if "MOM_CENTR1" not in lookup or "MOM_CENTR2" not in lookup:
+                return None
+            data = hdu.data
+            return (
+                np.asarray(data[lookup["TIME"]], dtype=float),
+                np.asarray(data[lookup["MOM_CENTR1"]], dtype=float),
+                np.asarray(data[lookup["MOM_CENTR2"]], dtype=float),
+            )
+    except Exception:
+        return None
+
+
+def _attach_centroid(row: dict, path) -> None:
+    """Binned centroid shift. A missing column leaves the row without a centroid."""
+    if row.get("error") or row.get("period") is None:
+        return
+    series = read_mom_centroid(path)
+    if not series:
+        return
+    try:
+        from rhexas.worker.records import centroid_vs_phase
+        packed = centroid_vs_phase(series[0], series[1], series[2], row.get("period"), row.get("t0"), row.get("duration"))
+    except Exception:
+        return
+    if packed:
+        row["_centroid"] = packed
+
+
 def _strip_live_keys(row: dict) -> None:
     for key in _LIVE_KEYS:
         row.pop(key, None)
@@ -164,6 +207,7 @@ def analyze(path):
         _attach_aperture(row, path)
         _publish_live(row, t, y, processing=True)
         row.update(bls_metrics(t, y, dy, s))
+        _attach_centroid(row, path)
     except Exception as e:
         row["error"] = str(e)[:200]
         _publish_live(row, t, y, processing=False)

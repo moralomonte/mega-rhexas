@@ -301,6 +301,20 @@ class LeaseSet:
             return list(self._items.items())
 
 
+# One refused renewal is not "the coordinator is down". A network failure has to
+# repeat before the page says the coordinator is unreachable.
+_UNREACHABLE_AFTER = 3
+
+
+def _heartbeat_failure(exc) -> str:
+    """lease_ended, rejected, or network. A 409 means the assignment is already finished."""
+    if isinstance(exc, ProtocolError):
+        if int(getattr(exc, "status", 0) or 0) == 409:
+            return "lease_ended"
+        return "rejected"
+    return "network"
+
+
 def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=None, progress: HeartbeatProgress | None = None,
                     leases: LeaseSet | None = None):
     """Ping the coordinator until the returned event is set. ``interval <= 0`` disables it.
@@ -308,11 +322,15 @@ def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=No
     ``progress`` is sent only after the worker has a fraction. A call with no progress
     matches workers that predate the field. ``leases`` renews every id it holds, so a
     prefetched batch does not expire while the current one is searching.
+
+    A 409 drops that lease and is not a failure. Other coordinator rejections are
+    reported on their own. Only repeated network errors are "unreachable".
     """
     if interval <= 0:
         return None
 
     stop = threading.Event()
+    streak = {"network": 0}
 
     def loop():
         while not stop.wait(interval):
@@ -324,7 +342,9 @@ def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=No
             else:
                 snap = progress.get() if progress is not None else None
                 targets = [(assignment_id, snap)]
-            ok = True
+            network = False
+            rejected = []
+            ended = False
             for aid, snap in targets:
                 try:
                     if snap:
@@ -332,13 +352,37 @@ def start_heartbeat(client, assignment_id: int, interval: float, *, on_result=No
                     else:
                         client.heartbeat(aid)
                 except Exception as exc:
-                    ok = False
-                    print(f"heartbeat failed: {exc}", flush=True)
-            if on_result is not None:
-                try:
-                    on_result(ok, "connected" if ok else "heartbeat failed")
-                except Exception:
-                    pass
+                    kind = _heartbeat_failure(exc)
+                    if kind == "lease_ended":
+                        ended = True
+                        if leases is not None:
+                            leases.discard(aid)
+                        print(f"heartbeat: lease ended for assignment {aid}", flush=True)
+                    elif kind == "rejected":
+                        rejected.append(str(exc))
+                        print(f"heartbeat rejected: {exc}", flush=True)
+                    else:
+                        network = True
+                        print(f"heartbeat network failure: {exc}", flush=True)
+            if network:
+                streak["network"] += 1
+            else:
+                streak["network"] = 0
+            if on_result is None:
+                continue
+            try:
+                if streak["network"] >= _UNREACHABLE_AFTER:
+                    on_result(False, "unreachable")
+                elif network:
+                    on_result(None, f"network trouble ({streak['network']})")
+                elif rejected:
+                    on_result(True, "rejected " + "; ".join(rejected)[:120])
+                elif ended:
+                    on_result(True, "lease ended")
+                else:
+                    on_result(True, "connected")
+            except Exception:
+                pass
 
     threading.Thread(target=loop, name="rhexas-heartbeat", daemon=True).start()
     return stop
@@ -1050,7 +1094,7 @@ def retry_missing_before_submit(ucfg: Config, tics: list[int], download, search,
 
 def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, search, filt, live=None,
              progress: HeartbeatProgress | None = None, pace_memory=None, sleeper=None,
-             before_search=None) -> None:
+             before_search=None, on_submitted=None) -> None:
     """Download, search, and filter one leased batch, then upload and delete it."""
     live = live or _Quiet()
     path = _state_path(cache)
@@ -1192,6 +1236,14 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         if progress is not None:
             progress.set("upload", n_tics, n_tics)
         result = client.submit(assignment["assignment_id"], stars, candidates)
+        # The lease ends when the coordinator accepts the upload. Drop it before
+        # receipt checks and before the prefetch thread is joined, so the heartbeat
+        # does not renew an assignment that is already submitted.
+        if on_submitted is not None:
+            try:
+                on_submitted(int(assignment["assignment_id"]))
+            except Exception:
+                pass
         _live_call(live, "note_submit", result if isinstance(result, dict) else {}, len(stars))
         confirmed = _confirm_receipt(client, int(assignment["assignment_id"]), result if isinstance(result, dict) else {})
         _clear_state(path)
@@ -1370,19 +1422,23 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             def begin_prefetch(active=assignment, nxt=resumed_next, job=prefetcher, slots=depth):
                 job.start(active, nxt, slots)
 
+            def drop_submitted(aid, _leases=leases):
+                _leases.discard(int(aid))
+
             try:
                 run_unit(
                     cfg, cache, client, assignment,
                     download=download, search=search, filt=filt, live=live, progress=progress,
                     pace_memory=pace_memory, sleeper=sleeper, before_search=begin_prefetch,
+                    on_submitted=drop_submitted,
                 )
             except WorkerStopped:
                 prefetcher.wait()
                 release_queued(client, cache)
                 return 0
             except ProtocolError as exc:
-                prefetcher.wait()
                 leases.discard(int(assignment["assignment_id"]))
+                prefetcher.wait()
                 if exc.status == 409:
                     print(f"unit {assignment['assignment_id']} is no longer ours ({exc}); dropping local files", flush=True)
                     discard_local(cache, assignment)
@@ -1392,7 +1448,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
                         return 0
                     continue
                 print(f"upload failed ({exc.status}): {exc}", flush=True)
-                _live_call(live, "set_connection", False, f"upload rejected ({exc.status})")
+                _live_call(live, "set_connection", True, f"rejected upload ({exc.status})")
                 if once:
                     return 1
                 _paced_sleep(cfg, live, pace_memory, sleeper, cfg.worker.poll_s)

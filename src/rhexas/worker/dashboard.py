@@ -16,16 +16,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .images import cutout_jpeg, resolve_pixels
-from .live import LOG_NAME, PACE_MODES, Store, redact, read_log_tail, snapshot
+from .live import LOG_NAME, PACE_MODES, Store, load_star, read_log_tail, redact, sky_for, snapshot
 from .present import (
     cycle_star,
-    detail_payload,
     fresh_logs,
     mission_cands,
     mission_hist,
-    mission_lc,
     mission_logs,
-    mission_sky,
     mission_state,
     mode_event,
     sectors_payload,
@@ -352,14 +349,11 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
-            if path == "/api/detail":
-                tic = (parse_qs(parts.query).get("tic") or ["0"])[0]
-                try:
-                    tic_i = int(tic)
-                except ValueError:
-                    tic_i = 0
-                body = dumps_safe(detail_payload(snapshot(cache, fallback=fallback), tic_i))
-                self._send(200, body, "application/json; charset=utf-8")
+            if path in ("/api/detail", "/api/star"):
+                self._star(parse_qs(parts.query), legacy=path == "/api/detail")
+                return
+            if path == "/api/sky":
+                self._sky(parse_qs(parts.query))
                 return
             if path == "/api/pixels":
                 tic = (parse_qs(parts.query).get("tic") or ["0"])[0]
@@ -383,6 +377,50 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 self._send(404, b"not found", "text/plain; charset=utf-8")
                 return
             self._send(200, body, spec[1])
+
+        def _query_int(self, query: dict, name: str):
+            raw = (query.get(name) or [None])[0]
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        def _star(self, query: dict, *, legacy: bool) -> None:
+            tic_i = self._query_int(query, "tic")
+            if tic_i is None:
+                self._json(400, {"available": False, "missing": ["record"], "error": "tic is required"})
+                return
+            record = load_star(cache, tic_i, self._query_int(query, "sector"), self._query_int(query, "unit"))
+            if legacy:
+                record = dict(record)
+                record["img"] = None
+                record["transits"] = []
+                record["star"] = {
+                    "ra": record.get("ra"),
+                    "dec": record.get("dec"),
+                    "tmag": record.get("tmag"),
+                }
+                if record.get("available") and record.get("candidate"):
+                    record["vet"] = {"verdict": "candidates, unverified"}
+                elif record.get("available"):
+                    record["vet"] = {"verdict": record.get("verdict")}
+                else:
+                    record["error"] = "not available"
+            self._json(200, record)
+
+        def _sky(self, query: dict) -> None:
+            scope = str((query.get("scope") or ["sector"])[0] or "sector").lower()
+            sector = None if scope == "all" else self._query_int(query, "sector")
+            if scope != "all" and sector is None:
+                snap = snapshot(cache, fallback=fallback)
+                batch = snap.get("batch") if isinstance(snap.get("batch"), dict) else {}
+                try:
+                    sector = int(batch.get("sector") or 0) or None
+                except (TypeError, ValueError):
+                    sector = None
+            self._json(200, sky_for(cache, sector))
 
         def _cutout(self, query: dict) -> None:
             try:
@@ -446,17 +484,21 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                     if hist_key != seen.get("hist"):
                         self._ev("hist", hist)
                         seen["hist"] = hist_key
-                    sky = mission_sky(snap)
-                    sky_key = tuple(tuple(point) for point in sky)
-                    if sky_key != seen.get("sky"):
-                        self._ev("sky", sky)
-                        seen["sky"] = sky_key
                     star = cycle_star(snap)
-                    lc = mission_lc(star)
-                    lc_key = None if lc is None else (lc["tic"], lc["status"], lc["t"])
-                    if lc is not None and lc_key != seen.get("lc"):
-                        self._ev("lc", lc)
-                        seen["lc"] = lc_key
+                    pointer = None if not isinstance(star, dict) or star.get("tic") is None else (
+                        int(star["tic"]),
+                        int(star.get("version") or 0),
+                        star.get("sector"),
+                        star.get("unit") if star.get("unit") is not None else star.get("unit_id"),
+                    )
+                    if pointer is not None and pointer != seen.get("star"):
+                        self._ev("star", {
+                            "tic": pointer[0],
+                            "version": pointer[1],
+                            "sector": pointer[2],
+                            "unit": pointer[3],
+                        })
+                        seen["star"] = pointer
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                     return
