@@ -292,6 +292,11 @@ def clear_unit(cache: Path, assignment_id: int) -> dict:
     if reason:
         return {"ok": False, "error": reason, "assignment_id": aid}
     delete_unit_files(cache, found)
+    try:
+        from .live import delete_unit_stars
+        delete_unit_stars(cache, int(found.get("sector") or 0), int(found.get("unit_id") or 0))
+    except Exception:
+        pass
     save_units(cache, [row for row in units if _assignment_id(row) != aid])
     return {"ok": True, "assignment_id": aid, "cleared": 1}
 
@@ -362,6 +367,14 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
     units = collect_units(cache)
     cap = runtime_cap_gb(cache, configured_cap_gb)
     used = disk_used_bytes(cache)
+    try:
+        from .live import star_store_stats
+        records = star_store_stats(cache)
+    except Exception:
+        records = {
+            "stars": 0, "full": 0, "summaries": 0, "candidates": 0,
+            "bytes": 0, "limit_bytes": 0, "summary_limit": 0,
+        }
     return {
         "units": units,
         "disk_bytes": used,
@@ -370,4 +383,5 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
         "floor_gb": free_floor_gb(min_free_gb),
         "queue_max": int(queue_max),
         "scanning_id": scanning_assignment_id(cache),
+        "records": records,
     }

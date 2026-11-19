@@ -272,14 +272,27 @@ def _offline_note() -> str:
 
 
 def resolve_pixels(cache: Path, snap: dict, tic: int, *, getter=None) -> dict:
-    """Aperture for one star: stored mask, the light curve on disk, or a 5×5 cutout."""
-    payload = pixels_payload(snap, tic)
-    if payload.get("aperture"):
-        return payload
+    """Aperture for one star: the saved record, the light curve on disk, or a 5×5 cutout."""
     try:
         tic_i = int(tic)
     except (TypeError, ValueError):
         tic_i = 0
+    try:
+        from .live import load_star
+        stored = load_star(cache, tic_i)
+    except Exception:
+        stored = None
+    if isinstance(stored, dict) and stored.get("aperture"):
+        return {
+            "kind": "aperture",
+            "aperture": stored["aperture"],
+            "note": "Pipeline aperture saved with this star.",
+        }
+    if isinstance(stored, dict) and stored.get("available") and stored.get("ra") is not None:
+        snap = {**snap, "current_star": stored}
+    payload = pixels_payload(snap, tic)
+    if payload.get("aperture"):
+        return payload
     from rhexas.search import read_aperture
     path = _lc_path(cache, tic_i)
     if path is not None:

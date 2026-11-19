@@ -81,7 +81,9 @@ function paint(data){
   $('used').textContent=gb(used)+(data.cap_gb!=null?' / '+data.cap_gb+' GB':'');
   $('bar').style.width=cap?Math.min(100,100*used/cap)+'%':'0%';
   $('cap').value=data.cap_gb!=null?data.cap_gb:'';
-  $('meta').textContent='Leave at least '+(data.floor_gb||10)+' GB free. Up to '+(data.queue_max??3)+' units download ahead of the one being scanned. Clearing deletes local files only after the coordinator has confirmed every result, and never the unit being scanned.';
+  const rec=data.records||{};
+  const usedRec=gb(rec.bytes||0), capRec=gb(rec.limit_bytes||0);
+  $('meta').textContent='Leave at least '+(data.floor_gb||10)+' GB free. Up to '+(data.queue_max??3)+' units download ahead of the one being scanned. Star records on this computer: '+(rec.stars||0)+' stored, '+(rec.full||0)+' with curves, '+(rec.summaries||0)+' summaries, '+(rec.candidates||0)+' candidates kept ('+usedRec+' of '+capRec+' for non-candidate curves, summary cap '+(rec.summary_limit||0)+'). Clearing deletes local files and that unit’s non-candidate star rows after the coordinator has confirmed every result, and never the unit being scanned. Candidate rows stay.';
   const rows=(data.units||[]).filter(u=>SHOW||u.status!=='Done');
   const body=$('rows');
   body.innerHTML='';

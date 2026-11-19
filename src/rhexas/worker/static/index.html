@@ -139,12 +139,12 @@ html.reduce .trisk,html.reduce .dot,html.reduce .step.on::after,html.reduce .cc.
 <div class="kv" style="margin-top:8px">Pending until the coordinator agrees. Verified means it agreed.</div><div class="steps"><div class="step" id="st0"></div><div class="step" id="st1"></div><div class="step" id="st2"></div><div class="step" id="st3"></div></div>
 <div class="stepl"><div>Download</div><div>BLS search</div><div>Filter</div><div>Upload</div></div>
 <div style="margin-top:12px"><canvas id="cpuc" height="70"></canvas><div class="kv" style="margin-top:4px">CPU history (all cores) · <span id="pipe"></span></div></div>
-</section><section class="card s5"><h2>Sky map · searched stars <span class="r legend" id="skyleg"><span data-k="dl"><i style="background:#3b4470"></i>downloaded</span><span data-k="se"><i style="background:#6d8cff"></i>searched</span><span data-k="kn"><i style="background:#22d3ee"></i>known planet/TOI</span><span data-k="np"><i style="background:#34d399;box-shadow:0 0 6px #34d399"></i>new · promising</span><span data-k="nu"><i style="background:#ffd166;box-shadow:0 0 6px #ffd166"></i>new · unvetted/CTOI</span><span data-k="nf"><i style="background:#f87171"></i>new · false positive</span><span data-k="cx"><i style="background:none;border:1.5px solid #fff;width:7px;height:7px"></i>current star</span></span></h2><canvas id="sky" height="330"></canvas></section>
+</section><section class="card s5"><h2>Sky map · searched stars <span class="r legend" id="skyleg"><button class="btn on" id="sky_sector" type="button">This sector</button><button class="btn" id="sky_all" type="button">All sectors</button><span data-k="dl"><i style="background:#3b4470"></i>downloaded</span><span data-k="se"><i style="background:#6d8cff"></i>searched</span><span data-k="kn"><i style="background:#22d3ee"></i>known planet/TOI</span><span data-k="np"><i style="background:#34d399;box-shadow:0 0 6px #34d399"></i>new · promising</span><span data-k="nu"><i style="background:#ffd166;box-shadow:0 0 6px #ffd166"></i>new · unvetted/CTOI</span><span data-k="nf"><i style="background:#f87171"></i>new · false positive</span><span data-k="cx"><i style="background:none;border:1.5px solid #fff;width:7px;height:7px"></i>current star</span></span></h2><canvas id="sky" height="330"></canvas></section>
 <section class="card s4"><h2>Current star <span class="r kv" id="img_tic"></span></h2>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div><div class="kv" id="pix_lbl">TESS pixels</div><canvas id="pixc" height="200"></canvas></div>
 <div><div class="kv" id="cut_lbl">Sky survey (DSS2, 6′)</div><canvas id="cutc" height="200"></canvas></div></div>
 <div class="kv" id="pix_note" style="margin-top:6px"></div></section><section class="card s12"><h2>Now processing <span class="r kv" id="lc_t"></span></h2>
-<div class="now"><span class="tic" id="lc_tic">waiting for data…</span><span class="tag" id="lc_tag">–</span><span class="kv" id="lc_kv"></span></div>
+<div class="now"><span class="tic" id="lc_tic">waiting for data…</span><span class="tag" id="lc_tag">–</span><span class="kv" id="proc_now"></span><span class="kv" id="lc_kv"></span></div>
 <div class="now-grid" style="display:grid;grid-template-columns:2fr 1fr;gap:12px"><div><div class="kv">Light curve (PDCSAP, normalized, downsampled)</div><canvas id="lcc" height="150"></canvas>
 <div class="kv" style="margin-top:6px;display:flex;gap:10px">BLS periodogram <span id="bls_scan" class="scan"></span></div><canvas id="pgc" height="110"></canvas></div>
 <div><div class="kv">Phase-folded at best period</div><canvas id="fdc" height="282"></canvas></div></div></section><section class="card s3"><h2>Signal strength distribution <span class="r tools"><button class="btn on" id="hb_sde">SDE</button><button class="btn" id="hb_snr">SNR</button></span></h2><canvas id="hist" height="250"></canvas>
@@ -204,7 +204,7 @@ let FAST=.5,PLOT=2;const TW={};function twEl(el,key,to,f){const o=TW[key]||(TW[k
 function tw(id,to,f){if(to==null||isNaN(to)){$(id).textContent='–';return}twEl($(id),id,+to,f)}
 const fmt=n=>n==null?'–':(+n).toLocaleString();
 // line plot helper
-function plot(cv,series,opt={}){const [x,w,h]=setup(cv);const P={l:44,r:8,t:6,b:20};let xs=[],ys=[];series.forEach(s=>{xs=xs.concat(s.x);ys=ys.concat(s.y)});if(!xs.length){x.fillStyle='#8b93b8';x.fillText('no data yet',w/2-30,h/2);return}
+function plot(cv,series,opt={}){const [x,w,h]=setup(cv);const P={l:44,r:8,t:6,b:20};let xs=[],ys=[];series.forEach(s=>{xs=xs.concat(s.x);ys=ys.concat(s.y)});if(!xs.length){x.fillStyle='#8b93b8';x.font='12px Segoe UI';x.fillText(opt.missing?'not available':'no data yet',w/2-46,h/2);return}
 let x0=opt.x0??Math.min(...xs),x1=opt.x1??Math.max(...xs);const sorted=ys.slice().sort((a,b)=>a-b);let y0=opt.y0??sorted[Math.floor(sorted.length*.005)],y1=opt.y1??sorted[Math.ceil(sorted.length*.995)-1];if(y1==y0){y1+=1e-3;y0-=1e-3}const pad=(y1-y0)*.08;y0-=pad;y1+=pad;
 const lg=opt.logx,X=v=>P.l+(w-P.l-P.r)*((lg?Math.log(v):v)-(lg?Math.log(x0):x0))/((lg?Math.log(x1):x1)-(lg?Math.log(x0):x0)),Y=v=>h-P.b-(h-P.t-P.b)*(v-y0)/(y1-y0);
 x.strokeStyle='rgba(255,255,255,.06)';x.fillStyle='#6b7398';x.font='10px Segoe UI';for(let i=0;i<=3;i++){const v=y0+(y1-y0)*i/3,yy=Y(v);x.beginPath();x.moveTo(P.l,yy);x.lineTo(w-P.r,yy);x.stroke();x.fillText(opt.yf?opt.yf(v):v.toFixed(4),2,yy+3)}
@@ -223,6 +223,8 @@ const si={Starting:0,Downloading:0,Searching:1,Filtering:2,Done:4}[s.stage]??0;[
 $('pipe').textContent=s.coord_line||'';
 $('banner').textContent=s.banner||'';
 if($('next_line'))$('next_line').textContent=s.next_line||'';
+if($('proc_now')){const p=s.processing;$('proc_now').textContent=p&&p.tic?'now processing TIC '+p.tic:'';}
+if(s.sky_rev!==window._skyRev||(window.SKY_SCOPE!=='all'&&s.sector!==window._skySector)){window._skyRev=s.sky_rev;window._skySector=s.sector;if(window.loadSky)window.loadSky();}
 const nw=Date.now();if(!window._cpuT||nw-_cpuT>=2000){window._cpuT=nw;CPU.push(s.cpu);if(CPU.length>150)CPU.shift();}plot($('cpuc'),[{x:CPU.map((_,i)=>i),y:CPU,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%',x0:0,x1:149});paintWorker(s)}
 function aitoff(ra,dec){let l=(ra>180?ra-360:ra)*Math.PI/180,b=dec*Math.PI/180;l=-l;const a=Math.acos(Math.cos(b)*Math.cos(l/2));const s=a?Math.sin(a)/a:1;return[2*Math.cos(b)*Math.sin(l/2)/s,Math.sin(b)/s]}
 const SKYON=Object.assign({dl:1,se:1,kn:1,np:1,nu:1,nf:1,cx:1},JSON.parse(localStorage.skyOn||'{}')),SKYA={};{const m=location.hash.match(/skyoff=([\w,]+)/);if(m)m[1].split(',').forEach(k=>SKYON[k]=0)}for(const k in SKYON)SKYA[k]=SKYON[k]?1:0;
@@ -237,6 +239,24 @@ for(const k of ['dl','se']){if(SKYA[k]<.02)continue;x.globalAlpha=SKYA[k];x.fill
 for(const k of ['kn','nf','nu','np']){if(SKYA[k]<.02)continue;x.globalAlpha=SKYA[k];const c=glow[k];const big=k=='np'?1.5:k=='nf'?.6:1;for(const p of SKY){if(p[4]!=2&&p[4]!=3)continue;if(skyCat(p)!=k)continue;const[a,b]=aitoff(p[1],p[2]);const X=cx+a*R,Y=cy-b*R;const rr=(14+6*pulse)*big;const g=x.createRadialGradient(X,Y,0,X,Y,rr);g.addColorStop(0,`rgba(${c},.95)`);g.addColorStop(.25,`rgba(${c},.45)`);g.addColorStop(1,`rgba(${c},0)`);x.fillStyle=g;x.beginPath();x.arc(X,Y,rr,0,7);x.fill();x.fillStyle='#fff';x.beginPath();x.arc(X,Y,2,0,7);x.fill()}}
 x.globalAlpha=1;if(LC&&LC.ra!=null&&SKYA.cx>.02){x.globalAlpha=SKYA.cx;const[a,b]=aitoff(LC.ra,LC.dec);const X=cx+a*R,Y=cy-b*R;x.strokeStyle='#fff';x.lineWidth=1.4;x.beginPath();x.arc(X,Y,7+4*pulse,0,7);x.stroke();x.beginPath();x.moveTo(X-16,Y);x.lineTo(X-9,Y);x.moveTo(X+9,Y);x.lineTo(X+16,Y);x.moveTo(X,Y-16);x.lineTo(X,Y-9);x.moveTo(X,Y+9);x.lineTo(X,Y+16);x.stroke();x.globalAlpha=1}
 x.fillStyle='#8b93b8';x.font='11px Segoe UI';x.fillText(`${SKY.length.toLocaleString()} stars mapped · Aitoff, equatorial (RA/Dec) · click legend items to show/hide`,10,h-8)}
+let SKY_SCOPE='sector',SKY_BOUNDS=null;window.SKY_SCOPE=SKY_SCOPE;
+function drawSkyFootprint(x,w,h){const b=SKY_BOUNDS;if(!b||!SKY.length){x.fillStyle='#8b93b8';x.font='12px Segoe UI';x.fillText(SKY.length?'not available':'No stars stored for this sector yet',16,28);return}
+const P={l:36,r:12,t:10,b:22};const X=ra=>P.l+(w-P.l-P.r)*((ra-b.ra0)/(b.ra1-b.ra0||1));const Y=dec=>P.t+(h-P.t-P.b)*(1-(dec-b.dec0)/(b.dec1-b.dec0||1));
+x.strokeStyle='rgba(124,92,255,.25)';for(let i=0;i<=4;i++){const ra=b.ra0+(b.ra1-b.ra0)*i/4,xx=X(ra);x.beginPath();x.moveTo(xx,P.t);x.lineTo(xx,h-P.b);x.stroke();x.fillStyle='#6b7398';x.font='10px Segoe UI';x.fillText(ra.toFixed(0)+'°',xx-8,h-6)}
+for(let i=0;i<=3;i++){const dec=b.dec0+(b.dec1-b.dec0)*i/3,yy=Y(dec);x.beginPath();x.moveTo(P.l,yy);x.lineTo(w-P.r,yy);x.stroke();x.fillStyle='#6b7398';x.fillText(dec.toFixed(0)+'°',2,yy+3)}
+const col={dl:'#3b4470',se:'#6d8cff'},glow={kn:'34,211,238',np:'52,211,153',nu:'255,209,102',nf:'248,113,113'};
+for(const p of SKY){const k=skyCat(p);if(SKYA[k]<.02)continue;x.globalAlpha=SKYA[k];const px=X(b.wrapped&&p[1]>180?p[1]-360:p[1]),py=Y(p[2]);
+if(k==='dl'||k==='se'){x.fillStyle=col[k];const r=Math.max(.7,2.4-(p[3]||12)/8);x.fillRect(px-r/2,py-r/2,r,r)}
+else{const c=glow[k];const g=x.createRadialGradient(px,py,0,px,py,12);g.addColorStop(0,`rgba(${c},.95)`);g.addColorStop(1,`rgba(${c},0)`);x.fillStyle=g;x.beginPath();x.arc(px,py,12,0,7);x.fill();x.fillStyle='#fff';x.beginPath();x.arc(px,py,2,0,7);x.fill()}}
+x.globalAlpha=1;if(LC&&LC.ra!=null&&SKYA.cx>.02){const px=X(b.wrapped&&LC.ra>180?LC.ra-360:LC.ra),py=Y(LC.dec);x.strokeStyle='#fff';x.beginPath();x.arc(px,py,7,0,7);x.stroke()}
+x.fillStyle='#8b93b8';x.font='11px Segoe UI';x.fillText(`${SKY.length.toLocaleString()} stars · this sector, zoomed to its footprint`,10,14)}
+const _drawSkyFull=drawSky;drawSky=function(){const [x,w,h]=setup($('sky'));if(SKY_SCOPE!=='all'){x.clearRect(0,0,w,h);drawSkyFootprint(x,w,h);return}_drawSkyFull()};
+function loadSky(){const sector=window._skySector||0;const q=SKY_SCOPE==='all'?'scope=all':'scope=sector&sector='+encodeURIComponent(sector);
+fetch('/api/sky?'+q).then(r=>r.json()).then(body=>{SKY=body.points||[];SKY_BOUNDS=body.bounds||null}).catch(()=>{})}
+window.loadSky=loadSky;
+const skySectorBtn=$('sky_sector'),skyAllBtn=$('sky_all');
+if(skySectorBtn)skySectorBtn.onclick=()=>{SKY_SCOPE='sector';window.SKY_SCOPE=SKY_SCOPE;skySectorBtn.classList.add('on');if(skyAllBtn)skyAllBtn.classList.remove('on');loadSky()};
+if(skyAllBtn)skyAllBtn.onclick=()=>{SKY_SCOPE='all';window.SKY_SCOPE=SKY_SCOPE;skyAllBtn.classList.add('on');if(skySectorBtn)skySectorBtn.classList.remove('on');loadSky()};
 let _skyLast=0;const skyLoop=(function skyLoop(t){const m=motion();const zooming=!!m.loop&&typeof ZOOM!='undefined'&&LC&&(performance.now()-ZOOM.t0)<5200;if(t-_skyLast>(zooming?Math.min(40,m.sky):m.sky)){_skyLast=t;if(m.loop)skyT+=zooming?.16:1;try{drawSky()}catch(e){}}requestAnimationFrame(skyLoop)});setTimeout(()=>requestAnimationFrame(skyLoop),0);
 function drawHist(){const [x,w,h]=setup($('hist'));if(!HIST){return}const [cnt,ed,thr]=HIST[hmode];const P={l:40,r:8,t:8,b:22};const mx=Math.max(1,...cnt);const lg=mx>50;const tr=v=>lg?Math.log10(1+v):v;const bw=(w-P.l-P.r)/cnt.length;
 const X=v=>P.l+(w-P.l-P.r)*(v-ed[0])/(ed[ed.length-1]-ed[0]);x.font='10px Segoe UI';x.fillStyle='#6b7398';
@@ -248,8 +268,8 @@ $('hb_sde').onclick=()=>{hmode='sde';$('hb_sde').classList.add('on');$('hb_snr')
 function card(c,i,fresh){const known=c.status!='NEW';const el=document.createElement('div');el.className='cc'+(known?' known':'')+(fresh?' fresh':'');
 el.innerHTML=`<h3>TIC ${c.tic} <span class="tag ${known?'known':'new'}">${known?(c.status=='known_confirmed'?'✓ confirmed':'TOI'):'candidates, unverified'}</span><span class="rank">#${i+1} · score ${c.score.toFixed(1)}</span></h3>
 ${c.known?`<div class="kv" style="margin-top:3px">${c.known}</div>`:''}${c.plot?`<img src="/plots/${c.plot}" loading="lazy">`:''}
-<div class="m"><div><span>Period</span>${c.period?.toFixed(3)} d</div><div><span>Depth</span>${Math.round(c.depth*1e6)} ppm</div><div><span>Duration</span>${(c.duration*24).toFixed(1)} h</div>
-<div><span>SNR</span>${c.snr?.toFixed(1)}</div><div><span>SDE</span>${c.sde?.toFixed(1)}</div><div><span>Transits</span>${c.n_transits??'–'}</div></div>${c.verdict?`<span class="vbadge ${vclass(c.verdict)}">${c.verdict}${c.vet_flags?' · '+c.vet_flags:''}</span>`:(c.flags?`<span class="vbadge v-fp">${c.flags}</span>`:'')}${c.prelim?'<div class="kv" style="margin-top:6px">candidates, unverified · another worker still has to agree</div>':''}`;el.onclick=()=>openDetail(c.tic);if(c.verdict)VERD[c.tic]=c.verdict;
+<div class="m"><div><span>Period</span>${c.period==null?'–':c.period.toFixed(3)+' d'}</div><div><span>Depth</span>${c.depth==null?'–':Math.round(c.depth*1e6)+' ppm'}</div><div><span>Duration</span>${c.duration==null?'–':(c.duration*24).toFixed(1)+' h'}</div>
+<div><span>SNR</span>${c.snr==null?'–':c.snr.toFixed(1)}</div><div><span>SDE</span>${c.sde==null?'–':c.sde.toFixed(1)}</div><div><span>Transits</span>${c.n_transits??'–'}</div></div>${c.verdict?`<span class="vbadge ${vclass(c.verdict)}">${c.verdict}${c.vet_flags?' · '+c.vet_flags:''}</span>`:(c.flags?`<span class="vbadge v-fp">${c.flags}</span>`:'')}${c.prelim?'<div class="kv" style="margin-top:6px">candidates, unverified · another worker still has to agree</div>':''}`;el.onclick=()=>openDetail(c.tic);if(c.verdict)VERD[c.tic]=c.verdict;
 const im=el.querySelector('img');if(im)im.onclick=(ev)=>{ev.stopPropagation();$('lbimg').src=im.src;$('lightbox').style.display='flex'};return el}
 function onCands(L){const vr=c=>({promising:0,undefined:1,known:2})[c.verdict]??3;const N=L.filter(c=>c.status=='NEW').sort((a,b)=>vr(a)-vr(b)||b.score-a.score),K=L.filter(c=>c.status!='NEW');const fresh=[];
 const cn=$('cands');cn.innerHTML='';if(!N.length)cn.innerHTML='<div class="empty">No candidates yet. A hit that passes the numeric cuts shows up here as candidates, unverified.</div>';
@@ -269,7 +289,7 @@ $('pause').onclick=e=>{paused=!paused;e.target.classList.toggle('on',paused);e.t
 con.onscroll=()=>{const atB=con.scrollHeight-con.scrollTop-con.clientHeight<30;if(!atB&&auto){auto=false;$('auto').classList.remove('on')}};
 // SSE
 let ES=null;function connect(){if(ES)ES.close();const es=ES=new EventSource('/events');es.addEventListener('state',e=>onState(JSON.parse(e.data)));es.addEventListener('log',e=>onLog(JSON.parse(e.data)));
-es.addEventListener('lc',e=>onLC(JSON.parse(e.data)));es.addEventListener('cands',e=>onCands(JSON.parse(e.data)));es.addEventListener('sky',e=>{SKY=JSON.parse(e.data)});es.addEventListener('hist',e=>{HIST=JSON.parse(e.data);drawHist()});
+es.addEventListener('star',e=>noteStar(JSON.parse(e.data)));es.addEventListener('cands',e=>onCands(JSON.parse(e.data)));es.addEventListener('hist',e=>{HIST=JSON.parse(e.data);drawHist()});
 es.onerror=()=>{$('stage').textContent='Reconnecting…'}}connect();
 document.querySelectorAll('#speed .btn').forEach(b=>b.onclick=()=>{ANIM_MODE=b.dataset.m;try{localStorage.setItem('rhexas.visual',ANIM_MODE);localStorage.setItem('rhexas-anim',ANIM_MODE)}catch(e){}applyMotion();if(LC)startAnim(LC)});
 applyMotion();
@@ -279,10 +299,38 @@ addEventListener('resize',()=>{drawLC();drawHist()});
 let ANIM=0;
 function prng(xs,ys){const s=ys.filter(v=>v!=null&&isFinite(v)).sort((a,b)=>a-b);if(!s.length)return null;return{x0:Math.min(...xs),x1:Math.max(...xs),y0:s[Math.floor(s.length*.005)],y1:s[Math.ceil(s.length*.995)-1]}}
 const clamp=v=>Math.max(0,Math.min(1,v)),ease=k=>k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;
-function onLC(d){LC=d;$('lc_tic').textContent='TIC '+d.tic;const tg=$('lc_tag');const vd=VERD[d.tic];tg.textContent=vd?vd:(d.passed?'candidates, unverified':d.status);tg.className='tag'+(d.passed?' new':'');
-$('lc_kv').innerHTML=d.period?`P <b>${d.period.toFixed(4)} d</b> · depth <b>${Math.round(d.depth*1e6)} ppm</b> · dur <b>${(d.duration*24).toFixed(1)} h</b> · SDE <b>${d.sde.toFixed(1)}</b> · SNR <b>${d.snr.toFixed(1)}</b>`:(d.ra!=null?`RA <b>${d.ra.toFixed(2)}°</b> Dec <b>${d.dec.toFixed(2)}°</b> Tmag <b>${d.tmag??'–'}</b>`:'');
-$('lc_t').textContent='updated '+d.t;loadStar(d);vetFetch(d.tic);startAnim(d)}
-function startAnim(d){const id=++ANIM;const dur=PLOT>0?PLOT*1000:0;const t0=performance.now();
+let shownKey=null, starInflight=null;
+function fmtNum(v,d){return v==null||!isFinite(+v)?'not available':(+v).toFixed(d)}
+function showRecord(d){
+  if(!d)return;
+  const raw=d.raw&&d.raw[0]&&d.raw[0].length>=2?d.raw:(d.time&&d.flux&&d.time.length>=2?[d.time,d.flux]:null);
+  const pg=d.pgram&&d.pgram[0]&&d.pgram[0].length>=2?d.pgram:null;
+  const fold=d.fold&&d.fold[0]&&d.fold[0].length>=3?d.fold:null;
+  const passed=!!(d.candidate||d.verdict==='NEW'||d.passed);
+  LC=Object.assign({},d,{raw,pgram:pg,fold,passed,status:d.status||d.verdict||null});
+  $('lc_tic').textContent=d.tic!=null?'TIC '+d.tic:'not available';
+  const tg=$('lc_tag');const vd=VERD[d.tic];
+  tg.textContent=vd?vd:(passed?'candidates, unverified':(d.status||'not available'));
+  tg.className='tag'+(passed?' new':'');
+  const depth=d.depth,dur=d.duration;
+  $('lc_kv').innerHTML=d.period!=null?`P <b>${fmtNum(d.period,4)} d</b> · depth <b>${depth==null?'not available':Math.round(depth*1e6)+' ppm'}</b> · dur <b>${dur==null?'not available':fmtNum(dur*24,1)+' h'}</b> · SDE <b>${fmtNum(d.sde,1)}</b> · SNR <b>${fmtNum(d.snr,1)}</b>`:(d.ra!=null?`RA <b>${fmtNum(d.ra,2)}°</b> Dec <b>${fmtNum(d.dec,2)}°</b> Tmag <b>${d.tmag??'not available'}</b>`:'not available');
+  $('lc_t').textContent=d.at?('finished '+new Date(d.at*1000).toLocaleTimeString()):'';
+  loadStar(LC);applyVet(d);startAnim(LC);
+}
+function noteStar(p){
+  if(!p||p.tic==null)return;
+  const key=p.tic+':'+(p.version??'')+':'+(p.sector??'')+':'+(p.unit??'');
+  if(key===shownKey||key===starInflight)return;
+  starInflight=key;
+  const q=new URLSearchParams();q.set('tic',String(p.tic));
+  if(p.sector!=null&&p.sector!=='')q.set('sector',String(p.sector));
+  if(p.unit!=null&&p.unit!=='')q.set('unit',String(p.unit));
+  fetch('/api/star?'+q.toString()).then(r=>r.json()).then(rec=>{
+    if(starInflight!==key)return;starInflight=null;shownKey=key;showRecord(rec);
+  }).catch(()=>{if(starInflight===key)starInflight=null});
+}
+function startAnim(d){if(!d||!d.raw||!d.pgram){plot($('lcc'),[],{missing:true});plot($('pgc'),[],{missing:true});plot($('fdc'),[],{missing:true});$('bls_scan').textContent='not available';return}
+const id=++ANIM;const dur=PLOT>0?PLOT*1000:0;const t0=performance.now();
 if(dur<=0){const R1=prng(d.raw[0],d.raw[1]),R2={x0:d.pgram[0][0],x1:d.pgram[0][d.pgram[0].length-1],y0:Math.min(...d.pgram[1]),y1:Math.max(...d.pgram[1])};const bi=[];let b=0;d.pgram[1].forEach((v,i)=>{if(v>d.pgram[1][b])b=i;bi.push(b)});let F=null;if(d.fold){const fx=d.fold[0],fy=d.fold[1],ft=d.fold[2]||fx;const r=prng(fx,fy);F={fx,fy,ft,r,tmin:Math.min(...ft),tmax:Math.max(...ft)}}drawAnim(d,1,R1,R2,bi,F);return}
 const R1=prng(d.raw[0],d.raw[1]),R2={x0:d.pgram[0][0],x1:d.pgram[0][d.pgram[0].length-1],y0:Math.min(...d.pgram[1]),y1:Math.max(...d.pgram[1])};
 const bi=[];let b=0;d.pgram[1].forEach((v,i)=>{if(v>d.pgram[1][b])b=i;bi.push(b)});
@@ -295,13 +343,13 @@ const P=d.pgram[0],W=d.pgram[1];const m=Math.max(1,Math.floor(b*(P.length-1)));c
 const vl=[];if(b>0&&b<1)vl.push({x:P[m],c:'#22d3ee'});if(b>0)vl.push({x:P[best],c:'#ffd166'});
 plot($('pgc'),[{x:P.slice(0,m+1),y:W.slice(0,m+1),c:'#7c5cff',glow:6},{x:[P[best]],y:[W[best]],c:'#ffd166',dots:true,r:b>0?7:0}],{logx:true,x0:R2.x0,x1:R2.x1,y0:R2.y0,y1:R2.y1,yf:v=>v.toFixed(1),vl});
 $('bls_scan').textContent=b<=0?'':b<1?`scanning P=${P[m].toFixed(3)} d · best so far ${P[best].toFixed(4)} d (power ${W[best].toFixed(1)})`:(d.period?`best P=${d.period.toFixed(4)} d · SDE ${d.sde.toFixed(1)} · SNR ${d.snr.toFixed(1)}`:'');
-if(!F){plot($('fdc'),[]);return}
+if(!F){plot($('fdc'),[],{missing:true});return}
 const {fx,fy,ft,r,tmin,tmax}=F;if(c<=0){const cv=$('fdc');const[x,w,h]=setup(cv);x.fillStyle='#8b93b8';x.font='12px Segoe UI';x.fillText(b>0?'folding at best period…':'',w/2-60,h/2);return}
 const X=fx.map((p,i)=>(r.x0+(ft[i]-tmin)/(tmax-tmin||1)*(r.x1-r.x0))*(1-c)+p*c);
 const ser=[{x:X,y:fy,c:'#22d3ee',dots:true,r:2.4}];
 if(c>.75&&d.depth){const Dh=d.duration*12,dp=d.depth;ser.push({x:[r.x0,-Dh,-Dh,Dh,Dh,r.x1],y:[1,1,1-dp,1-dp,1,1],c:'#ffd166',lw:2.2,glow:10})}
 plot($('fdc'),ser,{x0:r.x0,x1:r.x1,y0:Math.min(r.y0,d.depth?1-d.depth*1.1:r.y0),y1:r.y1,yf:v=>v.toFixed(4)})}
-function drawLC(){if(LC)drawAnim(LC,1,prng(LC.raw[0],LC.raw[1]),{x0:LC.pgram[0][0],x1:LC.pgram[0].at(-1),y0:Math.min(...LC.pgram[1]),y1:Math.max(...LC.pgram[1])},(()=>{const bi=[];let b=0;LC.pgram[1].forEach((v,i)=>{if(v>LC.pgram[1][b])b=i;bi.push(b)});return bi})(),LC.fold?{fx:LC.fold[0],fy:LC.fold[1],ft:LC.fold[2]||LC.fold[0],r:prng(LC.fold[0],LC.fold[1]),tmin:0,tmax:1}:null)}
+function drawLC(){if(!LC||!LC.raw||!LC.pgram){plot($('lcc'),[],{missing:true});plot($('pgc'),[],{missing:true});plot($('fdc'),[],{missing:true});return}drawAnim(LC,1,prng(LC.raw[0],LC.raw[1]),{x0:LC.pgram[0][0],x1:LC.pgram[0].at(-1),y0:Math.min(...LC.pgram[1]),y1:Math.max(...LC.pgram[1])},(()=>{const bi=[];let b=0;LC.pgram[1].forEach((v,i)=>{if(v>LC.pgram[1][b])b=i;bi.push(b)});return bi})(),LC.fold?{fx:LC.fold[0],fy:LC.fold[1],ft:LC.fold[2]||LC.fold[0],r:prng(LC.fold[0],LC.fold[1]),tmin:0,tmax:1}:null)}
 // console expand
 $('expand').onclick=e=>{const c=$('con');const on=c.classList.toggle('compact');e.target.textContent=on?'expand ▾':'collapse ▴';if(auto)c.scrollTop=1e9};
 // ===== verdicts =====
@@ -346,11 +394,13 @@ cv.onmousemove=e=>{const r=cv.getBoundingClientRect(),{s,ox,oy}=draw.m;const i=M
 tip.style.display='block';tip.innerHTML=`pixel (${i}, ${j})<br>value ${img[j][i]?.toFixed(1)} e⁻/s`;tip.style.left=(e.clientX-r.left+12)+'px';tip.style.top=(e.clientY-r.top+8)+'px'};cv.onmouseleave=()=>tip.style.display='none';draw()}
 function wcen(img,thr){let sx=0,sy=0,s=0;const mx=Math.max(...img.flat().filter(v=>v!=null));img.forEach((row,j)=>row.forEach((v,i)=>{if(v!=null&&v>thr*mx){sx+=i*v;sy+=j*v;s+=v}}));return s?[sx/s,sy/s]:null}
 // ===== modal =====
-async function openDetail(tic){const M=$('modal'),B=$('mbox');M.style.display='block';B.innerHTML=`<span class="close" onclick="closeM()">✕</span><h2>TIC ${tic}</h2><div class="empty">Computing light curve, periodogram and vetting views… (first open of a star takes a few seconds)</div>`;
-let d;try{d=await (await fetch('/api/detail?tic='+tic)).json()}catch(e){B.innerHTML+=`<div class="empty">failed: ${e}</div>`;return}if(d.error){B.innerHTML+=`<div class="empty">${d.error}</div>`;return}
-const v=d.vet||{},st=d.star||{};const rp=v.rp_earth?(+v.rp_earth).toFixed(1):(st.radius&&d.depth?(Math.sqrt(d.depth)*st.radius*109.1).toFixed(1):'–');
-B.innerHTML=`<span class="close" onclick="closeM()">✕</span><h2>TIC ${tic} <span class="vbadge ${vclass(v.verdict)}" style="font-size:13px;vertical-align:middle">${v.verdict||'not vetted yet'}</span></h2>
-<div class="kv" style="margin-top:6px">P <b>${d.period.toFixed(5)} d</b> · depth <b>${Math.round(d.depth*1e6)} ppm</b> · duration <b>${(d.duration*24).toFixed(2)} h</b> · SDE <b>${d.sde.toFixed(1)}</b> · SNR <b>${d.snr.toFixed(1)}</b> · transits <b>${d.n_transits}</b> · Rp ≈ <b>${rp} R⊕</b>${v.flags?` · <span style="color:#fca5a5">${v.flags}</span>`:''}</div>
+async function openDetail(tic){const M=$('modal'),B=$('mbox');M.style.display='block';B.innerHTML=`<span class="close" onclick="closeM()">✕</span><h2>TIC ${tic}</h2><div class="empty">Loading the stored record…</div>`;
+let d;try{d=await (await fetch('/api/star?tic='+tic)).json()}catch(e){B.innerHTML+=`<div class="empty">not available</div>`;return}if(!d||d.available===false||(d.missing&&d.missing.indexOf('record')>=0)){B.innerHTML+=`<div class="empty">not available</div>`;return}
+const v=d.vet||{},st=d.star||d;const rp=v.rp_earth?(+v.rp_earth).toFixed(1):(st.radius&&d.depth?(Math.sqrt(d.depth)*st.radius*109.1).toFixed(1):'–');
+const sig=v=>v==null||!isFinite(+v)?'not available':(+v).toFixed(1)+'σ';
+const verdict=v.verdict||(d.candidate?'candidates, unverified':(d.verdict||'not available'));
+B.innerHTML=`<span class="close" onclick="closeM()">✕</span><h2>TIC ${tic} <span class="vbadge ${vclass(verdict)}" style="font-size:13px;vertical-align:middle">${verdict}</span></h2>
+<div class="kv" style="margin-top:6px">P <b>${d.period==null?'not available':(+d.period).toFixed(5)+' d'}</b> · depth <b>${d.depth==null?'not available':Math.round(d.depth*1e6)+' ppm'}</b> · duration <b>${d.duration==null?'not available':(d.duration*24).toFixed(2)+' h'}</b> · SDE <b>${d.sde==null?'not available':(+d.sde).toFixed(1)}</b> · SNR <b>${d.snr==null?'not available':(+d.snr).toFixed(1)}</b> · transits <b>${d.n_transits??'not available'}</b> · Rp ≈ <b>${rp} R⊕</b>${v.flags?` · <span style="color:#fca5a5">${v.flags}</span>`:''}</div>
 <div class="hint">Scroll to zoom · drag to pan · double-click to reset · hover for values</div>
 <div class="mgrid">
 <div class="card" style="grid-column:span 8"><h2>Raw light curve (PDCSAP)</h2><div id="m_raw"></div></div>
@@ -358,8 +408,8 @@ B.innerHTML=`<span class="close" onclick="closeM()">✕</span><h2>TIC ${tic} <sp
 <div class="card" style="grid-column:span 12"><h2>Detrended light curve · predicted transits shaded</h2><div id="m_flat"></div></div>
 <div class="card" style="grid-column:span 6"><h2>BLS periodogram</h2><div id="m_pg"></div></div>
 <div class="card" style="grid-column:span 6"><h2>Phase fold + box model</h2><div id="m_fold"></div></div>
-<div class="card" style="grid-column:span 4"><h2>Odd vs even transits <span class="r kv">${(+d.odd_even_sigma).toFixed(1)}σ</span></h2><div id="m_oe"></div></div>
-<div class="card" style="grid-column:span 4"><h2>Secondary eclipse (phase 0.5) <span class="r kv">${(+d.sec_sigma).toFixed(1)}σ</span></h2><div id="m_sec"></div></div>
+<div class="card" style="grid-column:span 4"><h2>Odd vs even transits <span class="r kv">${sig(d.odd_even_sigma)}</span></h2><div id="m_oe"></div></div>
+<div class="card" style="grid-column:span 4"><h2>Secondary eclipse (phase 0.5) <span class="r kv">${sig(d.sec_sigma)}</span></h2><div id="m_sec"></div></div>
 <div class="card" style="grid-column:span 4"><h2>Centroid shift vs phase</h2><div id="m_cen"></div></div>
 <div class="card" style="grid-column:span 6"><h2>Out-of-transit image</h2><div id="m_oot"></div></div>
 <div class="card" style="grid-column:span 6"><h2>Difference image (out − in)</h2><div id="m_diff"></div></div></div>`;
@@ -367,9 +417,12 @@ const rows=[['RA / Dec',st.ra!=null?`${st.ra.toFixed(4)}°, ${st.dec.toFixed(4)}
 ['Centroid shift',v.mom_shift_arcsec?`${(+v.mom_shift_arcsec).toFixed(2)}″ (${(+v.mom_shift_sigma).toFixed(1)}σ)`:'–'],['Diff-image offset',v.diff_vs_target_arcsec?`${(+v.diff_vs_target_arcsec).toFixed(0)}″ from target`:'–'],['Neighbours ≤60″',v.n_nb_60?`${v.n_nb_60} (${v.n_nb_could_mimic} bright enough to mimic)`:'–'],['Brightest neighbour',v.brightest_nb||'–'],
 ['ExoFOP',[v.exofop_tois&&'TOI '+v.exofop_tois,v.exofop_ctois&&'CTOI '+v.exofop_ctois,v.exofop_planets].filter(Boolean).join(', ')||'nothing listed'],['SIMBAD',v.simbad||'–'],['VSX',v.vsx||'none within 60″']];
 $('m_info').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]??'–'}</td></tr>`).join('');
-IChart($('m_raw'),{series:[{x:d.raw[0],y:d.raw[1],dots:1,r:1.6,c:'#a5b4fc',c2:'#7c5cff'}],xn:'BTJD',yn:'flux',xlabel:'time [BTJD]'});
-IChart($('m_flat'),{h:200,series:[{x:d.flat[0],y:d.flat[1],dots:1,r:1.8,c:'#67e8f9',c2:'#3b82f6'}],bands:d.transits.map(t=>({x0:t-d.duration/2,x1:t+d.duration/2,c:'rgba(255,209,102,.18)'})),hl:[{y:1-d.depth,c:'#ffd16688'}],xn:'BTJD',yn:'flux',xlabel:'time [BTJD]'});
-const pk=d.period;IChart($('m_pg'),{logx:1,series:[{x:d.pgram[0],y:d.pgram[1],c:'#a78bfa',lw:1.3,glow:6,fill:'rgba(124,92,255,.35)',label:'BLS power'}],vl:[{x:pk,c:'#ffd166',t:'P'},...[.5,2].filter(f=>pk*f>=d.pgram[0][0]&&pk*f<=d.pgram[0].at(-1)).map(f=>({x:pk*f,c:'#f472b688',t:f==.5?'P/2':'2P'}))],xn:'period [d]',yn:'power',xlabel:'period [d]',yf:v=>v.toFixed(1)});
+const raw=d.raw&&d.raw[0]?d.raw:(d.time&&d.flux?[d.time,d.flux]:null);
+const flat=d.flat&&d.flat[0]?d.flat:raw;
+const transits=d.transits||[];
+if(raw)IChart($('m_raw'),{series:[{x:raw[0],y:raw[1],dots:1,r:1.6,c:'#a5b4fc',c2:'#7c5cff'}],xn:'BTJD',yn:'flux',xlabel:'time [BTJD]'});else $('m_raw').innerHTML='<div class="empty">not available</div>';
+if(flat)IChart($('m_flat'),{h:200,series:[{x:flat[0],y:flat[1],dots:1,r:1.8,c:'#67e8f9',c2:'#3b82f6'}],bands:transits.map(t=>({x0:t-(d.duration||0)/2,x1:t+(d.duration||0)/2,c:'rgba(255,209,102,.18)'})),hl:d.depth==null?[]:[{y:1-d.depth,c:'#ffd16688'}],xn:'BTJD',yn:'flux',xlabel:'time [BTJD]'});else $('m_flat').innerHTML='<div class="empty">not available</div>';
+const pk=d.period;if(d.pgram&&d.pgram[0]&&d.pgram[0].length)IChart($('m_pg'),{logx:1,series:[{x:d.pgram[0],y:d.pgram[1],c:'#a78bfa',lw:1.3,glow:6,fill:'rgba(124,92,255,.35)',label:'BLS power'}],vl:pk==null?[]:[{x:pk,c:'#ffd166',t:'P'},...[.5,2].filter(f=>pk*f>=d.pgram[0][0]&&pk*f<=d.pgram[0].at(-1)).map(f=>({x:pk*f,c:'#f472b688',t:f==.5?'P/2':'2P'}))],xn:'period [d]',yn:'power',xlabel:'period [d]',yf:v=>v.toFixed(1)});else $('m_pg').innerHTML='<div class="empty">not available</div>';
 const box=(x0,x1,dp)=>({x:[x0,-d.duration*12,-d.duration*12,d.duration*12,d.duration*12,x1],y:[1,1,1-dp,1-dp,1,1],c:'#ffd166',lw:2.4,glow:10,notip:1});
 if(d.fold){const f=d.fold;IChart($('m_fold'),{series:[{x:f[0],y:f[1],dots:1,r:2,c:'#22d3ee88',label:'points'},{x:f[2],y:f[3],dots:1,r:6,c:'#f472b6',label:'binned'},box(f[0][0],f[0].at(-1),d.depth)],xn:'hours',yn:'flux',xlabel:'hours from mid-transit'})}
 const oe=[];if(d.odd)oe.push({x:d.odd[2],y:d.odd[3],c:'#f472b6',r:6,dots:1,label:'odd'},{x:d.odd[2],y:d.odd[3],c:'#f472b6',lw:1.2,notip:1});if(d.even)oe.push({x:d.even[2],y:d.even[3],c:'#34d399',r:6,dots:1,label:'even'},{x:d.even[2],y:d.even[3],c:'#34d399',lw:1.2,notip:1});
@@ -396,7 +449,7 @@ function loadStar(d){if(!d||d.tic==null)return;$('img_tic').textContent='TIC '+d
 const token=d.tic+':'+(d.status||'');
 if(PIXTOKEN!==token){PIXTOKEN=token;PIXTIC=d.tic;loadPixels(d.tic)}
 if(CUTTIC!==d.tic){CUTTIC=d.tic;CUTIMG=null;
-if(d.ra==null||d.dec==null){$('cut_lbl').textContent='Sky survey needs a sky position for this star'}
+if(d.ra==null||d.dec==null){$('cut_lbl').textContent='not available'}
 else{$('cut_lbl').textContent='Loading sky survey…';const im=new Image();const tic=d.tic;im.onload=()=>{if(CUTTIC!==tic)return;CUTIMG=im;$('cut_lbl').textContent='Sky survey (DSS2, 6′)'};im.onerror=()=>{if(CUTTIC!==tic)return;CUTIMG=null;$('cut_lbl').textContent='Sky survey unavailable (offline or timed out)'};im.src='/api/cutout?tic='+tic+'&ra='+encodeURIComponent(d.ra)+'&dec='+encodeURIComponent(d.dec)}}}
 function drawPix(){const cv=$('pixc');const[x,w,h]=setup(cv);x.fillStyle='#03040a';x.fillRect(0,0,w,h);if(!PIX)return;const grid=PIX.image||PIX.aperture;if(!grid||!grid.length||!grid[0]){x.fillStyle='#8b93b8';x.font='12px Segoe UI';x.fillText('No aperture yet',12,24);return}
 const ap=PIX.aperture,H=grid.length,W=grid[0].length,s=Math.min(w/W,h/H)*.95,ox=(w-s*W)/2,oy=(h-s*H)/2;let img,intr=false,lab='';
@@ -420,7 +473,7 @@ window._armMotion=armMotion;armMotion();
 const _startAnim=startAnim;startAnim=function(d){_startAnim(d);if(!motion().loop)return;const id=ANIM;const dur=PLOT>0?PLOT*1000:0;setTimeout(function again(){if(id===ANIM&&LC===d&&motion().loop){_startAnim(d);const id2=ANIM;setTimeout(()=>{if(id2===ANIM&&LC===d&&motion().loop)again()},dur)}},dur)};
 // ===== v3: sky zoom =====
 let ZOOM={t0:0,tic:null};
-const _drawSky=drawSky;drawSky=function(){if(!motion().loop){_drawSky();return}const now=performance.now();if(LC&&LC.ra!=null&&ZOOM.tic!==LC.tic){ZOOM={t0:now,tic:LC.tic}}
+const _drawSky=drawSky;drawSky=function(){if(typeof SKY_SCOPE!=='undefined'&&SKY_SCOPE!=='all'){_drawSky();return}if(!motion().loop){_drawSky();return}const now=performance.now();if(LC&&LC.ra!=null&&ZOOM.tic!==LC.tic){ZOOM={t0:now,tic:LC.tic}}
 const C=Math.max(PLOT,0.001);if(LC&&now-ZOOM.t0>C*1000)ZOOM.t0=now;const k=(now-ZOOM.t0)/1000;let z=0;if(k<C*0.2)z=ease(k/(C*0.2));else if(k<C*0.8)z=1;else if(k<C)z=1-ease((k-C*0.8)/(C*0.2));
 if(z<=0||!LC||LC.ra==null){_drawSky();return}const cv=$('sky');_drawSky();const x=cv.getContext('2d');const w=cv.clientWidth,h=+cv.getAttribute('height');
 const cx=w/2,cy=h/2,R=Math.min(w/2/Math.PI,h/2/(Math.PI/2))*.96;const[a,b]=aitoff(LC.ra,LC.dec);const X=cx+a*R,Y=cy-b*R;
@@ -430,8 +483,8 @@ x.drawImage(tmp,0,0,w,h);x.restore();const S=Math.min(w,h)*.9*z;if(z>.3){drawCut
 
 /* v3.1 vetting charts */
 let VD=null,VDTIC=null,VDT=0,VDF=0,VDstart=0;
-function vetFetch(tic){if(tic==null||tic===VDTIC)return;const n=performance.now();if(n-VDT<20000&&VD)return;VDT=n;VDTIC=tic;
-fetch('/api/detail?tic='+tic).then(r=>r.ok?r.json():null).then(d=>{if(d&&!d.error){VD=d;VDstart=performance.now();if(!motion().loop)vcDraw()}}).catch(()=>{})}
+function applyVet(d){if(!d||d.tic==null)return;VD=d;VDTIC=d.tic;VDstart=performance.now();if(!motion().loop)vcDraw()}
+function vetFetch(tic){noteStar({tic:tic,version:shownKey&&String(shownKey).startsWith(tic+':')?shownKey.split(':')[1]:0})}
 function vcCanvas(id){const cv=$(id);const w=cv.clientWidth||300,h=230;if(cv.width!==w*DPR){cv.width=w*DPR;cv.height=h*DPR}const x=cv.getContext('2d');x.setTransform(DPR,0,0,DPR,0,0);x.clearRect(0,0,w,h);return[x,w,h]}
 function vcFrame(x,w,h,X0,X1,Y0,Y1,ylab){const P={l:44,r:8,t:10,b:20};const sx=v=>P.l+(v-X0)/(X1-X0)*(w-P.l-P.r),sy=v=>P.t+(1-(v-Y0)/(Y1-Y0))*(h-P.t-P.b);
 x.strokeStyle='#232847';x.fillStyle='#7d86b5';x.font='10px Segoe UI';x.lineWidth=1;
@@ -444,15 +497,15 @@ const D=(d.duration||.1)*24,H=4*D;
 /* odd/even */{const[x,w,h]=vcCanvas('vc_oe');const o=d.odd,e=d.even;if(o&&e){const[Y0,Y1]=vcRange([o[3],e[3]]);const[sx,sy]=vcFrame(x,w,h,-H,H,Y0,Y1,v=>v.toFixed(4));
 if(sw>0){x.fillStyle='rgba(255,209,102,.08)';const a=sx(-D/2),b=sx(-D/2+D*sw);x.fillRect(a,10,Math.max(0,b-a),h-30)}
 x.setLineDash([4,4]);x.strokeStyle='#8a7a55';x.beginPath();x.moveTo(sx(-H),sy(1-(d.depth||0)));x.lineTo(sx(H),sy(1-(d.depth||0)));x.stroke();x.setLineDash([]);
-vcLine(x,sx,sy,o[2],o[3],'#f472b6',fr,1);vcLine(x,sx,sy,e[2],e[3],'#34d399',fr,1)}$('vc_oe_s').textContent=(Math.abs(+d.odd_even_sigma||0)*cnt).toFixed(1)+'σ'}
+vcLine(x,sx,sy,o[2],o[3],'#f472b6',fr,1);vcLine(x,sx,sy,e[2],e[3],'#34d399',fr,1)}$('vc_oe_s').textContent=(d.odd_even_sigma==null||!isFinite(+d.odd_even_sigma))?'not available':(Math.abs(+d.odd_even_sigma)*cnt).toFixed(1)+'σ'}
 /* secondary */{const[x,w,h]=vcCanvas('vc_sec');const s=d.secondary;if(s){const[Y0,Y1]=vcRange([s[3]]);const lo=Math.min(Y0,1-(Y1-1)*3),hi=Math.max(Y1,1+(1-Y0));const[sx,sy]=vcFrame(x,w,h,-H,H,lo,hi,v=>v.toFixed(4));
 x.fillStyle='rgba(125,134,181,.35)';const st=Math.max(1,Math.floor(s[0].length/600));for(let i=0;i<s[0].length*fr;i+=st){const yy=sy(s[1][i]);if(yy>8&&yy<h-18)x.fillRect(sx(s[0][i]),yy,1.3,1.3)}
 if(sw>0){x.fillStyle='rgba(255,209,102,.08)';const a=sx(-D/2),b=sx(-D/2+D*sw);x.fillRect(a,10,Math.max(0,b-a),h-30)}
-x.fillStyle='#fbbf24';const n=Math.floor(s[2].length*fr);for(let i=0;i<n;i++)x.fillRect(sx(s[2][i])-3,sy(s[3][i])-3,6,6)}$('vc_sec_s').textContent=(Math.abs(+d.sec_sigma||0)*cnt).toFixed(1)+'σ'}
+x.fillStyle='#fbbf24';const n=Math.floor(s[2].length*fr);for(let i=0;i<n;i++)x.fillRect(sx(s[2][i])-3,sy(s[3][i])-3,6,6)}$('vc_sec_s').textContent=(d.sec_sigma==null||!isFinite(+d.sec_sigma))?'not available':(Math.abs(+d.sec_sigma)*cnt).toFixed(1)+'σ'}
 /* centroid */{const[x,w,h]=vcCanvas('vc_cen');const c=d.centroid;if(c){const m=Math.max(3,...c[1].map(Math.abs),...c[2].map(Math.abs));const[sx,sy]=vcFrame(x,w,h,-H,H,-m,m,v=>v.toFixed(1)+'″');
 const a=sx(-D/2),b=sx(D/2);x.fillStyle='rgba(180,140,90,.18)';x.fillRect(a,10,b-a,h-30);if(sw>0){x.fillStyle='rgba(255,209,102,.18)';x.fillRect(a,10,(b-a)*sw,h-30)}
-vcLine(x,sx,sy,c[0],c[1],'#60a5fa',fr,1);vcLine(x,sx,sy,c[0],c[2],'#f472b6',fr,1);const mx=Math.max(...c[1].map(Math.abs),...c[2].map(Math.abs));$('vc_cen_s').textContent=(mx*cnt).toFixed(2)+'″'}else{x.fillStyle='#7d86b5';x.font='12px Segoe UI';x.fillText('No centroid columns for this star',20,h/2)}}}
-function onPnew(s){const c=s.new_counts;if(!c)return;tw('p_new',c.total,v=>Math.round(v));tw('p_p',c.promising,v=>Math.round(v));tw('p_u',c.unchecked+(c.known_ctoi||0),v=>Math.round(v));tw('p_f',c.fp,v=>Math.round(v))}
+vcLine(x,sx,sy,c[0],c[1],'#60a5fa',fr,1);vcLine(x,sx,sy,c[0],c[2],'#f472b6',fr,1);const mx=Math.max(...c[1].map(Math.abs),...c[2].map(Math.abs));$('vc_cen_s').textContent=(d.centroid_sigma==null||!isFinite(+d.centroid_sigma))?((mx*cnt).toFixed(2)+'″'):((+d.centroid_sigma)*cnt).toFixed(1)+'σ'}else{x.fillStyle='#7d86b5';x.font='12px Segoe UI';x.fillText('not available',20,h/2);$('vc_cen_s').textContent='not available'}}}
+function onPnew(s){const c=s.new_counts;if(!c)return;const verified=c.verified!=null?c.verified:0;const pending=c.pending!=null?c.pending:0;const submitted=c.submitted!=null?c.submitted:0;tw('p_new',c.total,v=>Math.round(v));tw('p_p',verified,v=>Math.round(v));tw('p_u',pending,v=>Math.round(v));tw('p_f',submitted,v=>Math.round(v))}
 /* v3.2 animated histogram, SDE/SNR auto-cycle */
 let HPIN=null,HT0=performance.now(),HLAST=-1;
 function histFrame(m,a,alpha,x,w,h){const [cnt,ed,thr]=HIST[m];const P={l:40,r:8,t:8,b:22};const mx=Math.max(1,...cnt);const lg=mx>50;const tr=v=>lg?Math.log10(1+v):v;const bw=(w-P.l-P.r)/cnt.length;
@@ -488,7 +541,7 @@ $('cache_kv').textContent=cacheText(used)+(w.max_cache_gb!=null?' of '+w.max_cac
 let ys=CPU.filter(v=>v!=null&&!isNaN(v)),xs=ys.map((_,i)=>i);
 if(ys.length===1){xs=[0,1];ys=[ys[0],ys[0]]}
 plot($('wcpu'),[{x:xs,y:ys,c:'#22d3ee',glow:8,lw:1.6}],{y0:0,y1:100,yf:v=>Math.round(v)+'%'});
-const link=w.ok===true?'coordinator connected':w.ok===false?'coordinator unreachable':'coordinator not checked yet';
+const link=w.conn_label||(w.ok===true?'coordinator connected':w.ok===false?'coordinator unreachable':'coordinator not checked yet');
 $('conn_kv').textContent=link+(w.url?' · '+w.url:'')+(w.detail?' · '+w.detail:'')}
 function safeHttp(url){try{const u=new URL(url);return u.protocol==='https:'||u.protocol==='http:'}catch(e){return false}}
 async function refreshSetup(attempt){

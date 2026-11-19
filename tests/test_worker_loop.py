@@ -4,8 +4,10 @@ import time
 
 from rhexas.config import default_config
 from rhexas.worker.cache import delete_lightcurves, enforce_cache_cap
+from rhexas.worker.client import ProtocolError
 from rhexas.worker.loop import (
     HeartbeatProgress,
+    LeaseSet,
     backoff_s,
     load_token,
     read_stars,
@@ -250,3 +252,118 @@ def test_heartbeat_thread_pings_until_stopped():
         time.sleep(0.02)
     stop.set()
     assert beats == [5] or beats[0] == 5
+
+
+def test_heartbeat_409_ends_the_lease_and_is_not_unreachable():
+    notes = []
+    leases = LeaseSet()
+    leases.add(7)
+
+    class Client:
+        def heartbeat(self, assignment_id, progress=None):
+            raise ProtocolError(409, "assignment is submitted")
+
+    stop = start_heartbeat(
+        Client(), 7, 0.01, leases=leases, on_result=lambda ok, detail: notes.append((ok, detail)),
+    )
+    deadline = time.time() + 1
+    while not notes and time.time() < deadline:
+        time.sleep(0.02)
+    stop.set()
+    assert notes
+    assert notes[0] == (True, "lease ended")
+    assert all(ok is not False for ok, _detail in notes)
+    assert all("unreachable" not in detail for _ok, detail in notes)
+    assert leases.pairs() == []
+
+
+def test_heartbeat_network_failure_is_unreachable_only_after_several_tries():
+    notes = []
+
+    class Client:
+        def heartbeat(self, assignment_id, progress=None):
+            raise OSError("timed out")
+
+    stop = start_heartbeat(Client(), 4, 0.01, on_result=lambda ok, detail: notes.append((ok, detail)))
+    deadline = time.time() + 1.5
+    while time.time() < deadline and not any(ok is False for ok, _detail in notes):
+        time.sleep(0.02)
+    stop.set()
+    assert notes
+    assert notes[0][0] is None
+    assert notes[0][1].startswith("network")
+    assert any(ok is False and detail == "unreachable" for ok, detail in notes)
+    assert notes.index(next(item for item in notes if item[1] == "unreachable")) >= 2
+
+
+def test_heartbeat_rejection_is_not_called_unreachable():
+    notes = []
+
+    class Client:
+        def heartbeat(self, assignment_id, progress=None):
+            raise ProtocolError(400, "bad assignment")
+
+    stop = start_heartbeat(Client(), 4, 0.01, on_result=lambda ok, detail: notes.append((ok, detail)))
+    deadline = time.time() + 1
+    while not notes and time.time() < deadline:
+        time.sleep(0.02)
+    stop.set()
+    assert notes[0][0] is True
+    assert notes[0][1].startswith("rejected")
+    assert all(detail != "unreachable" for _ok, detail in notes)
+
+
+def test_submit_drops_the_lease_before_the_prefetch_wait(tmp_path, monkeypatch):
+    """A finished unit must not be renewed while the worker waits on the next download."""
+    monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
+    import rhexas.worker.loop as loop_mod
+
+    def slow_wait(self):
+        time.sleep(0.4)
+
+    monkeypatch.setattr(loop_mod._PrefetchJob, "wait", slow_wait)
+    late = []
+
+    class Client(FakeCoord):
+        def __init__(self, assignment):
+            super().__init__(assignment)
+            self.sent = False
+
+        def submit(self, assignment_id, stars, candidates):
+            body = super().submit(assignment_id, stars, candidates)
+            self.sent = True
+            return body
+
+        def heartbeat(self, assignment_id, progress=None):
+            if self.sent:
+                late.append(assignment_id)
+                raise ProtocolError(409, "assignment is submitted")
+            return {"expires_at": "2026-01-01T00:00:00+00:00"}
+
+    assignment = {
+        "assignment_id": 11, "unit_id": 2, "generation": 1, "sector": 90,
+        "project": "exoplanets", "tics": [3], "n_tics": 1,
+        "expires_at": "2026-01-02T00:00:00+00:00",
+    }
+
+    def download(cfg, tics):
+        cfg.sector_data.mkdir(parents=True, exist_ok=True)
+
+    def search(cfg, tics, procs):
+        cfg.sector_results.mkdir(parents=True, exist_ok=True)
+        (cfg.sector_results / "bls_raw.csv").write_text(
+            "tic,period,sde,depth,snr,error\n3,1.2,8,0.01,9,\n", encoding="utf-8",
+        )
+
+    def filt(cfg, tics):
+        (cfg.sector_results / "candidates.csv").write_text(
+            "tic,period,depth,snr,sde,status\n", encoding="utf-8",
+        )
+
+    cfg = resolve_worker(default_config(tmp_path), token="rhx_test", procs=1, threads=1, prefetch=0, environ={})
+    code = run_worker(
+        cfg, once=True, client=Client(assignment), download=download, search=search, filt=filt,
+        heartbeat_s=0.05,
+    )
+    assert code == 0
+    assert late == []

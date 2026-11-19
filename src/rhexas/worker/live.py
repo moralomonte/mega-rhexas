@@ -1,7 +1,8 @@
 """Local dashboard state for one worker. The worker writes it; the dashboard only reads.
 
-The file is ``dashboard.sqlite`` in the worker cache. Search processes publish the
-star they are on; the parent process publishes batch progress, the log, and
+The file is ``dashboard.sqlite`` in the worker cache. Search processes write one
+finished star into the ``stars`` table; a separate pointer names the star that
+is still running. The parent process publishes batch progress, the log, and
 lifetime counters. Nothing in this file is sent to the coordinator, and the
 invite token is never stored.
 
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     phase_json TEXT NOT NULL,
     flux_json TEXT NOT NULL,
     found_at REAL NOT NULL,
+    status TEXT,
     PRIMARY KEY (project, sector, unit_id, tic)
 );
 """
@@ -371,6 +373,8 @@ def _connect(path: Path, *, write: bool) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(_SCHEMA)
+        from .records import migrate
+        migrate(conn)
     else:
         conn.execute("PRAGMA query_only=ON")
     return conn
@@ -497,10 +501,26 @@ class Store:
             worker["pid"] = int(pid)
             _write_kv(conn, "worker", worker)
 
-    def set_connection(self, ok: bool | None, detail: str) -> None:
+    def set_connection(self, ok: bool | None, detail: str, kind: str | None = None) -> None:
         text = redact(str(detail or ""))[:160]
+        low = text.lower()
+        if not kind:
+            if low.startswith("unreachable"):
+                kind = "unreachable"
+            elif low.startswith("network"):
+                kind = "network"
+            elif low.startswith("rejected"):
+                kind = "rejected"
+            elif low.startswith("lease ended"):
+                kind = "lease_ended"
+            elif ok is True:
+                kind = "connected"
+            elif ok is False:
+                kind = "unreachable"
+            else:
+                kind = "unknown"
         with self._locked() as conn:
-            _write_kv(conn, "connection", {"ok": ok, "detail": text, "at": time.time()})
+            _write_kv(conn, "connection", {"ok": ok, "detail": text, "kind": str(kind), "at": time.time()})
 
     def set_next(self, assignment: dict, *, stage: str = "downloading", stars_done: int = 0,
                  stars_total: int | None = None) -> None:
@@ -592,6 +612,7 @@ class Store:
 
     def record_candidates(self, assignment: dict, rows: list[dict]) -> None:
         """Keep the official candidate list for this unit, preserving folds already published."""
+        from .records import apply_candidate_list
         project = str(assignment.get("project") or "exoplanets")
         sector = int(assignment.get("sector") or 0)
         unit_id = int(assignment.get("unit_id") or 0)
@@ -611,20 +632,22 @@ class Store:
                     ).fetchone()
                     phase = prev["phase_json"] if prev else "[]"
                     flux = prev["flux_json"] if prev else "[]"
+                    status = str(row.get("status") or "NEW")
                     conn.execute(
                         """INSERT INTO candidates (
                                project, sector, unit_id, tic, period, depth, snr, sde,
-                               phase_json, flux_json, found_at
-                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               phase_json, flux_json, found_at, status
+                           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                            ON CONFLICT(project, sector, unit_id, tic) DO UPDATE SET
                                period=excluded.period, depth=excluded.depth, snr=excluded.snr,
                                sde=excluded.sde, phase_json=excluded.phase_json,
-                               flux_json=excluded.flux_json, found_at=excluded.found_at""",
+                               flux_json=excluded.flux_json, found_at=excluded.found_at,
+                               status=excluded.status""",
                         (
                             project, sector, unit_id, tic,
                             _finite(row.get("period")), _finite(row.get("depth")),
                             _finite(row.get("snr")), _finite(row.get("sde")),
-                            phase, flux, time.time(),
+                            phase, flux, time.time(), status,
                         ),
                     )
                 if keep:
@@ -640,6 +663,7 @@ class Store:
                         (project, sector, unit_id),
                     )
                 _cap_candidates(conn)
+                apply_candidate_list(conn, sector, unit_id, rows)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -708,8 +732,8 @@ def _child_conn(path: str) -> sqlite3.Connection:
 
 
 _HIST_BINS = 60
-_VIEW_CAP = 40
-_SKY_CAP = 1500
+# The page list is not the counter. Counters use SQL. This only bounds the card payload.
+_CANDIDATE_LIST = 400
 
 
 def _bump_hist(conn: sqlite3.Connection, sde, snr) -> None:
@@ -733,114 +757,80 @@ def _bump_hist(conn: sqlite3.Connection, sde, snr) -> None:
     _write_kv(conn, "hist", {"sde": sde_c, "snr": snr_c})
 
 
-def _note_sky(conn: sqlite3.Connection, tic, ra, dec, tmag, flag: int) -> None:
-    if tic is None or _finite(ra) is None or _finite(dec) is None:
-        return
-    sky = _read_kv(conn, "sky")
-    if not isinstance(sky, list):
-        sky = []
-    mag = _finite(tmag)
-    point = [int(tic), round(float(ra), 5), round(float(dec), 5), round(mag, 2) if mag is not None else None, int(flag)]
-    sky = [item for item in sky if not (isinstance(item, list) and item and item[0] == int(tic))]
-    sky.append(point)
-    if len(sky) > _SKY_CAP:
-        sky = sky[-_SKY_CAP:]
-    _write_kv(conn, "sky", sky)
-
-
-def _store_view(conn: sqlite3.Connection, tic: int, view: dict) -> None:
-    views = _read_kv(conn, "views")
-    if not isinstance(views, dict):
-        views = {}
-    views[str(int(tic))] = view
-    if len(views) > _VIEW_CAP:
-        ordered = sorted(views.items(), key=lambda item: float((item[1] or {}).get("at") or 0))
-        for key, _item in ordered[: len(views) - _VIEW_CAP]:
-            views.pop(key, None)
-    _write_kv(conn, "views", views)
-
-
 def publish_star(spec: dict, row: dict, time_values, flux_values, *, processing: bool) -> None:
-    """Write the star a search process is on, and keep a fold if the numeric cuts pass.
+    """Record one star. A star that is still in BLS only moves the processing pointer.
 
-    Called from pool workers. Opens the database itself so it does not share a connection
-    with the parent. Exceptions propagate to the caller, which ignores them.
+    The finished row is written once BLS returns, so a second process cannot replace
+    a finished light curve with a half-done one. Called from pool workers. Exceptions
+    propagate to the caller, which ignores them.
     """
+    from .records import build_record, pointer, retain, upsert_star
+
     path = spec.get("db")
     if not path:
         return
     tic = _tic(row)
-    times, flux = ([], [])
-    if time_values is not None and flux_values is not None:
-        times, flux = downsample(time_values, flux_values)
-    phase: list[float] = []
-    folded: list[float] = []
-    passed = False
-    if not processing and not row.get("error") and times:
-        phase, folded = fold_curve(time_values, flux_values, row.get("period"), row.get("t0"))
-        passed = numeric_pass(row, spec)
-    current = {
-        "tic": tic,
-        "file": str(row.get("file") or ""),
-        "status": "processing" if processing else ("error" if row.get("error") else "done"),
-        "error": redact(str(row.get("error")))[:200] if row.get("error") else None,
-        "period": _finite(row.get("period")),
-        "t0": _finite(row.get("t0")),
-        "depth": _finite(row.get("depth")),
-        "snr": _finite(row.get("snr")),
-        "sde": _finite(row.get("sde")),
-        "time": times,
-        "flux": flux,
-        "phase": phase,
-        "folded": folded,
-        "duration": _finite(row.get("duration")),
-        "ra": _finite(row.get("ra")),
-        "dec": _finite(row.get("dec")),
-        "tmag": _finite(row.get("tmag")),
-        "n_transits": _finite(row.get("n_transits")),
-        "odd_even_sigma": _finite(row.get("odd_even_sigma")),
-        "sec_sigma": _finite(row.get("sec_sigma")),
-        "aperture": row.get("_aperture") if isinstance(row.get("_aperture"), list) else None,
-        "pgram": None,
-        "project": spec.get("project") or "exoplanets",
-        "sector": int(spec.get("sector") or 0),
-        "unit_id": int(spec.get("unit_id") or 0),
-        "at": time.time(),
-    }
-    pgram_p = row.get("_pgram_p")
-    pgram_w = row.get("_pgram_w")
-    if isinstance(pgram_p, list) and isinstance(pgram_w, list) and len(pgram_p) == len(pgram_w) and pgram_p:
-        current["pgram"] = [pgram_p, pgram_w]
-    curves = {}
-    if not processing and not row.get("error") and times:
-        try:
-            curves = vet_views(time_values, flux_values, row.get("period"), row.get("t0"), row.get("duration"))
-        except Exception:
-            curves = {}
     conn = _child_conn(str(path))
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            _write_kv(conn, "current", current)
-            if not processing:
-                _bump_hist(conn, current.get("sde"), current.get("snr"))
-            _note_sky(conn, tic, current.get("ra"), current.get("dec"), current.get("tmag"), 2 if passed else 1)
-            if tic is not None and not processing and (phase or current.get("pgram")):
-                _store_view(conn, tic, {**current, **curves})
-            if passed and tic is not None and phase:
+            if processing:
+                if tic is not None:
+                    _write_kv(conn, "processing", {
+                        "tic": int(tic),
+                        "sector": int(spec.get("sector") or 0),
+                        "unit": int(spec.get("unit_id") or 0),
+                        "at": time.time(),
+                    })
+                conn.execute("COMMIT")
+                return
+            times: list[float] = []
+            flux: list[float] = []
+            if time_values is not None and flux_values is not None:
+                times, flux = downsample(time_values, flux_values)
+            phase: list[float] = []
+            folded: list[float] = []
+            passed = False
+            curves: dict = {}
+            if not row.get("error") and times:
+                phase, folded = fold_curve(time_values, flux_values, row.get("period"), row.get("t0"))
+                passed = numeric_pass(row, spec)
+                try:
+                    curves = vet_views(
+                        time_values, flux_values, row.get("period"), row.get("t0"), row.get("duration"),
+                    )
+                except Exception:
+                    curves = {}
+            record = build_record(
+                spec, row, times, flux, phase, folded, curves, passed=passed, at=time.time(),
+            )
+            if record.get("error"):
+                record["error"] = redact(str(record["error"]))[:200]
+            if tic is None:
+                conn.execute("COMMIT")
+                return
+            record = upsert_star(conn, record, _dumps)
+            retain(conn)
+            _write_kv(conn, "display", pointer(record))
+            _bump_hist(conn, record.get("sde"), record.get("snr"))
+            processing_now = _read_kv(conn, "processing")
+            if isinstance(processing_now, dict) and processing_now.get("tic") == int(tic):
+                _write_kv(conn, "processing", None)
+            if passed:
                 conn.execute(
                     """INSERT INTO candidates (
                            project, sector, unit_id, tic, period, depth, snr, sde,
-                           phase_json, flux_json, found_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           phase_json, flux_json, found_at, status
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(project, sector, unit_id, tic) DO UPDATE SET
                            period=excluded.period, depth=excluded.depth, snr=excluded.snr,
                            sde=excluded.sde, phase_json=excluded.phase_json,
-                           flux_json=excluded.flux_json, found_at=excluded.found_at""",
+                           flux_json=excluded.flux_json, found_at=excluded.found_at,
+                           status=excluded.status""",
                     (
-                        current["project"], current["sector"], current["unit_id"], tic,
-                        current["period"], current["depth"], current["snr"], current["sde"],
-                        _dumps(phase), _dumps(folded), current["at"],
+                        record["project"], record["sector"], record["unit"], int(tic),
+                        record["period"], record["depth"], record["snr"], record["sde"],
+                        _dumps(phase), _dumps(folded), record["at"], "NEW",
                     ),
                 )
                 _cap_candidates(conn)
@@ -858,9 +848,31 @@ def publish_star(spec: dict, row: dict, time_values, flux_values, *, processing:
         raise
 
 
-def _read_db(path: Path) -> tuple[dict, list[dict]]:
+def _batch_stage(batch: dict) -> str:
+    stages = {
+        "claimed": "Downloading",
+        "downloading": "Downloading",
+        "downloaded": "Searching",
+        "searching": "Searching",
+        "searched": "Filtering",
+        "filtering": "Filtering",
+        "filtered": "Filtering",
+        "uploading": "Filtering",
+        "uploaded": "Done",
+        "waiting": "Done",
+    }
+    return stages.get(str((batch or {}).get("stage") or "").lower(), "Starting")
+
+
+def _read_db(path: Path) -> dict:
+    from .records import candidate_stats, latest_display, sky_rev, store_stats, table_ready
+
+    empty = {
+        "kv": {}, "candidates": [], "current": None, "stats": {"rows": 0, "new": 0, "known": 0},
+        "store": {}, "sky_rev": "0:0",
+    }
     if not path.is_file():
-        return {}, []
+        return empty
     conn = _connect(path, write=False)
     try:
         kv = {}
@@ -869,30 +881,124 @@ def _read_db(path: Path) -> tuple[dict, list[dict]]:
                 kv[row["key"]] = json.loads(row["value"])
             except json.JSONDecodeError:
                 continue
+        names = {row[1] for row in conn.execute("PRAGMA table_info(candidates)")}
         candidates = []
-        for row in conn.execute(
-            "SELECT * FROM candidates ORDER BY found_at DESC LIMIT 60"
-        ):
-            try:
-                phase = json.loads(row["phase_json"])
-                folded = json.loads(row["flux_json"])
-            except json.JSONDecodeError:
-                phase, folded = [], []
-            candidates.append({
-                "tic": int(row["tic"]),
-                "project": row["project"],
-                "sector": int(row["sector"]),
-                "unit_id": int(row["unit_id"]),
-                "period": row["period"],
-                "depth": row["depth"],
-                "snr": row["snr"],
-                "sde": row["sde"],
-                "phase": phase if isinstance(phase, list) else [],
-                "folded": folded if isinstance(folded, list) else [],
-                "found_at": row["found_at"],
-                "label": CANDIDATE_LABEL,
-            })
-        return kv, candidates
+        if names:
+            status_sql = "status" if "status" in names else "NULL AS status"
+            for row in conn.execute(
+                f"""SELECT project, sector, unit_id, tic, period, depth, snr, sde,
+                           phase_json, flux_json, found_at, {status_sql} AS status
+                    FROM candidates ORDER BY found_at DESC LIMIT ?""",
+                (_CANDIDATE_LIST,),
+            ):
+                try:
+                    phase = json.loads(row["phase_json"])
+                    folded = json.loads(row["flux_json"])
+                except json.JSONDecodeError:
+                    phase, folded = [], []
+                status = row["status"] or "NEW"
+                candidates.append({
+                    "tic": int(row["tic"]),
+                    "project": row["project"],
+                    "sector": int(row["sector"]),
+                    "unit_id": int(row["unit_id"]),
+                    "unit": int(row["unit_id"]),
+                    "period": row["period"],
+                    "depth": row["depth"],
+                    "snr": row["snr"],
+                    "sde": row["sde"],
+                    "phase": phase if isinstance(phase, list) else [],
+                    "folded": folded if isinstance(folded, list) else [],
+                    "found_at": row["found_at"],
+                    "status": status,
+                    "label": CANDIDATE_LABEL,
+                })
+        batch = kv.get("batch") if isinstance(kv.get("batch"), dict) else {}
+        stage = _batch_stage(batch) if batch else "Starting"
+        current = latest_display(conn, stage=stage, now=time.time()) if table_ready(conn) else None
+        return {
+            "kv": kv,
+            "candidates": candidates,
+            "current": current,
+            "stats": candidate_stats(conn) if names else {"rows": 0, "new": 0, "known": 0},
+            "store": store_stats(conn),
+            "sky_rev": sky_rev(conn),
+        }
+    finally:
+        conn.close()
+
+
+def load_star(cache: Path, tic: int, sector: int | None = None, unit: int | None = None) -> dict:
+    """One star for ``/api/star``. Missing stars say so instead of inventing curves."""
+    from .records import fetch_star, missing_star
+
+    path = Path(cache) / DB_NAME
+    if not path.is_file():
+        return missing_star(tic)
+    try:
+        conn = _connect(path, write=False)
+    except sqlite3.Error:
+        return missing_star(tic)
+    try:
+        found = fetch_star(conn, tic, sector, unit)
+    finally:
+        conn.close()
+    return found if found is not None else missing_star(tic)
+
+
+def star_store_stats(cache: Path) -> dict:
+    from .records import RECORD_BUDGET_BYTES, SUMMARY_CAP, store_stats
+
+    blank = {
+        "stars": 0, "full": 0, "summaries": 0, "candidates": 0,
+        "bytes": 0, "limit_bytes": RECORD_BUDGET_BYTES, "summary_limit": SUMMARY_CAP,
+    }
+    path = Path(cache) / DB_NAME
+    if not path.is_file():
+        return blank
+    try:
+        conn = _connect(path, write=False)
+    except sqlite3.Error:
+        return blank
+    try:
+        return store_stats(conn)
+    finally:
+        conn.close()
+
+
+def sky_for(cache: Path, sector: int | None) -> dict:
+    from .records import sky_payload
+
+    path = Path(cache) / DB_NAME
+    if not path.is_file():
+        return {"scope": "all" if sector is None else "sector", "sector": sector, "points": [], "bounds": None, "count": 0}
+    try:
+        conn = _connect(path, write=False)
+    except sqlite3.Error:
+        return {"scope": "all" if sector is None else "sector", "sector": sector, "points": [], "bounds": None, "count": 0}
+    try:
+        return sky_payload(conn, sector)
+    finally:
+        conn.close()
+
+
+def delete_unit_stars(cache: Path, sector: int, unit: int) -> int:
+    """Drop this unit's non-candidate star rows. Candidates stay."""
+    from .records import clear_unit_rows
+
+    path = Path(cache) / DB_NAME
+    if not path.is_file():
+        return 0
+    conn = _connect(path, write=True)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            removed = clear_unit_rows(conn, sector, unit)
+            conn.execute("COMMIT")
+            return removed
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     finally:
         conn.close()
 
@@ -958,13 +1064,18 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
     cache = Path(cache)
     fallback = fallback or {}
     try:
-        kv, candidates = _read_db(cache / DB_NAME)
+        loaded = _read_db(cache / DB_NAME)
     except sqlite3.Error:
-        kv, candidates = {}, []
+        loaded = {}
+    kv = loaded.get("kv") if isinstance(loaded.get("kv"), dict) else {}
+    candidates = loaded.get("candidates") if isinstance(loaded.get("candidates"), list) else []
     worker = kv.get("worker") if isinstance(kv.get("worker"), dict) else {}
     batch = kv.get("batch") if isinstance(kv.get("batch"), dict) else None
     nxt = kv.get("next") if isinstance(kv.get("next"), dict) else None
-    current = kv.get("current") if isinstance(kv.get("current"), dict) else None
+    current = loaded.get("current") if isinstance(loaded.get("current"), dict) else None
+    processing = kv.get("processing") if isinstance(kv.get("processing"), dict) else None
+    from .records import pointer
+    display = pointer(current)
     life = dict(_EMPTY_LIFE)
     if isinstance(kv.get("lifetime"), dict):
         for key in _EMPTY_LIFE:
@@ -992,10 +1103,16 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         "batch": batch,
         "next": nxt,
         "current_star": current,
+        "display": display,
+        "processing": processing,
+        "candidate_stats": loaded.get("stats") if isinstance(loaded.get("stats"), dict) else {"rows": 0, "new": 0, "known": 0},
+        "records": loaded.get("store") if isinstance(loaded.get("store"), dict) else {},
+        "sky_rev": loaded.get("sky_rev") or "0:0",
         "candidates": candidates,
         "lifetime": life,
         "connection": {
             "ok": connection.get("ok"),
+            "kind": connection.get("kind"),
             "detail": redact(str(connection.get("detail") or ""))[:160],
             "at": connection.get("at"),
             "url": public_coordinator_url(
@@ -1020,8 +1137,8 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
         "log_tail": log_tail,
         "log_size": log_size,
         "hist": kv.get("hist") if isinstance(kv.get("hist"), dict) else None,
-        "sky": kv.get("sky") if isinstance(kv.get("sky"), list) else [],
-        "views": kv.get("views") if isinstance(kv.get("views"), dict) else {},
+        "sky": [],
+        "views": {},
     }
     return scrub(payload)
 

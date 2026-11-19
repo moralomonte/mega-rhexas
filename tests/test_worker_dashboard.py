@@ -125,14 +125,21 @@ def test_publish_star_writes_a_curve_and_an_unverified_candidate(tmp_path):
     time_values, flux = _curve()
     publish_star(spec, _passing_row(), time_values, flux, processing=True)
     mid = snapshot(tmp_path)
-    assert mid["current_star"]["status"] == "processing"
-    assert mid["current_star"]["time"]
+    assert mid["current_star"] is None
+    assert mid["processing"]["tic"] == 42
     assert mid["candidates"] == []
     publish_star(spec, _passing_row(), time_values, flux, processing=False)
+    publish_star(spec, _passing_row(tic=99), time_values, flux, processing=True)
+    held = snapshot(tmp_path)
+    assert held["current_star"]["tic"] == 42
+    assert held["current_star"]["period"] == pytest.approx(2.5)
+    assert held["current_star"]["flux"]
+    assert held["processing"]["tic"] == 99
     publish_star(spec, _passing_row(tic=99, snr=1), time_values, flux, processing=False)
     snap = snapshot(tmp_path)
     assert snap["current_star"]["tic"] == 99
     assert snap["current_star"]["flux"]
+    assert snap["processing"] is None
     assert [row["tic"] for row in snap["candidates"]] == [42]
     hit = snap["candidates"][0]
     assert hit["label"] == CANDIDATE_LABEL
@@ -436,6 +443,11 @@ def test_page_reuses_the_mission_control_screen():
         assert marker in text
         assert marker in original
     assert ">Slow<" in text and ">Normal<" in text and ">Realtime<" in text
+    assert "/api/star?tic=" in text
+    assert "addEventListener('star'" in text
+    assert 'id="proc_now"' in text
+    assert "not available" in text
+    assert "addEventListener('lc'" not in text
     assert 'id="sectors"' in text and 'href="/sectors"' in text
     assert "localStorage.getItem('rhexas.visual')" in text
     assert "fetch('/api/mode'" not in text

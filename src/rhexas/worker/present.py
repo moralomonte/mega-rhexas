@@ -95,12 +95,34 @@ def mission_state(snap: dict) -> dict:
     cap = _num(res.get("max_cache_gb"))
     free_gb = round(max(0.0, cap - data_gb), 2) if cap is not None else None
     candidates = snap.get("candidates") if isinstance(snap.get("candidates"), list) else []
+    stats = snap.get("candidate_stats") if isinstance(snap.get("candidate_stats"), dict) else {}
+    if "new" in stats:
+        new_count = int(stats.get("new") or 0)
+        known_count = int(stats.get("known") or 0)
+    else:
+        new_count = 0
+        known_count = 0
+        for row in candidates:
+            if not isinstance(row, dict):
+                continue
+            status = str(row.get("status") or "NEW")
+            if status in ("known_TOI", "known_confirmed"):
+                known_count += 1
+            elif status == "NEW":
+                new_count += 1
     alive = bool(res.get("worker_alive"))
     ok = conn.get("ok")
-    if ok is True:
-        link = "coordinator connected"
-    elif ok is False:
+    kind = str(conn.get("kind") or "")
+    detail = str(conn.get("detail") or "")
+    low = detail.lower()
+    if kind == "unreachable" or low.startswith("unreachable") or (ok is False and kind in ("", "unknown")):
         link = "coordinator unreachable"
+    elif kind == "network" or low.startswith("network"):
+        link = "coordinator network trouble"
+    elif kind == "rejected" or low.startswith("rejected"):
+        link = "coordinator rejected a request"
+    elif ok is True or kind in ("connected", "lease_ended") or low.startswith("lease ended"):
+        link = "coordinator connected"
     else:
         link = "coordinator not checked yet"
     bits = [f"worker running (pid {int(res.get('pid') or 0)})" if alive else "worker process not detected", link]
@@ -133,7 +155,7 @@ def mission_state(snap: dict) -> dict:
         "searched": searched,
         "total": total,
         "errors": 0,
-        "passed": len(candidates),
+        "passed": new_count,
         "rate": rate,
         "dl_rate": dl_rate,
         "eta_min": None if eta is None else int(round(eta)),
@@ -170,35 +192,30 @@ def mission_state(snap: dict) -> dict:
             "max_cache_gb": cap,
             "cpu": _num(res.get("cpu_percent")),
             "ok": ok,
+            "kind": kind,
+            "conn_label": link,
             "url": str(conn.get("url") or ""),
             "detail": str(conn.get("detail") or ""),
         },
+        "display": snap.get("display") if isinstance(snap.get("display"), dict) else None,
+        "processing": snap.get("processing") if isinstance(snap.get("processing"), dict) else None,
+        "sky_rev": snap.get("sky_rev") or "0:0",
         "new_counts": {
-            "total": len(candidates),
-            "promising": int(life.get("contributions_verified") or 0),
+            # total is candidates, unverified: the worker's own NEW rows, not a display cap.
+            "total": new_count,
+            "verified": int(life.get("contributions_verified") or 0),
+            "pending": int(life.get("contributions_pending") or 0),
+            "submitted": int(life.get("batches_submitted") or 0),
+            "known_ctoi": known_count,
+            "promising": new_count,
             "unchecked": int(life.get("contributions_pending") or 0),
             "fp": int(life.get("batches_submitted") or 0),
-            "known_ctoi": 0,
         },
     }
 
 
-def _synth_pgram(period, sde) -> list:
-    center = period if period and period > 0 else 3.0
-    height = sde if sde and sde > 0 else 1.0
-    n = 160
-    lo, hi = math.log(0.5), math.log(13.0)
-    periods = []
-    power = []
-    for i in range(n):
-        p = math.exp(lo + (hi - lo) * i / (n - 1))
-        z = math.log(p / center) / 0.06
-        periods.append(round(p, 5))
-        power.append(round(height * math.exp(-0.5 * z * z) + 0.08 * height, 3))
-    return [periods, power]
-
-
-def _pgram(star: dict) -> list:
+def _pgram(star: dict) -> list | None:
+    """The periodogram the search stored. Missing stays missing."""
     pgram = star.get("pgram")
     if (
         isinstance(pgram, list)
@@ -209,7 +226,7 @@ def _pgram(star: dict) -> list:
         and len(pgram[0]) == len(pgram[1])
     ):
         return pgram
-    return _synth_pgram(_num(star.get("period")), _num(star.get("sde")))
+    return None
 
 
 def _fold(star: dict) -> list | None:
@@ -223,43 +240,48 @@ def _fold(star: dict) -> list | None:
 
 
 def mission_lc(star: dict | None, *, passed: bool | None = None) -> dict | None:
-    """One light-curve payload. The page loops the scan animation on its own."""
+    """One light-curve payload. Missing curves stay null. No stand-in series."""
     if not isinstance(star, dict) or star.get("tic") is None:
         return None
     period = _num(star.get("period"))
     depth = _num(star.get("depth"))
-    duration = _num(star.get("duration")) or 0.1
+    duration = _num(star.get("duration"))
     sde = _num(star.get("sde"))
     snr = _num(star.get("snr"))
     raw_t = star.get("time") if isinstance(star.get("time"), list) else []
     raw_y = star.get("flux") if isinstance(star.get("flux"), list) else []
-    if len(raw_t) != len(raw_y) or len(raw_t) < 2:
-        fold = _fold(star)
-        raw_t = fold[0] if fold else [0.0, 1.0]
-        raw_y = fold[1] if fold else [1.0, 1.0]
+    raw = [raw_t, raw_y] if len(raw_t) == len(raw_y) and len(raw_t) >= 2 else None
+    if raw is None and isinstance(star.get("raw"), list):
+        raw = star.get("raw")
     status = star.get("status") or ""
-    is_hit = bool(passed) or (status == "done" and period is not None and not star.get("error"))
+    is_hit = bool(star.get("candidate")) if passed is None else bool(passed)
+    if passed is None and status == "done" and star.get("candidate") is None and period is not None and not star.get("error"):
+        is_hit = True
     stamp = star.get("at")
     try:
         clock = time.strftime("%H:%M:%S", time.localtime(float(stamp)))
     except (TypeError, ValueError, OSError):
-        clock = time.strftime("%H:%M:%S")
+        clock = None
     return {
         "tic": int(star["tic"]),
+        "version": star.get("version"),
+        "sector": star.get("sector"),
+        "unit": star.get("unit") if star.get("unit") is not None else star.get("unit_id"),
         "ra": _num(star.get("ra")),
         "dec": _num(star.get("dec")),
         "tmag": _num(star.get("tmag")),
         "period": period,
         "duration": duration,
-        "depth": depth if depth is not None else 0.0,
-        "sde": sde if sde is not None else 0.0,
-        "snr": snr if snr is not None else 0.0,
+        "depth": depth,
+        "sde": sde,
+        "snr": snr,
         "n_transits": star.get("n_transits"),
-        "status": CANDIDATE_LABEL if is_hit else (status or "searching"),
+        "status": CANDIDATE_LABEL if is_hit else (status or None),
         "passed": bool(is_hit),
-        "raw": [raw_t, raw_y],
+        "raw": raw,
         "pgram": _pgram(star),
-        "fold": _fold(star),
+        "fold": _fold(star) or star.get("fold"),
+        "missing": list(star.get("missing") or []),
         "t": clock,
     }
 
@@ -277,18 +299,19 @@ def mission_cands(snap: dict) -> list:
         if not isinstance(row, dict) or row.get("tic") is None:
             continue
         view = _view(snap, row["tic"]) or {}
+        status = str(row.get("status") or "NEW")
         rows.append({
             "tic": int(row["tic"]),
-            "period": _num(row.get("period")) or 0.0,
-            "depth": _num(row.get("depth")) or 0.0,
-            "duration": _num(view.get("duration")) or 0.1,
-            "snr": _num(row.get("snr")) or 0.0,
-            "sde": _num(row.get("sde")) or 0.0,
-            "n_transits": view.get("n_transits"),
-            "status": "NEW",
+            "period": _num(row.get("period")),
+            "depth": _num(row.get("depth")),
+            "duration": _num(view.get("duration")) or _num(row.get("duration")),
+            "snr": _num(row.get("snr")),
+            "sde": _num(row.get("sde")),
+            "n_transits": view.get("n_transits") if view.get("n_transits") is not None else row.get("n_transits"),
+            "status": status,
             "score": _score(row),
             "prelim": True,
-            "label": CANDIDATE_LABEL,
+            "label": CANDIDATE_LABEL if status == "NEW" else status,
         })
     rows.sort(key=lambda item: -item["score"])
     return rows
@@ -380,67 +403,71 @@ def fresh_logs(previous: list, lines: list) -> list:
 
 
 def _view(snap: dict, tic) -> dict | None:
-    views = snap.get("views") if isinstance(snap.get("views"), dict) else {}
-    view = views.get(str(tic))
-    if isinstance(view, dict):
-        return view
     star = snap.get("current_star") if isinstance(snap.get("current_star"), dict) else None
-    if isinstance(star, dict) and star.get("tic") == tic:
+    try:
+        wanted = int(tic)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(star, dict) and star.get("tic") is not None and int(star.get("tic")) == wanted:
         return star
     return None
 
 
 def cycle_star(snap: dict, now: float | None = None) -> dict | None:
-    """While the worker is idle, walk the candidate list the way the sector page walks its hits."""
-    batch = snap.get("batch") if isinstance(snap.get("batch"), dict) else {}
-    stage = _stage(batch)
-    candidates = [row for row in (snap.get("candidates") or []) if isinstance(row, dict) and row.get("tic") is not None]
-    if stage == "Done" and candidates:
-        idx = int((now if now is not None else time.time()) // 8) % len(candidates)
-        view = _view(snap, candidates[idx]["tic"]) or candidates[idx]
-        return view
+    """The star on screen: last finished, or the candidate the Done state is walking.
+
+    ``snapshot`` already picks that row from the stars table. ``now`` is accepted
+    so callers can ask again; the choice itself is made when the snapshot is read.
+    """
+    del now
     star = snap.get("current_star")
     return star if isinstance(star, dict) else None
 
 
 def detail_payload(snap: dict, tic: int) -> dict:
-    """Modal and vetting-chart payload. Missing pixel data is left out on purpose."""
+    """Modal payload from a stored record. Missing numbers stay null."""
     view = _view(snap, tic)
     if not isinstance(view, dict):
-        return {"error": "no stored curves for this star yet"}
-    period = _num(view.get("period")) or 0.0
-    depth = _num(view.get("depth")) or 0.0
-    duration = _num(view.get("duration")) or 0.1
+        return {"tic": int(tic), "available": False, "missing": ["record"], "error": "not available"}
     raw_t = view.get("time") if isinstance(view.get("time"), list) else []
     raw_y = view.get("flux") if isinstance(view.get("flux"), list) else []
-    fold = _fold(view)
+    raw = [raw_t, raw_y] if len(raw_t) == len(raw_y) and len(raw_t) >= 2 else None
+    fold = _fold(view) or view.get("fold")
+    is_hit = bool(view.get("candidate")) or str(view.get("verdict") or "") == "NEW"
+    missing = list(view.get("missing") or [])
     return {
         "tic": int(tic),
-        "period": period,
-        "t0": _num(view.get("t0")) or 0.0,
-        "duration": duration,
-        "depth": depth,
-        "snr": _num(view.get("snr")) or 0.0,
-        "sde": _num(view.get("sde")) or 0.0,
-        "n_transits": view.get("n_transits") or 0,
-        "odd_even_sigma": _num(view.get("odd_even_sigma")) or 0.0,
-        "sec_sigma": _num(view.get("sec_sigma")) or 0.0,
+        "version": view.get("version"),
+        "available": True,
+        "unverified": True,
+        "period": _num(view.get("period")),
+        "t0": _num(view.get("t0")),
+        "duration": _num(view.get("duration")),
+        "depth": _num(view.get("depth")),
+        "snr": _num(view.get("snr")),
+        "sde": _num(view.get("sde")),
+        "n_transits": view.get("n_transits"),
+        "odd_even_sigma": _num(view.get("odd_even_sigma")),
+        "sec_sigma": _num(view.get("sec_sigma")),
         "star": {
             "ra": _num(view.get("ra")),
             "dec": _num(view.get("dec")),
             "tmag": _num(view.get("tmag")),
         },
-        "raw": [raw_t, raw_y] if len(raw_t) == len(raw_y) and raw_t else [[0, 1], [1, 1]],
-        "flat": [raw_t, raw_y] if len(raw_t) == len(raw_y) and raw_t else [[0, 1], [1, 1]],
+        "raw": raw,
+        "flat": raw,
         "transits": [],
         "pgram": _pgram(view),
         "fold": fold,
         "odd": view.get("odd"),
         "even": view.get("even"),
         "secondary": view.get("secondary"),
-        "centroid": None,
+        "centroid": view.get("centroid"),
+        "centroid_sigma": view.get("centroid_sigma"),
+        "aperture": view.get("aperture"),
         "img": None,
-        "vet": {"verdict": CANDIDATE_LABEL},
+        "missing": missing,
+        "vet": {"verdict": CANDIDATE_LABEL if is_hit else (view.get("verdict") or None)},
     }
 
 
