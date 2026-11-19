@@ -1231,6 +1231,7 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
         stars = read_stars(ucfg.sector_results, tics)
         candidates = read_candidates(ucfg.sector_results)
         _live_call(live, "record_candidates", assignment, candidates)
+        _notify_vetting(cache, cfg)
         _live_call(live, "update_batch", stage="uploading", progress_kind="stars", eta_min=0, per_s=None)
         _remember(cache, assignment, stage="uploading")
         if progress is not None:
@@ -1257,6 +1258,20 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="uploaded", active=False, progress_kind="stars",
             stars_done=n_tics, stars_total=n_tics, eta_min=0, per_s=None,
         )
+
+
+def _notify_vetting(cache: Path, cfg: Config) -> None:
+    """Wake the vetting thread, if this computer opted in.
+
+    This returns immediately. The checks run on ``rhexas-vetting``, not here.
+    """
+    try:
+        if not cfg.vetting.enabled:
+            return
+        from .vetting.runner import notify
+        notify(cache)
+    except Exception:
+        return
 
 
 def _open_local(cfg: Config, cache: Path):
@@ -1321,6 +1336,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         raise
     beat_stop = None
     prefetcher = None
+    vetting_runner = None
     try:
         try:
             apply_priority(cfg.worker.priority)
@@ -1333,6 +1349,14 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             f"threads={cfg.worker.threads}  cache={cache}  prefetch={depth}",
             flush=True,
         )
+        try:
+            from .vetting.runner import ensure_runner
+            vetting_runner = ensure_runner(cache, cfg.vetting)
+            if vetting_runner is not None:
+                print("vetting on: one candidate at a time, local only", flush=True)
+        except Exception as exc:
+            vetting_runner = None
+            print(f"vetting did not start ({exc}); the search continues", flush=True)
         pace_memory: dict = {}
         current_pace(cfg, live, pace_memory)
         attempt = 0
@@ -1475,6 +1499,8 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         release_queued(client, cache)
         return 0
     finally:
+        if vetting_runner is not None:
+            vetting_runner.stop()
         if beat_stop is not None:
             beat_stop.set()
         if prefetcher is not None:

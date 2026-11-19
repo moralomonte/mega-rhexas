@@ -256,8 +256,10 @@ def unit_disk_bytes(cache: Path, unit: dict) -> int:
 
 
 def disk_used_bytes(cache: Path) -> int:
+    """Sector light curves plus the local vetting cache (catalog files and reports)."""
     from .cache import directory_bytes
-    return directory_bytes(Path(cache) / "data")
+    cache = Path(cache)
+    return directory_bytes(cache / "data") + directory_bytes(cache / "vetting")
 
 
 def delete_unit_files(cache: Path, unit: dict) -> None:
@@ -375,6 +377,8 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
             "stars": 0, "full": 0, "summaries": 0, "candidates": 0,
             "bytes": 0, "limit_bytes": 0, "summary_limit": 0,
         }
+    from .cache import directory_bytes
+    vetting_bytes = directory_bytes(Path(cache) / "vetting")
     return {
         "units": units,
         "disk_bytes": used,
@@ -384,4 +388,5 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
         "queue_max": int(queue_max),
         "scanning_id": scanning_assignment_id(cache),
         "records": records,
+        "vetting_bytes": vetting_bytes,
     }

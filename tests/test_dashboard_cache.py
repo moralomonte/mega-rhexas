@@ -30,7 +30,7 @@ def _get(port, path):
 def test_dashboard_pages_and_apis_are_not_stored(tmp_path):
     httpd, port, thread = _serve(tmp_path)
     try:
-        for path in ("/", "/sectors", "/api/status", "/api/star?tic=1", "/api/sky?scope=all", "/img/triskelion.svg", "/events?once=1"):
+        for path in ("/", "/sectors", "/vetting", "/api/status", "/api/vetting", "/api/star?tic=1", "/api/sky?scope=all", "/img/triskelion.svg", "/events?once=1"):
             response, body = _get(port, path)
             cache = response.headers.get("Cache-Control", "")
             assert "no-store" in cache.lower(), path
@@ -44,6 +44,14 @@ def test_dashboard_pages_and_apis_are_not_stored(tmp_path):
         response, sectors = _get(port, "/sectors")
         assert b"__APP_VERSION__" not in sectors
         assert f"/?v={__version__}".encode() in sectors
+        response, vetting = _get(port, "/vetting")
+        assert b"__APP_VERSION__" not in vetting
+        assert f"/img/triskelion.svg?v={__version__}".encode() in vetting
+        assert f"/?v={__version__}".encode() in vetting
+        assert f"/sectors?v={__version__}".encode() in vetting
+        assert b'class="cv h280"' in vetting
+        assert b"PAGE_VERSION" in vetting
+        assert b"parentElement.classList.contains('cv')" in vetting
         _response, status_body = _get(port, "/api/status")
         status = json.loads(status_body)
         assert status["app_version"] == __version__

@@ -106,6 +106,22 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class VettingConfig:
+    """Local advisory checks for candidates on this computer.
+
+    Off unless the maintainer turns it on. Nothing in this block is sent to
+    the coordinator, and a disabled setting performs no catalog lookups.
+    """
+
+    enabled: bool = False
+    # Cone radius for SIMBAD and VSX. Gaia neighbours use two TESS pixels.
+    radius_arcsec: float = 15.0
+    timeout_s: float = 20.0
+    # Per-TIC catalog cache under the worker cache. The daily TOI files sit beside it.
+    cache_max_mb: float = 200.0
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     """Friends-beta worker. Local search commands ignore this block.
 
@@ -161,6 +177,7 @@ class Config:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     multisector: MultisectorConfig = field(default_factory=MultisectorConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
+    vetting: VettingConfig = field(default_factory=VettingConfig)
 
     @property
     def sector_data(self) -> Path:
@@ -232,6 +249,7 @@ _TOP_KEYS = {
     "dashboard": {f.name for f in fields(DashboardConfig)},
     "multisector": {f.name for f in fields(MultisectorConfig)},
     "worker": {f.name for f in fields(WorkerConfig)},
+    "vetting": {f.name for f in fields(VettingConfig)},
 }
 
 _ENV_KEYS = {
@@ -355,6 +373,7 @@ def _apply_toml(cfg: Config, path: Path) -> Config:
         dashboard=dashboard,
         multisector=_fill_dc(MultisectorConfig, data.get("multisector") or {}, _MULTI_CAST),
         worker=_fill_dc(WorkerConfig, data.get("worker") or {}, _WORKER_CAST),
+        vetting=_fill_dc(VettingConfig, data.get("vetting") or {}, _VETTING_CAST),
     )
 
 
@@ -457,6 +476,12 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("worker.prefetch must be 0 or 1")
     if cfg.worker.queue_max < 0:
         raise ConfigError("worker.queue_max must be >= 0")
+    if not (5 <= cfg.vetting.radius_arcsec <= 60):
+        raise ConfigError("vetting.radius_arcsec must be between 5 and 60")
+    if not (2 <= cfg.vetting.timeout_s <= 90):
+        raise ConfigError("vetting.timeout_s must be between 2 and 90")
+    if cfg.vetting.cache_max_mb <= 0:
+        raise ConfigError("vetting.cache_max_mb must be > 0")
 
 
 def read_toml(path: Path) -> dict:
@@ -509,6 +534,12 @@ def _as_float(value) -> float:
 
 def _as_str(value) -> str:
     return str(value)
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ConfigError(f"expected true or false, got {value!r}")
 
 
 _DOWNLOAD_CAST = {name: _as_int for name in (
@@ -578,6 +609,12 @@ _WORKER_CAST = {
     "cache_dir": _as_str,
     "prefetch": _as_int,
     "queue_max": _as_int,
+}
+_VETTING_CAST = {
+    "enabled": _as_bool,
+    "radius_arcsec": _as_float,
+    "timeout_s": _as_float,
+    "cache_max_mb": _as_float,
 }
 _MULTI_CAST = {
     "period_min_days": _as_float,

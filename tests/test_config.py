@@ -63,6 +63,8 @@ def test_committed_toml_matches_builtin_defaults():
     assert cfg.dashboard == plain.dashboard
     assert cfg.multisector == plain.multisector
     assert cfg.worker == plain.worker
+    assert cfg.vetting == plain.vetting
+    assert cfg.vetting.enabled is False
     assert cfg.worker.procs == 2
     assert cfg.worker.max_cache_gb == 20.0
     assert cfg.worker.coordinator_url == "https://api.megarhexas.com"

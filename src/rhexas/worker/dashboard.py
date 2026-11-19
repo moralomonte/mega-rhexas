@@ -39,6 +39,7 @@ _FILES = {
     "/img/favicon-192.png": ("img/favicon.svg", "image/svg+xml"),
     "/favicon.ico": ("img/favicon.svg", "image/svg+xml"),
     "/sectors": ("sectors.html", "text/html; charset=utf-8"),
+    "/vetting": ("vetting.html", "text/html; charset=utf-8"),
 }
 
 
@@ -63,6 +64,7 @@ def fallback_resources(cfg) -> dict:
         "queue_max": worker.queue_max,
         "min_free_gb": worker.min_free_gb,
         "coordinator_url": public_coordinator_url(worker.coordinator_url),
+        "vetting_enabled": bool(getattr(getattr(cfg, "vetting", None), "enabled", False)),
     }
 
 
@@ -145,6 +147,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
     cache = Path(cache)
     fallback = dict(fallback or {})
     services = services or DashboardHooks()
+    vetting_on = bool(fallback.get("vetting_enabled"))
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -198,6 +201,9 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return
             if path == "/api/setup/device/poll":
                 self._post_device_poll()
+                return
+            if path == "/api/vetting/rerun":
+                self._post_vetting_rerun()
                 return
             self._drain()
             self._try_send(405, b"read only", "text/plain; charset=utf-8")
@@ -359,6 +365,16 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
+            if path == "/api/vetting":
+                from .vetting.runner import status_payload
+                self._json(200, status_payload(cache, vetting_on))
+                return
+            if path == "/api/vetting/detail":
+                self._vetting_detail(parse_qs(parts.query))
+                return
+            if path == "/api/vetting/export":
+                self._vetting_export(parse_qs(parts.query))
+                return
             if path in ("/api/detail", "/api/star"):
                 self._star(parse_qs(parts.query), legacy=path == "/api/detail")
                 return
@@ -396,6 +412,43 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return int(raw)
             except (TypeError, ValueError):
                 return None
+
+        def _vetting_ids(self, source: dict):
+            tic = source.get("tic") if not isinstance(source.get("tic"), list) else source.get("tic")
+            sector = source.get("sector") if not isinstance(source.get("sector"), list) else source.get("sector")
+            if isinstance(tic, list):
+                tic = tic[0] if tic else None
+            if isinstance(sector, list):
+                sector = sector[0] if sector else None
+            try:
+                return int(tic), int(sector)
+            except (TypeError, ValueError):
+                return None, None
+
+        def _vetting_detail(self, query: dict) -> None:
+            from .vetting.runner import detail_payload
+            tic, sector = self._query_int(query, "tic"), self._query_int(query, "sector")
+            if tic is None or sector is None:
+                self._json(400, {"available": False, "error": "tic and sector are required"})
+                return
+            self._json(200, detail_payload(cache, tic, sector, vetting_on))
+
+        def _vetting_export(self, query: dict) -> None:
+            from .vetting.runner import export_report
+            tic, sector = self._query_int(query, "tic"), self._query_int(query, "sector")
+            if tic is None or sector is None:
+                self._json(400, {"ok": False, "error": "tic and sector are required"})
+                return
+            self._json(200, export_report(cache, tic, sector, vetting_on))
+
+        def _post_vetting_rerun(self) -> None:
+            from .vetting.runner import request_rerun
+            data = self._read_json(400) or {}
+            tic, sector = self._vetting_ids(data)
+            if tic is None or sector is None:
+                self._json(400, {"ok": False, "error": "tic and sector are required"})
+                return
+            self._json(200, request_rerun(cache, tic, sector, vetting_on))
 
         def _star(self, query: dict, *, legacy: bool) -> None:
             tic_i = self._query_int(query, "tic")
@@ -671,6 +724,11 @@ def run_attached(cfg, args) -> int:
         environ=env,
     )
     cfg = replace(cfg, worker=replace(cfg.worker, token="", token_file=""))
+    try:
+        from .vetting.runner import ensure_runner
+        ensure_runner(cache_dir(cfg), cfg.vetting)
+    except Exception as exc:
+        print(f"vetting did not start ({exc})", flush=True)
     return serve(
         cache_dir(cfg),
         host=getattr(args, "dashboard_host", None),

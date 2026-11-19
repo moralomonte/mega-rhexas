@@ -1,0 +1,309 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/img/triskelion.svg?v=__APP_VERSION__"><meta name="rhexas-version" content="__APP_VERSION__"><title>Mega Rhexas · Vetting</title>
+<style>
+:root{--bg:#05060f;--glass:rgba(255,255,255,.045);--bd:rgba(255,255,255,.09);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--ok:#34d399;--warn:#fbbf24;--err:#f87171}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+body{background:radial-gradient(1200px 500px at 80% -10%,#1a1040,transparent 55%),#05060f}
+.wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
+a.back,a.nav{color:var(--tx);text-decoration:none;border:1px solid var(--bd);background:var(--glass);border-radius:999px;padding:6px 14px;font-weight:600}
+.card{margin-top:16px;background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:20px;padding:16px 18px}
+.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.btn{background:var(--glass);border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.btn.on{background:#7c5cff33;border-color:#7c5cff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.pick{cursor:pointer}tr.pick:hover{background:rgba(255,255,255,.04)}tr.on{background:rgba(124,92,255,.12)}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--bd)}
+.badge.pass{color:#6ee7b7;border-color:#34d39977;background:#34d39922}
+.badge.warn{color:#fcd34d;border-color:#fbbf2477;background:#fbbf2422}
+.badge.fail{color:#fca5a5;border-color:#f8717166;background:#f8717122}
+.badge.unavailable,.badge.pending,.badge.running{color:var(--mut)}
+.v-known{color:#67e8f9}.v-fp{color:#fca5a5}.v-review{color:#fcd34d}.v-pass{color:#6ee7b7}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.check{border:1px solid var(--bd);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.03)}
+.check b{display:block;margin-bottom:4px}
+.check .why{color:var(--tx);font-size:13px}
+.nums{color:var(--mut);font-size:11px;margin-top:6px;word-break:break-word}
+.links{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.links a{color:#22d3ee}
+canvas{width:100%;display:block}
+.cv{position:relative;width:100%;overflow:hidden;flex:none}
+.cv>canvas{position:absolute;inset:0;width:100%;height:100%;display:block;margin:0}
+.h280{height:280px;min-height:280px;max-height:280px}
+.legend{display:flex;gap:12px;font-size:11px;color:var(--mut);flex-wrap:wrap;margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+.empty{color:var(--mut);padding:28px 8px;text-align:center}
+.err{color:var(--err);min-height:1.2em}
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@media(max-width:800px){.wrap{padding:10px}.checks{grid-template-columns:1fr}table{display:block;overflow:auto}}
+</style></head><body>
+<div class="wrap">
+<header>
+<a class="back" href="/?v=__APP_VERSION__">← Dashboard</a>
+<a class="nav" href="/sectors?v=__APP_VERSION__">Sectors</a>
+<h1>Vetting <small>Local advisory checks · a person still has to review every row</small></h1>
+</header>
+<section class="card" id="off" hidden>
+<p class="note" id="off-note"></p>
+</section>
+<section class="card" id="on">
+<p class="note" id="disc"></p>
+<div class="filters" id="filters"></div>
+<p class="note" id="meta"></p>
+<p class="err" id="msg"></p>
+<table>
+<thead><tr>
+<th>TIC</th><th>Sector</th><th>Period</th><th>Depth</th><th>SNR</th><th>Verdict</th><th>Vetted</th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</section>
+<section class="card" id="detail" hidden>
+<div class="tools">
+<h2 id="dtitle" style="margin:0;font-size:18px">Candidate</h2>
+<span class="badge" id="dverdict"></span>
+<button class="btn" id="rerun" type="button">Re-run vetting</button>
+<button class="btn" id="export" type="button">Export report</button>
+</div>
+<p class="note" id="dnote"></p>
+<div class="legend"><span><i style="background:#9aa3c7"></i>all</span><span><i style="background:#f472b6"></i>odd</span><span><i style="background:#34d399"></i>even</span><span><i style="background:#ffd16655;border:1px solid #ffd166"></i>secondary window</span></div>
+<div class="cv h280"><canvas id="plot"></canvas></div>
+<div class="checks" id="checks"></div>
+<div class="links" id="links"></div>
+</section>
+</div>
+<script>
+const $=id=>document.getElementById(id), DPR=Math.min(2,devicePixelRatio||1);
+const PAGE_VERSION="__APP_VERSION__";
+function checkVersion(v){if(!v||v===PAGE_VERSION)return;try{if(sessionStorage.getItem('rhexas.reloadFor')===v)return;sessionStorage.setItem('rhexas.reloadFor',v)}catch(e){}location.reload()}
+function setup(cv){
+  const box=cv.parentElement&&cv.parentElement.classList.contains('cv')?cv.parentElement:null;
+  let w=0,h=0;
+  if(box){w=box.clientWidth;h=box.clientHeight}
+  else{if(!cv.dataset.cssH){const a=+cv.getAttribute('height');cv.dataset.cssH=String(a>2?a:150)}h=+cv.dataset.cssH;cv.style.width='100%';cv.style.height=h+'px';w=cv.clientWidth}
+  const x=cv.getContext('2d');
+  if(!(w>=2)||!(h>=2))return [x,w||0,h||0];
+  const bw=Math.max(1,Math.round(w*DPR)),bh=Math.max(1,Math.round(h*DPR));
+  if(cv.width!==bw)cv.width=bw;
+  if(cv.height!==bh)cv.height=bh;
+  x.setTransform(DPR,0,0,DPR,0,0);
+  x.clearRect(0,0,w,h);
+  return [x,w,h];
+}
+function esc(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
+function safeUrl(value){try{const url=new URL(value);if(url.protocol==='https:'||url.protocol==='http:')return url.href}catch(e){}return ''}
+const VERDICTS=['Known object','Likely false positive','Needs review','Passed automated checks'];
+let FILTER='all', ROWS=[], OPEN=null, ENABLED=false;
+function badge(status){
+  const name=String(status||'pending');
+  const cls=['pass','warn','fail','unavailable','pending','running'].includes(name)?name:'pending';
+  return `<span class="badge ${cls}">${esc(name)}</span>`;
+}
+function vclass(v){
+  if(v==='Known object')return 'v-known';
+  if(v==='Likely false positive')return 'v-fp';
+  if(v==='Passed automated checks')return 'v-pass';
+  if(v==='Needs review')return 'v-review';
+  return '';
+}
+function ppm(v){
+  if(v==null||v==='')return '–';
+  const n=+v;
+  if(!isFinite(n))return '–';
+  return Math.round(n*1e6).toLocaleString()+' ppm';
+}
+function period(v){if(v==null||!isFinite(+v))return '–';return (+v).toFixed(4)+' d'}
+function snr(v){if(v==null||!isFinite(+v))return '–';return (+v).toFixed(1)}
+function when(v){
+  if(v==null)return '–';
+  const d=new Date(v*1000);
+  return isNaN(d)? '–' : d.toLocaleString();
+}
+function verdictText(row){
+  if(row.verdict)return row.verdict;
+  if(row.state==='running')return 'Running';
+  if(row.state==='pending')return 'Queued';
+  return '–';
+}
+function paintFilters(){
+  const names=['all',...VERDICTS];
+  $('filters').innerHTML=names.map(name=>{
+    const on=FILTER===name?' on':'';
+    const label=name==='all'?'All':name;
+    return `<button class="btn${on}" type="button" data-v="${name}">${label}</button>`;
+  }).join('');
+  $('filters').querySelectorAll('button').forEach(btn=>{
+    btn.onclick=()=>{FILTER=btn.dataset.v;paintFilters();paintRows()};
+  });
+}
+function shown(){
+  if(FILTER==='all')return ROWS;
+  return ROWS.filter(row=>row.verdict===FILTER);
+}
+function paintRows(){
+  const rows=shown();
+  if(!rows.length){
+    $('rows').innerHTML='<tr><td class="empty" colspan="7">No candidates in this filter.</td></tr>';
+    return;
+  }
+  $('rows').innerHTML=rows.map(row=>{
+    const on=OPEN&&OPEN.tic===row.tic&&OPEN.sector===row.sector?' on':'';
+    const v=verdictText(row);
+    return `<tr class="pick${on}" data-tic="${row.tic}" data-sector="${row.sector}">
+      <td class="num">${esc(row.tic)}</td><td class="num">${esc(row.sector)}</td>
+      <td class="num">${esc(period(row.period))}</td><td class="num">${esc(ppm(row.depth))}</td>
+      <td class="num">${esc(snr(row.snr))}</td>
+      <td class="${vclass(row.verdict)}">${esc(v)}</td><td class="num">${esc(when(row.vetted_at))}</td></tr>`;
+  }).join('');
+  $('rows').querySelectorAll('tr.pick').forEach(tr=>{
+    tr.onclick=()=>openDetail(+tr.dataset.tic,+tr.dataset.sector);
+  });
+}
+function draw(plot){
+  const cv=$('plot');
+  const sized=setup(cv);
+  const ctx=sized[0], w=sized[1], h=sized[2];
+  if(w<2||h<2)return;
+  if(!plot||!plot.phase||!plot.phase.length){
+    ctx.fillStyle='#8b93b8';
+    ctx.font='13px sans-serif';
+    ctx.fillText('No phase curve stored for this candidate.', 16, 28);
+    return;
+  }
+  const series=[plot.flux||[], plot.odd_flux||[], plot.even_flux||[]].flat().filter(v=>isFinite(+v));
+  let lo=Math.min(...series), hi=Math.max(...series);
+  if(!(hi>lo)){lo-=0.005;hi+=0.005}
+  const pad=(hi-lo)*0.15;
+  lo-=pad; hi+=pad;
+  const xof=t=>36+(w-48)*(t);
+  const yof=v=>16+(h-32)*(1-(v-lo)/(hi-lo));
+  if(plot.secondary&&plot.secondary.length===2){
+    const x0=xof(plot.secondary[0]), x1=xof(plot.secondary[1]);
+    ctx.fillStyle='rgba(255,209,102,.18)';
+    ctx.fillRect(Math.min(x0,x1), 12, Math.abs(x1-x0), h-28);
+  }
+  ctx.strokeStyle='rgba(255,255,255,.08)';
+  ctx.beginPath(); ctx.moveTo(36,12); ctx.lineTo(36,h-16); ctx.lineTo(w-12,h-16); ctx.stroke();
+  function line(xs, ys, color){
+    if(!xs||xs.length<2)return;
+    ctx.strokeStyle=color; ctx.lineWidth=1.6; ctx.beginPath();
+    xs.forEach((x,i)=>{const px=xof(x), py=yof(ys[i]); i?ctx.lineTo(px,py):ctx.moveTo(px,py)});
+    ctx.stroke();
+  }
+  line(plot.phase, plot.flux, '#9aa3c7');
+  line(plot.odd_phase, plot.odd_flux, '#f472b6');
+  line(plot.even_phase, plot.even_flux, '#34d399');
+  ctx.fillStyle='#8b93b8'; ctx.font='11px sans-serif';
+  ctx.fillText('phase 0', 36, h-2);
+  ctx.fillText('0.5', xof(0.5)-8, h-2);
+  ctx.fillText('1', w-20, h-2);
+}
+function paintDetail(detail){
+  $('detail').hidden=false;
+  $('dtitle').textContent=`TIC ${detail.tic} · sector ${detail.sector}`;
+  const v=detail.verdict||detail.state||'–';
+  $('dverdict').textContent=v;
+  const tone=detail.verdict==='Passed automated checks'?'pass':detail.verdict==='Likely false positive'?'fail':detail.verdict==='Needs review'||detail.verdict==='Known object'?'warn':'';
+  $('dverdict').className='badge '+tone;
+  $('dnote').textContent=detail.disclaimer||'';
+  draw(detail.plot);
+  const checks=detail.checks||[];
+  $('checks').innerHTML=checks.map(item=>{
+    const nums=item.numbers||{};
+    const bits=Object.keys(nums).filter(k=>nums[k]!=null).map(k=>`${k}: ${nums[k]}`).join(' · ');
+    const bitsEsc=esc(bits);
+    return `<div class="check"><b>${esc(item.title||item.name)} ${badge(item.status)}</b><div class="why">${esc(item.reason||'')}</div>${bits?`<div class="nums">${bitsEsc}</div>`:''}</div>`;
+  }).join('')||'<div class="empty">No checks stored yet.</div>';
+  const links=detail.links||{};
+  const order=[['simbad','SIMBAD'],['vsx','VSX'],['exofop','ExoFOP'],['gaia','Gaia']];
+  $('links').innerHTML=order.filter(([key])=>safeUrl(links[key])).map(([key,label])=>`<a href="${esc(safeUrl(links[key]))}" target="_blank" rel="noopener">${label}</a>`).join('');
+  $('rerun').disabled=!ENABLED;
+  $('export').disabled=!detail.checks||!detail.checks.length;
+}
+async function openDetail(tic, sector){
+  OPEN={tic, sector};
+  paintRows();
+  $('msg').textContent='';
+  try{
+    const res=await fetch(`/api/vetting/detail?tic=${tic}&sector=${sector}`);
+    const detail=await res.json();
+    paintDetail(detail);
+  }catch(err){
+    $('msg').textContent='Could not load that candidate.';
+  }
+}
+function download(name, text, type){
+  const blob=new Blob([text],{type});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+$('rerun').onclick=async()=>{
+  if(!OPEN)return;
+  $('msg').textContent='';
+  $('rerun').disabled=true;
+  try{
+    const res=await fetch('/api/vetting/rerun',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(OPEN)});
+    const body=await res.json();
+    if(!body.ok){$('msg').textContent=body.note||body.error||'Re-run was not queued.';return}
+    $('msg').textContent='Queued. The result will replace this one when the check finishes.';
+    await refresh();
+  }catch(err){
+    $('msg').textContent='Re-run did not start.';
+  }finally{
+    $('rerun').disabled=!ENABLED;
+  }
+};
+$('export').onclick=async()=>{
+  if(!OPEN)return;
+  $('msg').textContent='';
+  try{
+    const res=await fetch(`/api/vetting/export?tic=${OPEN.tic}&sector=${OPEN.sector}`);
+    const body=await res.json();
+    if(!body.ok){$('msg').textContent=body.note||body.error||'Nothing to export yet.';return}
+    download(`TIC${OPEN.tic}_s${String(OPEN.sector).padStart(4,'0')}_vetting.md`, body.markdown, 'text/markdown');
+    download(`TIC${OPEN.tic}_s${String(OPEN.sector).padStart(4,'0')}_vetting.json`, body.json, 'application/json');
+    $('msg').textContent='Saved a Markdown file and a JSON file in the vetting reports folder, and downloaded both.';
+  }catch(err){
+    $('msg').textContent='Export failed.';
+  }
+};
+async function refresh(){
+  const res=await fetch('/api/vetting',{cache:'no-store'});
+  const body=await res.json();
+  checkVersion(body.app_version);
+  ENABLED=!!body.enabled;
+  if(!ENABLED){
+    $('on').hidden=true;
+    $('off').hidden=false;
+    $('off-note').textContent=body.note||'';
+    $('detail').hidden=true;
+    return;
+  }
+  $('off').hidden=true;
+  $('on').hidden=false;
+  $('disc').textContent=body.disclaimer||'';
+  const bytes=body.cache_bytes||0;
+  const mb=bytes<1e6?(bytes/1e3).toFixed(0)+' KB':(bytes/1e6).toFixed(1)+' MB';
+  $('meta').textContent=`${(body.candidates||[]).length} candidates · catalog cache ${mb}. Results stay on this computer.`;
+  ROWS=body.candidates||[];
+  paintRows();
+  if(OPEN){
+    const still=ROWS.some(row=>row.tic===OPEN.tic&&row.sector===OPEN.sector);
+    if(still)openDetail(OPEN.tic, OPEN.sector);
+  }
+}
+paintFilters();
+const start=new URLSearchParams(location.hash.replace(/^#/,''));
+if(start.get('tic')&&start.get('sector'))OPEN={tic:+start.get('tic'),sector:+start.get('sector')};
+refresh().catch(()=>{$('msg').textContent='The vetting list did not load.'});
+setInterval(()=>{if(ENABLED)refresh().catch(()=>{})}, 5000);
+</script>
+</body></html>
