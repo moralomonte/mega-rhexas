@@ -46,6 +46,8 @@ def migrate(conn) -> None:
     if columns and "status" not in columns:
         conn.execute("ALTER TABLE candidates ADD COLUMN status TEXT")
     conn.execute("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('stars-v1')")
+    from .vetting.store import migrate as migrate_vetting
+    migrate_vetting(conn)
 
 
 def table_ready(conn) -> bool:

@@ -137,3 +137,13 @@ prefetch = 1
 queue_max = 3
 # Sector light curves stay under this. The Sectors page can change it.
 max_cache_gb = 20
+
+[vetting]
+# Local advisory checks for candidates found on this computer. Off by default,
+# so only a machine that opts in runs them. Set enabled = true and restart the
+# worker. Results stay in the local dashboard; they are not sent to the coordinator.
+# While enabled is false, the Vetting page does not contact any catalog.
+enabled = false
+radius_arcsec = 15         # SIMBAD and VSX cone. Gaia neighbours use 42 arcsec.
+timeout_s = 20             # per catalog request
+cache_max_mb = 200         # per-TIC catalog cache under the worker cache
