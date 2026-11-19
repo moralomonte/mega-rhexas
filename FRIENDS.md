@@ -1,6 +1,6 @@
 # Run a Mega Rhexas worker
 
-You were invited to the friends beta. Your computer downloads a few hundred TESS stars at a time, searches them for transits, uploads a small results file (usually well under a few megabytes), and deletes the big files. The server is **https://api.megarhexas.com**. That address is already the default.
+You were invited to the friends beta. Your computer downloads a few hundred TESS stars at a time, searches them for transits, and uploads a small results file (usually well under a few megabytes). The big files stay until you clear them. The server is **https://api.megarhexas.com**. That address is already the default.
 
 Sign up at **https://api.megarhexas.com/signup** (an invite code is required until the operator opens signup). Then, on the computer that will search:
 
@@ -23,11 +23,11 @@ On Windows you do not need git, Python, or a command prompt.
 1. Download **MegaRhexas-Setup** from the [latest release](https://github.com/moralomonte/mega-rhexas/releases/latest).
 2. Run it. If Windows says it protected your PC, that is SmartScreen reacting to an unsigned installer. Click **More info**, then **Run anyway**. The installer does not need an administrator password.
 3. Leave **Start Mega Rhexas when I sign in** unchecked unless you want that. It is off by default.
-4. Open **Mega Rhexas** from the Start menu. Your browser opens the dashboard. Eco, Live, and Turbo are on that page. Live is already selected.
+4. Open **Mega Rhexas** from the Start menu. Your browser opens the dashboard. Slow, Normal, and Realtime only change the pictures. Normal is the usual drawing speed.
 5. The first time, choose **Sign in with megarhexas.com**. Finish signing in in the browser. The page continues on its own, and it does not show the saved login again. **Paste a token** is there if you already have one.
-6. Leave it running. The triskelion in the tray opens the dashboard, pauses, or quits. Eco, Live, and Turbo are only on the page, and they only change how fast that page moves. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
+6. Leave it running. The triskelion in the tray opens the dashboard, pauses, or quits. Slow, Normal, and Realtime are only on the page, and they only change how fast that page moves. Closing the laptop pauses the work. Opening Mega Rhexas again continues.
 
-The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and stops if the drive has under 5 GB free. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to sign in a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
+The light curves stay in your AppData folder (`%LOCALAPPDATA%\Mega Rhexas\cache`), not in the install folder. The cap is 20 GB. The worker stays at low priority and will not download a unit if that would leave under 10 GB free. Finished units stay until you clear them on the Sectors page, and only after the coordinator has every result. Uninstalling the app leaves that folder, including the token, so installing again does not ask you to sign in a second time. Delete `%LOCALAPPDATA%\Mega Rhexas` if you want the token gone.
 
 A newer version shows up as a link on the dashboard. Quit Mega Rhexas from the tray, then download the installer and run it. The app will not install it for you. Quit first so Windows can replace the program files.
 
@@ -113,9 +113,9 @@ rhexas worker-dashboard
 
 `--dashboard` starts the worker and the page together, and opens a browser. `worker-dashboard` attaches to a worker you already started. The page binds to `127.0.0.1` port `8080`. If that port is busy it picks the next free one. Add `--dashboard-host 0.0.0.0` only when you want another computer on your LAN to open it. `--no-browser` skips opening a browser.
 
-The page is the same mission-control screen as the sector dashboard: rings, sky map, the scanning light curve, the histogram that cycles SDE and SNR, and the console. Eco, Live, and Turbo only change how fast the page moves. They do not change how hard the worker runs, and the click does not send your invite. The Running/Paused switch stops or starts the worker; Pausing means it has been asked to stop and has not reached a safe point yet. The numbers are your batch (project, sector, unit, stars done, ETA, stars per second), your candidates with period, depth, and SNR, how many stars you have searched, how many batches you have uploaded, and how many contributions are pending or verified. Cache use is drawn against `--max-cache-gb`, with CPU, process count, thread count, and the coordinator connection.
+The page is the same mission-control screen as the sector dashboard: rings, sky map, the scanning light curve, the histogram that cycles SDE and SNR, and the console. Slow, Normal, and Realtime only change how fast the page moves. They do not change how hard the worker runs, and the click does not send your invite. The Running/Paused switch stops or starts the worker; Pausing means it has been asked to stop and has not reached a safe point yet. Sectors lists every unit on this computer. The numbers are your batch (project, sector, unit, stars done, ETA, stars per second), your candidates with period, depth, and SNR, how many stars you have searched, how many batches you have uploaded, and how many contributions are pending or verified. Cache use is drawn against the storage cap, with CPU, process count, thread count, and the coordinator connection.
 
-Every hit is labeled **candidates, unverified**. Nothing on this page is a confirmed planet. Pending and verified describe contributions for a future account. The files it uses are `worker-cache/dashboard.sqlite` and `worker-cache/worker.log`. The animation choice stays in the browser. The pause flag stays in that database.
+Every hit is labeled **candidates, unverified**. Nothing on this page is a confirmed planet. Pending and verified describe contributions for a future account. The files it uses are `worker-cache/dashboard.sqlite` and `worker-cache/worker.log`. The picture speed stays in the browser. The pause flag stays in that database.
 
 ## If something looks stuck
 

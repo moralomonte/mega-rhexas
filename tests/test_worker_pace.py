@@ -53,7 +53,7 @@ def _post(port, path, payload):
         return exc.code, exc.read()
 
 
-def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monkeypatch):
+def test_mode_post_leaves_effort_unchanged_and_hides_the_token(tmp_path, monkeypatch):
     monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
     store = Store(tmp_path)
     store.set_worker(
@@ -64,10 +64,15 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
     thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
     thread.start()
     try:
+        before = snapshot(tmp_path)["resources"]
         status, body = _post(port, "/api/mode", {"mode": "turbo", "token": "rhx_secretvalue"})
         assert status == 200
         assert b"rhx_" not in body
-        assert json.loads(body) == {"ok": True, "requested": "turbo"}
+        assert json.loads(body)["effort"] == "unchanged"
+        assert json.loads(body)["requested"] == "realtime"
+        status, body = _post(port, "/api/mode", {"mode": "slow", "token": "rhx_secretvalue"})
+        assert status == 200
+        assert json.loads(body)["requested"] == "slow"
         status, body = _post(port, "/api/state", {"mode": "eco", "token": "rhx_secretvalue"})
         assert status == 405
         assert b"rhx_" not in body
@@ -80,7 +85,9 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
         httpd.server_close()
     blob = b"".join(path.read_bytes() for path in tmp_path.glob("dashboard.sqlite*"))
     assert b"rhx_secretvalue" not in blob
-    cfg = resolve_worker(default_config(tmp_path), procs=2, threads=2, priority="low", environ={})
+    cfg = resolve_worker(
+        default_config(tmp_path), procs=2, threads=2, priority="low", poll_s=60, environ={},
+    )
     current_pace(cfg, store, {})
     snap = snapshot(tmp_path)
     # The post is stored for an old client. The worker does not apply it.
@@ -91,6 +98,7 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
     assert snap["resources"]["priority"] == "low"
     assert snap["resources"]["paused"] is False
     assert snap["resources"]["user_paused"] is False
+    assert cfg.worker.poll_s == 60
     store.request_mode("eco")
     current_pace(cfg, store, {})
     snap = snapshot(tmp_path)
@@ -107,7 +115,7 @@ def test_mode_post_changes_effective_settings_and_hides_the_token(tmp_path, monk
     assert "rhx_" not in json.dumps(snap)
 
 
-def test_turbo_reaches_the_search_and_eco_keeps_the_lease(tmp_path, monkeypatch):
+def test_picture_speed_does_not_change_search_effort(tmp_path, monkeypatch):
     monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
     cache = tmp_path / "worker-cache"
     cache.mkdir()
@@ -136,7 +144,9 @@ def test_turbo_reaches_the_search_and_eco_keeps_the_lease(tmp_path, monkeypatch)
         "project": "exoplanets", "tics": [7], "n_tics": 1,
         "expires_at": "2026-01-02T00:00:00+00:00",
     }
-    cfg = resolve_worker(default_config(tmp_path), token="rhx_test", procs=2, threads=2, environ={})
+    cfg = resolve_worker(
+        default_config(tmp_path), token="rhx_test", procs=2, threads=2, poll_s=60, environ={},
+    )
     client = _Coord(assignment)
     code = run_worker(cfg, once=True, client=client, download=download, search=search, filt=filt, heartbeat_s=0)
     assert code == 0
@@ -144,7 +154,9 @@ def test_turbo_reaches_the_search_and_eco_keeps_the_lease(tmp_path, monkeypatch)
     assert seen["threads"] == 2
     assert client.submitted == [8]
     assert snapshot(cache)["resources"]["mode"] == "live"
+    assert snapshot(cache)["resources"]["procs"] == 2
     assert snapshot(cache)["resources"]["paused"] is False
+    assert cfg.worker.poll_s == 60
     assert b"rhx_" not in (cache / "worker.log").read_bytes()
 
     Store(cache).request_mode("eco")
@@ -245,9 +257,10 @@ def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
 def test_pause_switch_sits_in_the_top_bar_after_the_speed_buttons():
     page = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
     line = next(l for l in page.splitlines() if 'id="speed"' in l)
-    assert line.index('data-m="turbo"') < line.index('id="run-switch"')
+    assert line.index('data-m="realtime"') < line.index('id="run-switch"')
     assert page.count('id="run-switch"') == 1
     assert "rhexas-anim" in page
+    assert "rhexas.visual" in page
     assert "prefers-reduced-motion" in page
     assert "function pauseView(user,holding)" in page
     assert page.count("/api/mode") == 0

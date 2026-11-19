@@ -322,8 +322,8 @@ def format_ago(when: str | None, now: datetime) -> str:
     return f"{days} {unit} ago"
 
 
-# The batch being searched, plus one prefetch download. A plain claim stays
-# idempotent; the worker asks for the extra slot explicitly.
+# A claim without prefetch still holds one lease, which is what v0.3 workers do.
+# A prefetch claim may hold up to Settings.max_outstanding (default 4).
 MAX_WORKER_LEASES = 2
 
 
@@ -395,6 +395,24 @@ def _clean_progress(progress) -> tuple[str, int, int] | None:
     if not phase and done == 0 and total == 0:
         return None
     return phase, done, total
+
+
+def _tics_in(payload_json) -> set[int]:
+    """TIC ids the unit was enrolled with. Bad JSON yields an empty set."""
+    try:
+        payload = json.loads(payload_json or "")
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    tics = payload.get("tics") if isinstance(payload, dict) else None
+    if not isinstance(tics, list):
+        return set()
+    found = set()
+    for tic in tics:
+        try:
+            found.add(int(tic))
+        except (TypeError, ValueError):
+            continue
+    return found
 
 
 def hash_token(token: str) -> str:
@@ -594,12 +612,13 @@ class Store:
         return {"project": project, "sector": sector, "stars": stars, "units": len(chunks), "unit_size": size}
 
     def claim(self, worker_id: int, project: str = DEFAULT_PROJECT, *, prefetch: bool = False) -> dict | None:
-        """Lease one batch. With ``prefetch``, a worker may hold a second lease.
+        """Lease one batch. With ``prefetch``, a worker may hold several.
 
         A call without ``prefetch`` still returns the batch already leased, so a
-        worker from before download-ahead does not pick up an extra unit. The
-        second lease follows the same unit rules: two copies come from two
+        worker from before download-ahead does not pick up an extra unit. Each
+        extra lease follows the same unit rules: two copies come from two
         accounts, and a unit that already has a copy is chosen first.
+        ``max_outstanding`` is the cap, including the unit being scanned.
         """
         project = self._require_project(project)
         with self._tx() as conn:
@@ -607,7 +626,10 @@ class Store:
             self._expire(conn, now)
             self._touch(conn, worker_id, now)
             live = self._live_leases(conn, worker_id)
-            limit = MAX_WORKER_LEASES if prefetch else 1
+            if prefetch:
+                limit = max(1, int(self.settings.max_outstanding))
+            else:
+                limit = 1
             if len(live) >= limit:
                 if prefetch:
                     return None
@@ -735,7 +757,82 @@ class Store:
             self._touch(conn, worker_id, now)
             self._contribute(conn, worker_id, unit, "submitted", 0, "", now)
             peers = self._pending_copies(conn, unit)
-            return self._settle(conn, unit, peers, now, announce_wait=True, worker_id=worker_id)
+            outcome = self._settle(conn, unit, peers, now, announce_wait=True, worker_id=worker_id)
+            outcome["receipt"] = self._receipt_body(conn, assignment_id, unit)
+            return outcome
+
+    def peek(self, worker_id: int, project: str = DEFAULT_PROJECT) -> dict | None:
+        """The next unit's size, without leasing it.
+
+        The worker estimates disk use from ``n_tics`` before it reserves.
+        Old workers never call this.
+        """
+        project = self._require_project(project)
+        with self._tx() as conn:
+            now = self.clock()
+            self._expire(conn, now)
+            self._touch(conn, worker_id, now)
+            chosen = self._pick_unit(conn, worker_id, project)
+            if chosen is None:
+                return None
+            unit, _filled = chosen
+            return {
+                "unit_id": int(unit["id"]),
+                "sector": int(unit["sector"]),
+                "n_tics": int(unit["n_tics"]),
+                "project": project,
+            }
+
+    def receipt(self, worker_id: int, assignment_id: int, project: str | None = None) -> dict:
+        """Whether this worker's stored rows cover every star in the unit.
+
+        This is receipt, not agreement. A pending second copy can still be complete.
+        """
+        with self._tx() as conn:
+            now = self.clock()
+            self._expire(conn, now)
+            assignment = conn.execute(
+                "SELECT * FROM assignments WHERE id=?", (int(assignment_id),),
+            ).fetchone()
+            if assignment is None or int(assignment["worker_id"]) != int(worker_id):
+                raise CoordError("assignment not found", 404)
+            self._same_project(conn, assignment, project)
+            unit = conn.execute("SELECT * FROM units WHERE id=?", (assignment["unit_id"],)).fetchone()
+            self._touch(conn, worker_id, now)
+            return {"receipt": self._receipt_body(conn, int(assignment_id), unit)}
+
+    def _receipt_body(self, conn, assignment_id: int, unit) -> dict:
+        """Count stored star rows against the unit's TIC list. The worker's word is not used."""
+        expected = _tics_in(unit["payload_json"] if unit is not None else "")
+        row = conn.execute(
+            "SELECT stars_json FROM results WHERE assignment_id=?",
+            (int(assignment_id),),
+        ).fetchone()
+        got: set[int] = set()
+        if row is not None:
+            try:
+                stars = json.loads(row["stars_json"])
+            except (TypeError, json.JSONDecodeError):
+                stars = []
+            if isinstance(stars, list):
+                for star in stars:
+                    if not isinstance(star, dict) or star.get("tic") is None:
+                        continue
+                    try:
+                        tic = int(star["tic"])
+                    except (TypeError, ValueError):
+                        continue
+                    if tic in expected:
+                        got.add(tic)
+        complete = bool(expected) and got == expected
+        return {
+            "assignment_id": int(assignment_id),
+            "unit_id": int(unit["id"]) if unit is not None else 0,
+            "received": row is not None,
+            "complete": complete,
+            "n_expected": len(expected),
+            "n_received": len(got),
+        }
 
     def reverify(self) -> dict:
         """Apply the current copy count to batches that already have uploads.

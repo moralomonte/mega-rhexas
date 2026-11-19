@@ -41,6 +41,7 @@ _FILES = {
     "/img/favicon-32.png": ("img/favicon.svg", "image/svg+xml"),
     "/img/favicon-192.png": ("img/favicon.svg", "image/svg+xml"),
     "/favicon.ico": ("img/favicon.svg", "image/svg+xml"),
+    "/sectors": ("sectors.html", "text/html; charset=utf-8"),
 }
 
 
@@ -62,6 +63,8 @@ def fallback_resources(cfg) -> dict:
         "threads": worker.threads,
         "priority": worker.priority,
         "max_cache_gb": worker.max_cache_gb,
+        "queue_max": worker.queue_max,
+        "min_free_gb": worker.min_free_gb,
         "coordinator_url": public_coordinator_url(worker.coordinator_url),
     }
 
@@ -171,6 +174,15 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             if path == "/api/pause":
                 self._post_pause()
                 return
+            if path == "/api/holdings/clear":
+                self._post_clear()
+                return
+            if path == "/api/holdings/clear-finished":
+                self._post_clear_finished()
+                return
+            if path == "/api/holdings/cap":
+                self._post_cap()
+                return
             if path == "/api/setup/token":
                 self._post_token()
                 return
@@ -195,17 +207,27 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             return data if isinstance(data, dict) else None
 
         def _post_mode(self):
+            """Accept a picture-speed name and do not change the worker's load.
+
+            Slow, Normal, and Realtime are stored in the browser. An older client
+            may still post eco, live, or turbo. That name is remembered and is
+            not applied to procs, threads, priority, or pause.
+            """
+            from .live import PACE_MODES
+            from .visual import LEGACY_VISUAL, CYCLE_SECONDS
             data = self._read_json(256)
-            mode = data.get("mode") if data else None
-            if mode not in PACE_MODES:
-                self._try_send(400, b"mode must be eco, live, or turbo", "text/plain; charset=utf-8")
+            raw = str(data.get("mode") or "").strip().lower() if data else ""
+            visual = LEGACY_VISUAL.get(raw, raw)
+            if visual not in CYCLE_SECONDS:
+                self._try_send(400, b"mode must be slow, normal, or realtime", "text/plain; charset=utf-8")
                 return
-            try:
-                Store(cache).request_mode(mode)
-            except Exception:
-                self._try_send(500, b"error", "text/plain; charset=utf-8")
-                return
-            self._json(200, {"ok": True, "requested": mode})
+            if raw in PACE_MODES:
+                try:
+                    Store(cache).request_mode(raw)
+                except Exception:
+                    self._try_send(500, b"error", "text/plain; charset=utf-8")
+                    return
+            self._json(200, {"ok": True, "requested": visual, "effort": "unchanged"})
 
         def _post_pause(self):
             data = self._read_json(256)
@@ -314,6 +336,17 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 lines, size = read_log_tail(cache, limit=200)
                 body = dumps_safe({"lines": lines, "size": size, "path": LOG_NAME})
                 self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/sectors":
+                try:
+                    body = _static_bytes("sectors.html")
+                except OSError:
+                    self._send(404, b"not found", "text/plain; charset=utf-8")
+                    return
+                self._send(200, body, "text/html; charset=utf-8")
+                return
+            if path == "/api/holdings":
+                self._json(200, self._holdings())
                 return
             if path == "/api/sectors":
                 body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
@@ -432,6 +465,61 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 if once or self.server.dashboard_stop.wait(1.0):
                     self.close_connection = True
                     return
+
+        def _worker_cfg(self):
+            cap = fallback.get("max_cache_gb")
+            queue_max = fallback.get("queue_max")
+            min_free = fallback.get("min_free_gb")
+            try:
+                cap_gb = float(20 if cap is None else cap)
+            except (TypeError, ValueError):
+                cap_gb = 20.0
+            try:
+                queued = int(3 if queue_max is None else queue_max)
+            except (TypeError, ValueError):
+                queued = 3
+            try:
+                free_gb = float(5 if min_free is None else min_free)
+            except (TypeError, ValueError):
+                free_gb = 5.0
+            return cap_gb, queued, free_gb
+
+        def _holdings(self):
+            from .holdings import holdings_view
+            cap_gb, queued, free_gb = self._worker_cfg()
+            return holdings_view(cache, configured_cap_gb=cap_gb, queue_max=queued, min_free_gb=free_gb)
+
+        def _post_clear(self):
+            from .holdings import clear_unit
+            data = self._read_json(256)
+            if not data or data.get("assignment_id") is None:
+                self._json(400, {"ok": False, "error": "assignment_id is required"})
+                return
+            try:
+                aid = int(data["assignment_id"])
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "assignment_id is required"})
+                return
+            result = clear_unit(cache, aid)
+            self._json(200 if result.get("ok") else 409, result)
+
+        def _post_clear_finished(self):
+            from .holdings import clear_finished
+            self._drain(limit=256)
+            self._json(200, clear_finished(cache))
+
+        def _post_cap(self):
+            from .holdings import write_cap_gb
+            data = self._read_json(256)
+            if not data or data.get("max_cache_gb") is None:
+                self._json(400, {"ok": False, "error": "max_cache_gb is required"})
+                return
+            try:
+                cap = write_cap_gb(cache, float(data["max_cache_gb"]))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "storage cap must be greater than 0"})
+                return
+            self._json(200, {"ok": True, "max_cache_gb": cap})
 
         def _send(self, code: int, body: bytes, content_type: str) -> None:
             self.send_response(code)

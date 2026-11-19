@@ -59,7 +59,8 @@ def start_tray(*, on_open, on_toggle_pause, on_quit, paused):
 
     ``paused`` is a callable so the checkmark follows the worker.
     ``on_quit`` is called with the icon; it should stop the icon and the worker.
-    Animation speed is chosen on the dashboard page, not from this menu.
+    Picture speed is chosen on the dashboard page, not from this menu, and it
+    does not change how hard the search runs.
     """
     try:
         import pystray

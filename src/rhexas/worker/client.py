@@ -26,9 +26,17 @@ class CoordinatorClient:
         return self._request("GET", self._task("current"), None)
 
     def claim(self, *, prefetch: bool = False) -> dict:
-        """Lease a batch. ``prefetch`` asks for a second lease while the first is still held."""
+        """Lease a batch. ``prefetch`` asks for another lease while earlier ones are held."""
         body = {"prefetch": True} if prefetch else {}
         return self._request("POST", self._task("claim"), body)
+
+    def peek(self) -> dict:
+        """Next unit's size, without reserving it. Older coordinators 404."""
+        return self._request("POST", self._task("peek"), {})
+
+    def receipt(self, assignment_id: int) -> dict:
+        """Whether the coordinator stored a row for every star in this unit."""
+        return self._request("POST", self._task("receipt"), {"assignment_id": int(assignment_id)})
 
     def heartbeat(self, assignment_id: int, progress: dict | None = None) -> dict:
         """Renew the lease. ``progress`` is omitted when unknown so older coordinators still accept the body.
