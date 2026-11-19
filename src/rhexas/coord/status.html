@@ -10,7 +10,7 @@
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
 #stars{position:fixed;inset:0;z-index:-1}
-.wrap{max-width:1200px;margin:0 auto;padding:22px 20px 40px}
+.wrap{max-width:1440px;margin:0 auto;padding:22px 20px 40px}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 .logo{display:flex;align-items:center;gap:12px}
 .trisk{width:42px;height:42px;flex:none;filter:drop-shadow(0 0 8px #818cf866);transition:filter .4s}
@@ -82,6 +82,28 @@ input{width:100%;background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);b
 .err{color:var(--err);min-height:1.2em;font-size:13px}
 footer{margin-top:14px;color:var(--mut);font-size:12px}
 .empty{color:var(--mut);padding:12px 0}
+.candhelp{margin:-4px 0 10px}
+table.cands{font-size:12px}
+table.cands th button{background:none;border:0;color:inherit;font:inherit;font-size:11px;letter-spacing:.6px;text-transform:uppercase;padding:0;cursor:pointer}
+table.cands tr.sum{cursor:pointer}
+table.cands tr.sum:hover td{background:rgba(255,255,255,.03)}
+table.cands tr.detail td{background:rgba(255,255,255,.025);padding-top:10px;padding-bottom:12px}
+table.cands .tag{white-space:nowrap}
+.tag.pass{background:rgba(52,211,153,.16);color:var(--ok)}
+.tag.fail{background:rgba(248,113,113,.16);color:var(--err)}
+.tag.warn{background:rgba(251,191,36,.16);color:var(--warn)}
+.tag.unknown{background:rgba(255,255,255,.06);color:var(--mut)}
+.tag.st.new{background:rgba(255,209,102,.15);color:var(--gold)}
+.tag.st.pending{background:rgba(34,211,238,.14);color:var(--c2)}
+.tag.st.passed{background:rgba(52,211,153,.16);color:var(--ok)}
+.tag.st.known{background:rgba(248,113,113,.16);color:var(--err)}
+.tag.st.binary{background:rgba(251,146,60,.18);color:#fdba74}
+.tag.st.rejected{background:rgba(255,255,255,.06);color:var(--mut)}
+.tag.st.ctoi{background:rgba(124,92,255,.2);color:#c4b5fd}
+.review{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.review select,.review input{width:auto;background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:10px;padding:6px 8px;font:inherit}
+.review input{min-width:220px;flex:1}
+.subnote{color:var(--mut);font-size:12px;margin:6px 0}
 </style>
 </head>
 <body>
@@ -139,6 +161,7 @@ footer{margin-top:14px;color:var(--mut);font-size:12px}
 </section>
 <section class="card s12">
 <h2>Candidates both workers agreed on</h2>
+<p class="note candhelp" id="candhelp">Review priority loads with the candidate list. Higher numbers are looked at first.</p>
 <div id="cands"><div class="empty">None yet. A candidate appears here only after the two copies agree.</div></div>
 </section>
 <section class="card s12">
@@ -300,8 +323,151 @@ function drawWorkers(list){
   wrap.append(table);
   box.append(wrap);
 }
-function drawCands(list){
-  const box = $('cands'); box.replaceChildren();
+let candRows = [];
+let candSort = {key: 'review_priority', dir: -1};
+let candOpen = new Set();
+let candHelp = '';
+const CHECK_KEYS = ['simbad','vsx','exofop','nea','gaia','blend','planet','odd_even','secondary'];
+const CAND_COLS = [
+  {key:'tic', label:'TIC'},
+  {key:'n_sectors', label:'Sectors', title:'Agreeing sectors. A row opens the per-sector detections.'},
+  {key:'period', label:'Period'},
+  {key:'depth', label:'Depth'},
+  {key:'sde', label:'SDE'},
+  {key:'snr', label:'SNR'},
+  {key:'review_priority', label:'Priority'},
+  {key:'status_label', label:'Status'},
+  {key:'simbad', label:'Known', title:'SIMBAD object type and names'},
+  {key:'vsx', label:'VSX', title:'VSX variable within about 1 arcminute'},
+  {key:'exofop', label:'TOI', title:'Already a TOI or CTOI on ExoFOP'},
+  {key:'nea', label:'Planet', title:'Known planet in the NASA Exoplanet Archive'},
+  {key:'gaia', label:'Gaia', title:'Gaia DR3 variability, non-single star, or RUWE'},
+  {key:'blend', label:'Blend', title:'TIC contamination ratio and bright neighbours'},
+  {key:'planet', label:'Radius', title:'Companion radius and whether the duration fits the star'},
+  {key:'odd_even', label:'Odd/even', title:'Odd and even transit depths'},
+  {key:'secondary', label:'Secondary', title:'Secondary eclipse at phase 0.5'},
+];
+const REVIEW_OPTIONS = [
+  ['auto', 'Automatic'],
+  ['new', 'New'],
+  ['pending', 'Checks pending'],
+  ['passed', 'Passed checks'],
+  ['known', 'Known object'],
+  ['binary', 'Likely binary'],
+  ['rejected', 'Rejected'],
+  ['ctoi', 'CTOI submitted'],
+];
+function candEditing(){
+  const node = document.activeElement;
+  if (!node || !$('cands').contains(node)) return false;
+  const tag = node.tagName;
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+}
+function sortValue(row, key){
+  if (key === 'status_label') return String(row.status_label || '').toLowerCase();
+  if (CHECK_KEYS.indexOf(key) >= 0){
+    const order = {fail: 0, warn: 1, unknown: 2, pass: 3};
+    const state = row.checks && row.checks[key] ? row.checks[key].state : 'unknown';
+    return order[state] == null ? 2 : order[state];
+  }
+  const value = row[key];
+  if (value == null || value === '') return -1e15;
+  const num = Number(value);
+  return Number.isNaN(num) ? String(value) : num;
+}
+function sortedCands(){
+  const rows = candRows.slice();
+  const key = candSort.key, dir = candSort.dir;
+  rows.sort((a, b) => {
+    const av = sortValue(a, key), bv = sortValue(b, key);
+    if (av < bv) return -dir;
+    if (av > bv) return dir;
+    return a.tic - b.tic;
+  });
+  return rows;
+}
+function checkBadge(check){
+  const state = check && check.state ? check.state : 'unknown';
+  const text = state === 'pass' ? 'pass' : state === 'fail' ? 'fail' : state === 'warn' ? 'warn' : '—';
+  const badge = el('span', text, 'tag ' + (state === 'unknown' ? 'unknown' : state));
+  const summary = check && check.summary ? check.summary : 'Not checked yet';
+  const detail = check && check.detail ? check.detail : '';
+  badge.title = detail ? summary + '\n' + detail : summary;
+  return badge;
+}
+function priorityTitle(row){
+  const bits = (row.priority_parts || []).map(part => part.label + ' ' + Number(part.value).toFixed(1));
+  bits.push('total ' + Number(row.review_priority).toFixed(1));
+  return bits.join('\n');
+}
+function detectionTable(row){
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const label of ['Sector','Period','Depth','SDE','SNR','Duration','Odd/even','Secondary','Group']) head.append(el('th', label));
+  table.append(head);
+  for (const hit of row.detections || []){
+    const tr = document.createElement('tr');
+    tr.append(el('td', hit.sector == null ? '–' : String(hit.sector)));
+    const period = document.createElement('td');
+    period.textContent = days(hit.period);
+    if (hit.ratio) period.title = hit.ratio;
+    tr.append(period);
+    tr.append(el('td', ppm(hit.depth)));
+    tr.append(el('td', hit.sde == null ? '–' : Number(hit.sde).toFixed(1)));
+    tr.append(el('td', hit.snr == null ? '–' : Number(hit.snr).toFixed(1)));
+    tr.append(el('td', hit.duration == null ? '–' : (Number(hit.duration) * 24).toFixed(2) + ' h'));
+    tr.append(el('td', hit.odd_even_sigma == null ? '–' : Number(hit.odd_even_sigma).toFixed(2) + 'σ'));
+    tr.append(el('td', hit.sec_sigma == null ? '–' : Number(hit.sec_sigma).toFixed(2) + 'σ'));
+    tr.append(el('td', hit.grouped ? (hit.ratio || 'in group') : 'other period'));
+    table.append(tr);
+  }
+  return table;
+}
+function reviewForm(row){
+  const form = document.createElement('form');
+  form.className = 'review';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Status for TIC ' + row.tic);
+  for (const pair of REVIEW_OPTIONS){
+    const opt = document.createElement('option');
+    opt.value = pair[0];
+    opt.textContent = pair[1];
+    if (row.review_manual && row.status_code === pair[0]) opt.selected = true;
+    if (!row.review_manual && pair[0] === 'auto') opt.selected = true;
+    select.append(opt);
+  }
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 500;
+  input.value = row.review_note || '';
+  input.placeholder = 'Note';
+  input.setAttribute('aria-label', 'Note for TIC ' + row.tic);
+  const button = document.createElement('button');
+  button.type = 'submit';
+  button.textContent = 'Save';
+  const msg = el('span', '', 'subnote');
+  form.append(el('span', 'Set status', 'subnote'), select, input, button, msg);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    msg.textContent = '';
+    const res = await fetch('/api/v1/candidates/review', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      body: JSON.stringify({tic: row.tic, status: select.value, note: input.value}),
+    });
+    if (res.status === 401) { $('login').style.display = 'flex'; return; }
+    if (!res.ok) { msg.textContent = 'Could not save.'; return; }
+    input.blur();
+    select.blur();
+    tick();
+  });
+  return form;
+}
+function paintCands(){
+  if (candEditing()) return;
+  const box = $('cands');
+  box.replaceChildren();
+  const list = sortedCands();
   if (!list.length){
     box.append(el('div', onceMode()
       ? 'None yet. A candidate appears here after one check.'
@@ -309,21 +475,82 @@ function drawCands(list){
     return;
   }
   const table = document.createElement('table');
+  table.className = 'cands';
   const head = document.createElement('tr');
-  for (const label of ['TIC','Sector','Period','Depth','SDE','SNR','']) head.append(el('th', label));
-  table.append(head);
-  for (const c of list){
-    const tr = document.createElement('tr');
-    tr.append(el('td', String(c.tic)));
-    tr.append(el('td', String(c.sector)));
-    tr.append(el('td', days(c.period)));
-    tr.append(el('td', ppm(c.depth)));
-    tr.append(el('td', c.sde == null ? '–' : Number(c.sde).toFixed(1)));
-    tr.append(el('td', c.snr == null ? '–' : Number(c.snr).toFixed(1)));
-    const td = document.createElement('td'); const tag = el('span', c.status || 'NEW', 'tag'); td.append(tag); tr.append(td);
-    table.append(tr);
+  for (const col of CAND_COLS){
+    const th = document.createElement('th');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = col.label + (candSort.key === col.key ? (candSort.dir < 0 ? ' ↓' : ' ↑') : '');
+    if (col.title) button.title = col.title;
+    if (col.key === 'review_priority' && candHelp) button.title = candHelp;
+    button.addEventListener('click', () => {
+      if (candSort.key === col.key) candSort.dir = -candSort.dir;
+      else candSort = {key: col.key, dir: (CHECK_KEYS.indexOf(col.key) >= 0 || col.key === 'status_label') ? 1 : -1};
+      paintCands();
+    });
+    th.append(button);
+    head.append(th);
   }
-  box.append(table);
+  table.append(head);
+  for (const row of list){
+    const tr = document.createElement('tr');
+    tr.className = 'sum';
+    const ticCell = document.createElement('td');
+    ticCell.textContent = String(row.tic);
+    tr.append(ticCell);
+    const sectors = document.createElement('td');
+    sectors.append(document.createTextNode(row.sectors_label || '–'));
+    sectors.append(el('em', (row.n_sectors === 1 ? '1 sector' : row.n_sectors + ' sectors')));
+    if (row.period_note) sectors.title = row.period_note;
+    tr.append(sectors);
+    const period = document.createElement('td');
+    period.textContent = days(row.period);
+    if (row.period_note) period.title = row.period_note;
+    tr.append(period);
+    tr.append(el('td', ppm(row.depth)));
+    tr.append(el('td', row.sde == null ? '–' : Number(row.sde).toFixed(1)));
+    tr.append(el('td', row.snr == null ? '–' : Number(row.snr).toFixed(1)));
+    const priority = document.createElement('td');
+    priority.textContent = row.review_priority == null ? '–' : Number(row.review_priority).toFixed(1);
+    priority.title = priorityTitle(row);
+    tr.append(priority);
+    const status = document.createElement('td');
+    const badge = el('span', row.status_label || 'New', 'tag st ' + (row.status_code || 'new'));
+    badge.title = row.status_detail || '';
+    status.append(badge);
+    tr.append(status);
+    for (const key of CHECK_KEYS){
+      const td = document.createElement('td');
+      td.append(checkBadge(row.checks ? row.checks[key] : null));
+      tr.append(td);
+    }
+    tr.addEventListener('click', () => {
+      if (candOpen.has(row.tic)) candOpen.delete(row.tic);
+      else candOpen.add(row.tic);
+      paintCands();
+    });
+    table.append(tr);
+    if (!candOpen.has(row.tic)) continue;
+    const detail = document.createElement('tr');
+    detail.className = 'detail';
+    const cell = document.createElement('td');
+    cell.colSpan = CAND_COLS.length;
+    cell.append(el('div', row.period_note || '', 'subnote'));
+    if (row.flags) cell.append(el('div', 'Worker flags: ' + row.flags, 'subnote'));
+    cell.append(detectionTable(row));
+    cell.append(reviewForm(row));
+    detail.append(cell);
+    detail.addEventListener('click', (event) => event.stopPropagation());
+    table.append(detail);
+  }
+  const wrap = el('div', null, 'tablewrap');
+  wrap.append(table);
+  box.append(wrap);
+}
+function drawCands(list){
+  candRows = Array.isArray(list) ? list : [];
+  paintCands();
 }
 function drawEvents(events){
   const con = $('con');
@@ -344,10 +571,14 @@ async function tick(){
     const [status, workers, cands, events] = await Promise.all([
       api('/api/v1/status'),
       api('/api/v1/workers'),
-      api('/api/v1/candidates?limit=50'),
+      api('/api/v1/candidates?limit=200'),
       api('/api/v1/events?after=' + after),
     ]);
     $('login').style.display = 'none';
+    if (cands.priority_help) {
+      candHelp = cands.priority_help;
+      $('candhelp').textContent = cands.priority_help;
+    }
     drawStatus(status); drawWorkers(workers.workers); drawCands(cands.candidates); drawEvents(events.events);
   } catch (err) {
     if (err.message !== 'auth') $('live').textContent = 'Reconnecting…';

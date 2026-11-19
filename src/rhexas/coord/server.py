@@ -9,9 +9,12 @@ from .httpapi import App, _MAX_BODY, _error
 from .store import Store
 
 
-def make_server(store: Store, host: str, port: int, *, accounts=None, smtp=None, mailer=None) -> ThreadingHTTPServer:
+def make_server(store: Store, host: str, port: int, *, accounts=None, smtp=None, mailer=None,
+                checker=None) -> ThreadingHTTPServer:
     app = App(store, accounts=accounts, smtp=smtp, mailer=mailer)
     lock = threading.Lock()
+    if checker is not None:
+        checker.lock = lock
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -56,6 +59,7 @@ def make_server(store: Store, host: str, port: int, *, accounts=None, smtp=None,
     ThreadingHTTPServer.daemon_threads = True
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.store = store
+    httpd.lock = lock
     return httpd
 
 
@@ -72,9 +76,15 @@ def serve(store: Store, host: str, port: int, *, accounts=None, smtp=None, maile
     print(f"Mega Rhexas coordinator on http://{bound_host}:{bound_port}", flush=True)
     print(f"database {store.path}", flush=True)
     print("The status page asks for the admin token. Worker tokens cannot open it.", flush=True)
+    from .checker import CatalogChecker
+    checker = CatalogChecker(store)
+    checker.lock = httpd.lock
+    checker.start()
+    print("Catalog cross-checks run in the background.", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopping", flush=True)
     finally:
+        checker.stop()
         httpd.server_close()

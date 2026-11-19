@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 
 from .projects import DEFAULT_PROJECT
 from .store import CoordError, Store
+from .vetting import PRIORITY_HELP, REVIEW_STATUSES
 
 _TASKS = {"claim", "current", "heartbeat", "submit", "release"}
 
@@ -143,6 +144,8 @@ class App:
         if path.startswith("/api/v1/"):
             if not self.store.admin_ok(_admin_token(headers)):
                 return _error(401, "unauthorized", "unauthorized")
+            if method == "POST" and path == "/api/v1/candidates/review":
+                return self._set_review(body)
             return self._admin_read(method, path, query)
         return _error(404, "not found", "not_found")
 
@@ -162,7 +165,7 @@ class App:
             return _json(200, {"workers": self.store.workers_public()})
         if path == "/api/v1/candidates":
             limit = _first_int(query.get("limit"), 50)
-            return _json(200, {"candidates": self.store.candidates_public(limit)})
+            return _json(200, {"candidates": self.store.candidates_public(limit), "priority_help": PRIORITY_HELP})
         if path == "/api/v1/events":
             after = _first_int(query.get("after"), 0)
             return _json(200, {"events": self.store.events_since(after)})
@@ -172,8 +175,31 @@ class App:
             if kind == "status":
                 return _json(200, self.store.status(project))
             limit = _first_int(query.get("limit"), 50)
-            return _json(200, {"candidates": self.store.candidates_public(limit, project)})
+            return _json(200, {
+                "candidates": self.store.candidates_public(limit, project),
+                "priority_help": PRIORITY_HELP,
+            })
         return _error(404, "not found", "not_found")
+
+    def _set_review(self, body: bytes) -> Response:
+        payload = _payload(body)
+        try:
+            tic = int(payload.get("tic"))
+        except (TypeError, ValueError):
+            raise CoordError("tic must be an integer", 400) from None
+        raw = payload.get("status", None)
+        if raw is None or str(raw).strip().lower() in ("", "auto", "automatic"):
+            status = None
+        else:
+            status = str(raw).strip().lower()
+            if status not in REVIEW_STATUSES:
+                raise CoordError("unknown status", 400)
+        note = payload.get("note", "")
+        if note is None:
+            note = ""
+        if not isinstance(note, str):
+            raise CoordError("note must be text", 400)
+        return _json(200, self.store.set_candidate_review(tic, status, note))
 
     def _work(self, method: str, action: str, headers: dict, body: bytes, project: str) -> Response:
         if method != "GET" and method != "POST":
