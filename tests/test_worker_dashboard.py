@@ -448,7 +448,7 @@ def test_page_reuses_the_mission_control_screen():
     assert 'id="proc_now"' in text
     assert "not available" in text
     assert "addEventListener('lc'" not in text
-    assert 'id="sectors"' in text and 'href="/sectors"' in text
+    assert 'id="sectors"' in text and 'href="/sectors?v=__APP_VERSION__"' in text
     assert "localStorage.getItem('rhexas.visual')" in text
     assert "fetch('/api/mode'" not in text
     assert "candidates, unverified" in text

@@ -120,7 +120,17 @@ def _static_bytes(name: str) -> bytes:
         raise FileNotFoundError(name)
     if not path.is_file():
         raise FileNotFoundError(name)
-    return path.read_bytes()
+    data = path.read_bytes()
+    if name.endswith(".html"):
+        from rhexas import __version__
+        data = data.replace(b"__APP_VERSION__", __version__.encode("ascii"))
+    return data
+
+
+def browser_url(host: str, port: int) -> str:
+    """Page address with the app version in the query, so a new build is not a cached document."""
+    from rhexas import __version__
+    return f"http://{page_host(host)}:{port}/?v={__version__}"
 
 
 class DashboardHooks:
@@ -622,7 +632,7 @@ def launch_in_thread(cache: Path, *, host: str | None, port: int | None, open_br
     """Start the dashboard beside the worker. Returns the URL opened in the browser."""
     bind_host, requested = resolve_bind(host, port)
     httpd, chosen = bind_server(bind_host, requested, make_handler(cache, fallback, services))
-    url = f"http://{page_host(bind_host)}:{chosen}/"
+    url = browser_url(bind_host, chosen)
 
     def _run() -> None:
         try:
@@ -683,7 +693,7 @@ def serve(cache: Path, *, host: str | None, port: int | None, open_browser: bool
     except ValueError as exc:
         print(f"rhexas worker-dashboard: {exc}", file=sys.stderr)
         return 2
-    url = f"http://{page_host(bind_host)}:{chosen}/"
+    url = browser_url(bind_host, chosen)
     _announce(bind_host, requested, chosen, url)
     if open_browser:
         _open_browser(url)

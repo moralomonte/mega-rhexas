@@ -199,6 +199,7 @@ def mission_state(snap: dict) -> dict:
         },
         "display": snap.get("display") if isinstance(snap.get("display"), dict) else None,
         "processing": snap.get("processing") if isinstance(snap.get("processing"), dict) else None,
+        "app_version": str(snap.get("app_version") or ""),
         "sky_rev": snap.get("sky_rev") or "0:0",
         "new_counts": {
             # total is candidates, unverified: the worker's own NEW rows, not a display cap.
