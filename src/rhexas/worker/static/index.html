@@ -85,6 +85,11 @@ button.switch[data-state="pausing"],button.switch[data-state="paused"]{border-co
 <div class="row"><span>Next</span><b id="next_line">–</b></div>
 <ul id="feed"></ul>
 </section>
+<section class="panel" id="panel-mission" style="grid-column:1/-1;height:108px">
+<h2>Mission progress</h2>
+<div class="row"><span>Verified units</span><b id="mission-pct">–</b></div>
+<p class="note" id="mission-note">Loads from the coordinator when this worker has a token.</p>
+</section>
 <section class="panel" id="panel-disk">
 <h2>Stored data</h2>
 <div class="row"><span>Processed</span><b id="disk-now">–</b></div>
@@ -224,11 +229,25 @@ function paint(data){
   note(stage+" · sector "+sector+" · batch "+unit+" · "+(pause.label||""));
   if(!booted){booted=true; $("ver").textContent="v"+PAGE_VERSION;}
 }
+let missionStamp=0;
+async function pollMission(){
+  if(Date.now()-missionStamp<12000) return;
+  missionStamp=Date.now();
+  try{
+    const res=await fetch("/api/mission/progress",{cache:"no-store"});
+    if(!res.ok) return;
+    const data=await res.json();
+    if(!data.ok){$("mission-note").textContent=data.detail||"Mission progress unavailable"; return;}
+    $("mission-pct").textContent=(data.percent_units||0).toFixed(1)+"% · "+(data.units_verified||0)+"/"+(data.units_total||0)+" units";
+    $("mission-note").textContent=data.scope_note||"Enrolled sectors only.";
+  }catch(e){ /* leave last value */ }
+}
 async function poll(){
   try{
     const res=await fetch("/api/status",{cache:"no-store"});
     if(!res.ok){note("status "+res.status); return;}
     paint(await res.json());
+    pollMission();
   }catch(e){
     note("status unavailable");
   }

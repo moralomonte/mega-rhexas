@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mega Rhexas · sectors</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#05060f;--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--ok:#34d399;--warn:#fbbf24;--c1:#7c5cff;--c2:#22d3ee;--pending:#5b6390;--wip:#e2e8ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:20px 18px 36px}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{margin:0;font-size:20px}
+h1 small{display:block;color:var(--mut);font-size:12px;font-weight:400}
+nav{margin-left:auto;display:flex;gap:8px}
+nav a{color:var(--c2);text-decoration:none;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.card{background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:18px;padding:14px 16px}
+.card h2{margin:0 0 10px;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut)}
+.s4{grid-column:span 4}.s5{grid-column:span 5}.s7{grid-column:span 7}.s8{grid-column:span 8}.s12{grid-column:span 12}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.s4,.s5,.s7,.s8,.s12{grid-column:auto}}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media(max-width:700px){.stats{grid-template-columns:1fr 1fr}}
+.stat b{display:block;font-size:24px;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.pct{font-size:42px;font-weight:700;font-variant-numeric:tabular-nums;margin:4px 0}
+.note{color:var(--mut);font-size:12px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.pill{border-radius:999px;padding:6px 12px;border:1px solid var(--bd);font-size:12px;font-weight:650;cursor:default;position:relative}
+.pill[data-state=pending]{background:rgba(91,99,144,.25);color:#c9d0ff}
+.pill[data-state=working]{background:rgba(251,191,36,.18);color:var(--warn)}
+.pill[data-state=done]{background:rgba(52,211,153,.16);color:var(--ok)}
+.pill em{display:block;font-style:normal;font-size:10px;font-weight:500;color:var(--mut);margin-top:2px}
+#sky-panel{height:320px}
+#sky-panel canvas{display:block;width:100%;height:300px}
+#timeline-panel{height:220px}
+#timeline-panel canvas{display:block;width:100%;height:200px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--mut);margin:8px 0}
+.legend i{display:inline-block;width:14px;height:8px;border-radius:4px;margin-right:4px;vertical-align:middle}
+.legend .pending{background:var(--pending)}
+.legend .working{background:var(--warn)}
+.legend .done{background:var(--ok)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div>
+<h1>Mission sectors <small>Private · verified units only count as done</small></h1>
+</div>
+<nav><a href="/">Status</a><a href="/account">Account</a></nav>
+</header>
+<div class="grid">
+<section class="card s4">
+<h2>Overall progress</h2>
+<div class="pct" id="pct">–</div>
+<p class="note" id="pct-note">Loading…</p>
+</section>
+<section class="card s8">
+<h2>Totals</h2>
+<div class="stats">
+<div class="stat"><span>Stars searched</span><b id="t-stars">–</b></div>
+<div class="stat"><span>Units verified</span><b id="t-units">–</b></div>
+<div class="stat"><span>Signals</span><b id="t-signals">–</b></div>
+<div class="stat"><span>Candidates</span><b id="t-cands">–</b></div>
+</div>
+</section>
+<section class="card s12">
+<h2>TESS sectors</h2>
+<div class="legend">
+<span><i class="pending"></i>Pending</span>
+<span><i class="working"></i>Working</span>
+<span><i class="done"></i>Done</span>
+</div>
+<div class="pills" id="pills"><span class="note">Loading…</span></div>
+</section>
+<section class="card s7">
+<h2>Sky map</h2>
+<div id="sky-panel"><canvas id="sky" width="900" height="300"></canvas></div>
+<p class="note">Footprints use HEASARC spacecraft pointing. Gold dots are agreed candidates (jittered inside the sector).</p>
+</section>
+<section class="card s5">
+<h2>Units verified per day</h2>
+<div id="timeline-panel"><canvas id="timeline" width="640" height="200"></canvas></div>
+</section>
+</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const COL={pending:'#5b6390',working:'#fbbf24',done:'#34d399',cand:'#ffd166'};
+function num(n){return (n==null)?'–':Number(n).toLocaleString();}
+function aitoff(ra, dec){
+  const la=ra*Math.PI/180, phi=dec*Math.PI/180;
+  const cosphi=Math.cos(phi);
+  const lon=la, x=cosphi*Math.sin(lon), y=Math.sin(phi);
+  const z=Math.sqrt(1-x*x-y*y)||1;
+  return [x/(z*Math.PI*0.5), y/(z*Math.PI*0.5)];
+}
+function drawSky(footprints, candidates){
+  const c=$('sky'), x=c.getContext('2d');
+  const w=c.clientWidth, h=300;
+  c.width=w; c.height=h;
+  x.fillStyle='#070818'; x.fillRect(0,0,w,h);
+  const cx=w/2, cy=h/2, R=Math.min(w,h)*0.44;
+  x.strokeStyle='rgba(255,255,255,.08)'; x.beginPath();
+  for(let i=1;i<4;i++){x.ellipse(cx,cy,R*i/3,R*i/3,0,0,7);} x.stroke();
+  for(const fp of footprints||[]){
+    const col=COL[fp.state]||COL.pending;
+    const poly=fp.polygon||[];
+    if(!poly.length) continue;
+    x.beginPath();
+    for(let i=0;i<poly.length;i++){
+      const [px,py]=aitoff(poly[i][0], poly[i][1]);
+      const X=cx+px*R, Y=cy-py*R;
+      if(i===0) x.moveTo(X,Y); else x.lineTo(X,Y);
+    }
+    x.closePath();
+    x.fillStyle=col+'55'; x.fill();
+    x.strokeStyle=col; x.lineWidth=1.2; x.stroke();
+  }
+  for(const dot of candidates||[]){
+    const [px,py]=aitoff(dot.ra, dot.dec);
+    x.fillStyle=COL.cand; x.beginPath(); x.arc(cx+px*R, cy-py*R, 3, 0, 7); x.fill();
+  }
+}
+function drawTimeline(rows){
+  const c=$('timeline'), x=c.getContext('2d');
+  const w=c.clientWidth, h=200;
+  c.width=w; c.height=h;
+  x.fillStyle='#070818'; x.fillRect(0,0,w,h);
+  if(!rows||!rows.length){ x.fillStyle='#8b93b8'; x.fillText('No verified units yet', 12, 24); return; }
+  const pad=28, inner=w-pad*2, innerH=h-pad*2;
+  const maxV=Math.max(1, ...rows.map(r=>r.units_verified||0));
+  const barW=Math.max(4, inner/rows.length - 2);
+  rows.forEach((row,i)=>{
+    const v=row.units_verified||0;
+    const bh=innerH*(v/maxV);
+    const bx=pad+i*(inner/rows.length);
+    const by=h-pad-bh;
+    const g=x.createLinearGradient(0,by,0,by+bh);
+    g.addColorStop(0,'#7c5cff'); g.addColorStop(1,'#22d3ee');
+    x.fillStyle=g; x.fillRect(bx,by,barW,bh);
+  });
+  x.fillStyle='#8b93b8'; x.font='11px sans-serif';
+  x.fillText(rows[0].day+' … '+rows[rows.length-1].day, pad, 14);
+}
+async function load(){
+  const res=await fetch('/api/v1/mission/overview',{credentials:'include'});
+  if(res.status===401){ location.href='/login?next='+encodeURIComponent('/sectors'); return; }
+  const data=await res.json();
+  $('pct').textContent=(data.percent_units||0).toFixed(1)+'%';
+  $('pct-note').textContent=num(data.units_verified)+' of '+num(data.units_total)+' units verified. '+ (data.scope_note||'');
+  const t=data.totals||{};
+  $('t-stars').textContent=num(t.stars_searched);
+  $('t-units').textContent=num(t.units_verified);
+  $('t-signals').textContent=num(t.signals);
+  $('t-cands').textContent=num(t.candidates);
+  const pills=$('pills'); pills.replaceChildren();
+  const skyMap={};
+  for(const row of data.sectors||[]){
+    const el=document.createElement('span');
+    el.className='pill';
+    el.dataset.state=row.state;
+    el.textContent='S'+row.sector;
+    const em=document.createElement('em');
+    em.textContent=num(row.units_done)+' / '+num(row.units_total)+' units';
+    el.append(em);
+    el.title='Stars '+num(row.stars_done)+' / '+num(row.stars_total);
+    pills.append(el);
+    skyMap[row.sector]=row.state;
+  }
+  if(!data.sectors||!data.sectors.length) pills.append(document.createTextNode('No sectors enrolled yet.'));
+  const footprints=(data.sky&&data.sky.footprints||[]).map(fp=>({...fp, state:skyMap[fp.sector]||'pending'}));
+  drawSky(footprints, data.sky&&data.sky.candidates);
+  drawTimeline(data.timeline||[]);
+}
+load();
+setInterval(load, 4000);
+</script>
+</body>
+</html>

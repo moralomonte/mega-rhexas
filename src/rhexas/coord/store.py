@@ -1684,6 +1684,10 @@ class Store:
             "progress_total": "INTEGER",
         })
         self._migrate_accounts()
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_units_agreed_at ON units(agreed_at) "
+            "WHERE state='agreed' AND agreed_at IS NOT NULL"
+        )
 
     def _migrate_accounts(self) -> None:
         """Attach legacy invites to accounts. Safe to run twice on a live database."""

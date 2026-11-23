@@ -570,6 +570,22 @@ def test_pace_settings_ignore_picture_speed():
     assert pace_settings("eco", {"procs": 8, "threads": 8, "priority": "low"})["paused"] is False
 
 
+def test_mission_progress_proxy_without_hook(tmp_path):
+    from rhexas.worker.dashboard import bind_server, make_handler
+    handler = make_handler(tmp_path, {}, services=None)
+    httpd, port = bind_server("127.0.0.1", 0, handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        import urllib.request
+        body = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/mission/progress", timeout=5).read()
+        payload = json.loads(body)
+        assert payload["ok"] is False
+        assert "not configured" in payload["detail"]
+    finally:
+        httpd.shutdown()
+
+
 def test_aperture_from_disk_and_sky_cutout_cache(tmp_path):
     import io
     import zipfile

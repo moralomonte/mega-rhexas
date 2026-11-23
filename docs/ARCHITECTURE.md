@@ -87,7 +87,11 @@ not consume them.
 `{"signup":"closed","copies_required":1,"device_linking":"closed"}`.
 
 Operator reads (`/api/v1/status`, `/api/v1/workers`, `/api/v1/candidates`,
-`/api/v1/events`) still require the admin token.
+`/api/v1/events`) still require the admin token. Phase 3 adds a private
+``GET /sectors`` HTML page (admin token or account session) and
+``GET /api/v1/mission/overview`` (same auth). ``GET /api/v1/mission/progress``
+accepts a worker ``rhx_`` token or operator auth; the worker dashboard proxies
+it at ``GET /api/mission/progress``.
 
 ## Worker dashboard endpoints
 

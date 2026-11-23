@@ -73,6 +73,10 @@ class CoordinatorClient:
     def release(self, assignment_id: int) -> dict:
         return self._request("POST", self._task("release"), {"assignment_id": assignment_id})
 
+    def mission_progress(self) -> dict:
+        """Compact overall progress for enrolled sectors (worker or operator auth)."""
+        return self._request("GET", "/api/v1/mission/progress", None)
+
     def _request(self, method: str, path: str, payload) -> dict:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base + path, data=data, method=method)
