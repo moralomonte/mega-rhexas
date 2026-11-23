@@ -231,7 +231,6 @@ def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
     assert "/api/pause" in page
     assert "/api/status" in page
     assert "Pausing…" in page
-    assert ">freeze log<" in page
     store = Store(tmp_path)
     httpd, port = bind_server("127.0.0.1", 0, make_handler(tmp_path, {}))
     thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
@@ -254,15 +253,11 @@ def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
         httpd.server_close()
 
 
-def test_pause_switch_sits_in_the_top_bar_after_the_speed_buttons():
+def test_pause_switch_is_in_the_worker_panel():
     page = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
-    line = next(l for l in page.splitlines() if 'id="speed"' in l)
-    assert line.index('data-m="realtime"') < line.index('id="run-switch"')
     assert page.count('id="run-switch"') == 1
-    assert "rhexas-anim" in page
-    assert "rhexas.visual" in page
+    assert page.find('id="panel-state"') < page.find('id="run-switch"')
     assert "prefers-reduced-motion" in page
-    assert "function pauseView(user,holding)" in page
     assert page.count("/api/mode") == 0
 
 

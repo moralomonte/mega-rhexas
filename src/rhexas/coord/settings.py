@@ -39,12 +39,12 @@ class Settings:
 class VerificationConfig:
     """How many accepted uploads a batch needs before it counts.
 
-    ``2`` is the two-account agreement check. ``1`` pauses that check: the
-    first accepted upload counts, and no second copy is issued. The comparison
-    code stays in place and runs again when this is set back to ``2``.
+    The running coordinator always checks one upload. A file may still say
+    ``2`` so an existing coord.toml loads; that value is not used. Nothing
+    in the database is deleted when the count changes.
     """
 
-    copies_required: int = 2
+    copies_required: int = 1
 
 
 @dataclass(frozen=True)
@@ -145,10 +145,9 @@ max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 # replicas = 1             # accept a single upload and skip the comparison
 
 [verification]
-# 2: two different accounts must agree. 1: the first accepted upload counts,
-# and no second copy is issued. The two-copy checks stay in the program and
-# come back when this is set to 2. Existing copies are never deleted.
-copies_required = 2
+# The process always checks one upload before it trusts a batch. 2 is still
+# accepted so an older coord.toml starts, and is not used. Existing rows stay.
+copies_required = 1
 
 [accounts]
 # invite: signup needs a code from `rhexas coord invite create` (the default).

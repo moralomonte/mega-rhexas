@@ -150,14 +150,11 @@ def _init(path) -> int:
             print(f"database ready: {coord.db}")
             print(f"admin token already exists ({token_path} if init wrote it; otherwise admin-token --reset)")
             print(f"listening config: http://{coord.host}:{coord.port}")
-            if coord.accounts.invite_only:
-                print("Signup is invite-only. Create a code with `rhexas coord invite create`.")
-            else:
-                print("Signup is open. New accounts do not need an invite code.")
-            if coord.verification.copies_required == 1:
-                print("Verification is one copy. A batch counts on the first accepted upload.")
-            else:
-                print("Verification is two copies. Two different accounts must agree.")
+            print("Signup is closed. Create the owner's worker with `rhexas coord token create`.")
+            print(
+                "Verification is one checked copy. The server checks each upload "
+                "before the batch counts. A copies_required value in this file is not used."
+            )
             if coord.smtp.enabled():
                 print(f"Verification email is on ({coord.smtp.host}).")
             else:

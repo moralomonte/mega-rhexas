@@ -30,7 +30,7 @@ def _get(port, path):
 def test_dashboard_pages_and_apis_are_not_stored(tmp_path):
     httpd, port, thread = _serve(tmp_path)
     try:
-        for path in ("/", "/sectors", "/vetting", "/api/status", "/api/vetting", "/api/star?tic=1", "/api/sky?scope=all", "/img/triskelion.svg", "/events?once=1"):
+        for path in ("/", "/sectors", "/vetting", "/batches", "/discoveries", "/candidates", "/api/status", "/api/vetting", "/api/star?tic=1", "/api/sky?scope=all", "/api/retention", "/img/triskelion.svg", "/events?once=1"):
             response, body = _get(port, path)
             cache = response.headers.get("Cache-Control", "")
             assert "no-store" in cache.lower(), path

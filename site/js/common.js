@@ -2,7 +2,7 @@
 (function (root) {
   var MR = root.MR || (root.MR = {});
   MR.API = "https://api.megarhexas.com";
-  MR.config = { signup: "open", copies_required: 1 };
+  MR.config = { signup: "closed", copies_required: 1 };
   MR.configReady = false;
   MR.RELEASES = "https://github.com/moralomonte/mega-rhexas/releases/latest";
   MR.GH_RELEASE_API = "https://api.github.com/repos/moralomonte/mega-rhexas/releases/latest";
@@ -168,8 +168,10 @@
 
   function applyConfig(cfg) {
     var copies = cfg && Number(cfg.copies_required) === 1 ? 1 : 2;
-    var signup = cfg && cfg.signup === "open" ? "open" : "invite";
-    MR.config = { signup: signup, copies_required: copies };
+    var signup = cfg && (cfg.signup === "open" || cfg.signup === "invite" || cfg.signup === "closed")
+      ? cfg.signup
+      : "closed";
+    MR.config = { signup: signup, copies_required: copies, device_linking: (cfg && cfg.device_linking) || "closed" };
     MR.configReady = true;
     document.querySelectorAll("[data-copies]").forEach(function (node) {
       node.hidden = String(node.getAttribute("data-copies")) !== String(copies);
@@ -197,7 +199,7 @@
       if (!res.ok) throw new Error("config");
       return res.json();
     }).then(applyConfig).catch(function () {
-      applyConfig({ signup: "invite", copies_required: 2 });
+      applyConfig({ signup: "closed", copies_required: 1, device_linking: "closed" });
     });
   }
 

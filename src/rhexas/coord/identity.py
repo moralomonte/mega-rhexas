@@ -21,9 +21,14 @@ from .logic import check_worker_name
 from .store import CoordError, hash_token, iso, new_token, parse_iso
 
 
+SIGNUP_CLOSED = "Signup is closed. This search runs on one computer with a worker token."
+DEVICE_CLOSED = "Device linking is closed. Paste the worker token on that computer."
+
+
 def signup(store, *, email: str, password: str, display_name: str, invite_code: str,
            require_invite: bool, ip: str, user_agent: str, session_days: int,
            company: str = "") -> tuple[dict, str]:
+    raise CoordError(SIGNUP_CLOSED, 403)
     _gate(store, [
         ("signup", f"ip:{ip}", auth.SIGNUP_PER_IP, auth.SIGNUP_WINDOW_S),
         ("signup", "global", auth.SIGNUP_PER_HOUR_GLOBAL, auth.SIGNUP_WINDOW_S),
@@ -202,6 +207,7 @@ def revoke_device(store, account_id: int, device_id: int) -> None:
 
 
 def device_start(store, hostname: str, ip: str) -> dict:
+    raise CoordError(DEVICE_CLOSED, 403)
     _gate(store, [
         ("device_start", f"ip:{ip}", auth.DEVICE_START_PER_IP, auth.DEVICE_START_WINDOW_S),
     ], record=True)
@@ -241,6 +247,7 @@ def device_start(store, hostname: str, ip: str) -> dict:
 
 
 def device_poll(store, device_code: str, ip: str) -> tuple[int, dict]:
+    raise CoordError(DEVICE_CLOSED, 403)
     _gate(store, [
         ("device_poll", f"ip:{ip}", auth.DEVICE_POLL_PER_IP, auth.DEVICE_POLL_WINDOW_S),
     ], record=True)
@@ -291,6 +298,7 @@ def device_poll(store, device_code: str, ip: str) -> tuple[int, dict]:
 
 
 def device_preview(store, user_code: str) -> dict:
+    raise CoordError(DEVICE_CLOSED, 403)
     canonical = auth.canonical_user_code(user_code)
     with store._tx() as conn:
         _expire_device_grants(store, conn, store.clock())
@@ -304,6 +312,7 @@ def device_preview(store, user_code: str) -> dict:
 
 
 def device_approve(store, account_id: int, user_code: str) -> dict:
+    raise CoordError(DEVICE_CLOSED, 403)
     canonical = auth.canonical_user_code(user_code)
     token = new_token()
     with store._tx() as conn:
@@ -342,6 +351,7 @@ def device_approve(store, account_id: int, user_code: str) -> dict:
 
 
 def device_deny(store, account_id: int, user_code: str) -> dict:
+    raise CoordError(DEVICE_CLOSED, 403)
     canonical = auth.canonical_user_code(user_code)
     with store._tx() as conn:
         _expire_device_grants(store, conn, store.clock())

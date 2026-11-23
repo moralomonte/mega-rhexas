@@ -1,11 +1,9 @@
-"""Friends-beta coordinator.
+"""Coordinator for one worker.
 
-Workers do the download and the search. This process hands out work units,
-keeps compact results, and (for exoplanets) accepts a unit when two different
-accounts agree, unless ``[verification] copies_required`` is 1. People sign up
-on the API (invite-only unless coord.toml says open) and link a computer with
-a device code. Old invite tokens still work as legacy accounts. It is meant to
-run on a small VPS or a home server.
+The worker does the download and the search. This process hands out batches,
+stores the compact results, and checks each upload before it trusts the batch.
+Signup and device linking are closed. The owner's worker uses an ``rhx_`` token.
+Old account tables stay in the database. It is meant to run on a small VPS.
 """
 
 __all__ = ["Settings"]

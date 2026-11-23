@@ -102,12 +102,68 @@ def runtime_cap_gb(cache: Path, configured_gb: float) -> float:
     return cap
 
 
+def _update_prefs(cache: Path, **fields) -> dict:
+    data = _read_json(prefs_path(cache))
+    if not isinstance(data, dict):
+        data = {}
+    data.update(fields)
+    _write_json(prefs_path(cache), data)
+    return data
+
+
 def write_cap_gb(cache: Path, max_cache_gb: float) -> float:
     cap = float(max_cache_gb)
     if cap <= 0:
         raise ValueError("storage cap must be greater than 0")
-    _write_json(prefs_path(cache), {"max_cache_gb": cap})
+    _update_prefs(cache, max_cache_gb=cap)
     return cap
+
+
+def download_sectors(cache: Path) -> list[int]:
+    """Sectors the worker should claim. Empty means any sector the coordinator offers."""
+    data = _read_json(prefs_path(cache))
+    raw = data.get("download_sectors") if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        return []
+    found: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        try:
+            sector = int(item)
+        except (TypeError, ValueError):
+            continue
+        if sector > 0 and sector not in seen:
+            seen.add(sector)
+            found.append(sector)
+    return found
+
+
+def write_download_sectors(cache: Path, sectors: list[int]) -> list[int]:
+    cleaned = download_sectors_from(sectors)
+    _update_prefs(cache, download_sectors=cleaned)
+    return cleaned
+
+
+def download_sectors_from(sectors) -> list[int]:
+    if sectors is None:
+        return []
+    if isinstance(sectors, (str, int)) and not isinstance(sectors, bool):
+        sectors = [sectors]
+    if not isinstance(sectors, list):
+        raise ValueError("sectors must be a list of sector numbers")
+    found: list[int] = []
+    seen: set[int] = set()
+    for item in sectors:
+        try:
+            sector = int(item)
+        except (TypeError, ValueError):
+            raise ValueError("sectors must be a list of sector numbers") from None
+        if sector < 1:
+            raise ValueError("sector must be >= 1")
+        if sector not in seen:
+            seen.add(sector)
+            found.append(sector)
+    return found
 
 
 def upsert_unit(cache: Path, assignment: dict, **fields) -> dict:
@@ -378,7 +434,10 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
             "bytes": 0, "limit_bytes": 0, "summary_limit": 0,
         }
     from .cache import directory_bytes
+    from .retention import active_sectors, maybe_enforce, usage
     vetting_bytes = directory_bytes(Path(cache) / "vetting")
+    maybe_enforce(cache, active=active_sectors(cache))
+    processed = usage(cache)
     return {
         "units": units,
         "disk_bytes": used,
@@ -389,4 +448,6 @@ def holdings_view(cache: Path, *, configured_cap_gb: float, queue_max: int, min_
         "scanning_id": scanning_assignment_id(cache),
         "records": records,
         "vetting_bytes": vetting_bytes,
+        "download_sectors": download_sectors(cache),
+        "processed": processed,
     }

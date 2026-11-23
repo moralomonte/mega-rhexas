@@ -544,21 +544,43 @@ def prefetch_block(cache: Path, cfg: Config, n_tics: int, *, queued: int = 0, qu
     )
 
 
-def _call_claim(client, *, prefetch: bool) -> dict:
-    """Claim one batch. Clients that predate the prefetch argument are left on one lease."""
+def _download_sectors(cache: Path) -> list[int]:
+    from .holdings import download_sectors
+    try:
+        return download_sectors(cache)
+    except Exception:
+        return []
+
+
+def _call_claim(client, *, prefetch: bool, sectors: list[int] | None = None) -> dict:
+    """Claim one batch. Clients that predate the prefetch argument are left on one lease.
+
+    ``sectors`` is sent only when this client accepts it and the list is not empty.
+    An empty list means any sector, which is what the installed app asks for.
+    """
     claim = client.claim
-    if prefetch:
-        try:
-            params = inspect.signature(claim).parameters
-        except (TypeError, ValueError):
-            return {"assignment": None}
-        accepts = "prefetch" in params or any(
+    try:
+        params = inspect.signature(claim).parameters
+    except (TypeError, ValueError):
+        params = {}
+
+    def accepts(name: str) -> bool:
+        return name in params or any(
             item.kind is inspect.Parameter.VAR_KEYWORD for item in params.values()
         )
-        if not accepts:
+
+    kwargs: dict = {}
+    if prefetch:
+        if not accepts("prefetch"):
             return {"assignment": None}
-        body = claim(prefetch=True)
-    else:
+        kwargs["prefetch"] = True
+    if sectors and accepts("sectors"):
+        kwargs["sectors"] = list(sectors)
+    try:
+        body = claim(**kwargs) if kwargs else claim()
+    except TypeError:
+        if prefetch:
+            return {"assignment": None}
         body = claim()
     return body if isinstance(body, dict) else {"assignment": None}
 
@@ -643,7 +665,7 @@ def _resume_or_claim(client, cache: Path) -> tuple[dict | None, dict | None]:
         _write_state(_next_path(cache), pre)
     if active is not None:
         return active, pre
-    body = _call_claim(client, prefetch=False)
+    body = _call_claim(client, prefetch=False, sectors=_download_sectors(cache))
     claimed = body.get("assignment")
     if not isinstance(claimed, dict) or claimed.get("assignment_id") is None:
         return None, None
@@ -823,7 +845,7 @@ class _PrefetchJob:
                 if reason:
                     print(f"prefetch skipped: {reason}", flush=True)
                     return
-                body = _call_claim(self.client, prefetch=True)
+                body = _call_claim(self.client, prefetch=True, sectors=_download_sectors(self.cache))
                 assignment = body.get("assignment") if isinstance(body, dict) else None
                 if not isinstance(assignment, dict) or assignment.get("assignment_id") is None:
                     return
@@ -1488,6 +1510,11 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
             prefetcher.wait()
             finished = int(assignment["assignment_id"])
             print(f"unit {assignment['assignment_id']} uploaded; light curves kept until cleared", flush=True)
+            try:
+                from .retention import active_sectors, enforce, processed_limit_gb
+                enforce(cache, processed_limit_gb(cache, cfg.worker.processed_limit_gb), active=active_sectors(cache))
+            except Exception:
+                pass
             if once:
                 return 0
             nxt = _promote_next(cache)

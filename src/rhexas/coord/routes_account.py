@@ -99,10 +99,10 @@ def _copy_kw(app) -> dict:
 
 
 def _public_config(app) -> dict:
-    copies = app.store.public_copies()
     return {
-        "signup": "invite" if app.accounts.invite_only else "open",
-        "copies_required": 1 if copies <= 1 else 2,
+        "signup": "closed",
+        "copies_required": app.store.public_copies(),
+        "device_linking": "closed",
     }
 
 
@@ -128,6 +128,12 @@ def _login_json(app, headers, body) -> Response:
 
 
 def _signup_html(app, method, headers, body, query) -> Response:
+    if method in ("GET", "POST"):
+        return _html(pages.message_page(
+            "Sign up",
+            identity.SIGNUP_CLOSED,
+            **_copy_kw(app),
+        ), 403)
     nxt = auth.safe_next(_first(query, "next"))
     if method == "GET":
         return _html(pages.signup_page(
@@ -246,6 +252,11 @@ def _account_html(app, headers, query) -> Response:
 
 
 def _link_html(app, headers, query) -> Response:
+    return _html(pages.message_page(
+        "Link a computer",
+        identity.DEVICE_CLOSED,
+        **_copy_kw(app),
+    ), 403)
     code = _first(query, "code")
     if not code:
         return _html(pages.message_page(

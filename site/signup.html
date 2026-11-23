@@ -44,7 +44,12 @@
 </header>
 <main id="main" tabindex="-1">
   <div class="wrap">
-    <div class="auth-shell">
+    <div class="card" data-signup="closed">
+      <h1>Signup is closed</h1>
+      <p>This search runs on one computer. New accounts are not accepted. The owner’s worker uses a token from <code>rhexas coord token create</code>.</p>
+      <p data-copies="1">Each batch is checked once on the server before it counts.</p>
+    </div>
+    <div class="auth-shell" data-signup="open" hidden>
       <div>
         <p class="kicker" data-signup="invite">Invite-only beta</p>
         <p class="kicker" data-signup="open" hidden>Open beta</p>

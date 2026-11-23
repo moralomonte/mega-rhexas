@@ -66,7 +66,17 @@ _EMPTY_LIFE = {
     "contributions_verified": 0,
 }
 
-_SAMPLE = {"path": "", "at": 0.0, "cache_bytes": 0, "cpu_percent": None}
+_SAMPLE = {
+    "path": "",
+    "at": 0.0,
+    "walk_at": 0.0,
+    "cache_bytes": 0,
+    "cpu_percent": None,
+    "net_recv": None,
+    "net_sent": None,
+    "net_recv_bps": None,
+    "net_sent_bps": None,
+}
 
 PACE_MODES = ("eco", "live", "turbo")
 
@@ -1005,26 +1015,56 @@ def delete_unit_stars(cache: Path, sector: int, unit: int) -> int:
         conn.close()
 
 
-def _sample_machine(cache: Path) -> tuple[int, float | None]:
-    """Cache size and system CPU, refreshed a few times a minute so the walk stays cheap."""
+def _sample_machine(cache: Path) -> tuple[int, float | None, float | None, float | None]:
+    """Cache size, CPU, and network throughput.
+
+    The directory walk is a few times a minute. CPU and byte counters refresh
+    about once a second so a 1–2 s dashboard poll can draw a rate.
+    """
     now = time.time()
     key = str(cache)
-    if _SAMPLE["path"] == key and now - _SAMPLE["at"] < 5:
-        return int(_SAMPLE["cache_bytes"]), _SAMPLE["cpu_percent"]
-    cache_bytes = 0
+    same = _SAMPLE["path"] == key
+    if same and now - float(_SAMPLE["at"]) < 1.0:
+        return (
+            int(_SAMPLE["cache_bytes"]),
+            _SAMPLE["cpu_percent"],
+            _SAMPLE["net_recv_bps"],
+            _SAMPLE["net_sent_bps"],
+        )
+    if (not same) or now - float(_SAMPLE.get("walk_at") or 0) >= 5:
+        try:
+            from rhexas.worker.cache import directory_bytes
+            cache_bytes = int(directory_bytes(cache))
+        except OSError:
+            cache_bytes = 0
+        walk_at = now
+    else:
+        cache_bytes = int(_SAMPLE["cache_bytes"])
+        walk_at = float(_SAMPLE.get("walk_at") or now)
     cpu = None
-    try:
-        from rhexas.worker.cache import directory_bytes
-        cache_bytes = int(directory_bytes(cache))
-    except OSError:
-        cache_bytes = 0
+    recv = sent = None
     try:
         import psutil
         cpu = float(psutil.cpu_percent(interval=None))
+        counters = psutil.net_io_counters()
+        recv = int(counters.bytes_recv)
+        sent = int(counters.bytes_sent)
     except Exception:
-        cpu = None
-    _SAMPLE.update(path=key, at=now, cache_bytes=cache_bytes, cpu_percent=cpu)
-    return cache_bytes, cpu
+        cpu = _SAMPLE["cpu_percent"] if same else None
+    recv_bps = sent_bps = None
+    if recv is not None and same and _SAMPLE["net_recv"] is not None:
+        dt = now - float(_SAMPLE["at"])
+        if dt >= 0.4:
+            recv_bps = max(0.0, (recv - int(_SAMPLE["net_recv"])) / dt)
+            sent_bps = max(0.0, (sent - int(_SAMPLE["net_sent"])) / dt)
+        else:
+            recv_bps = _SAMPLE["net_recv_bps"]
+            sent_bps = _SAMPLE["net_sent_bps"]
+    _SAMPLE.update(
+        path=key, at=now, walk_at=walk_at, cache_bytes=cache_bytes, cpu_percent=cpu,
+        net_recv=recv, net_sent=sent, net_recv_bps=recv_bps, net_sent_bps=sent_bps,
+    )
+    return cache_bytes, cpu, recv_bps, sent_bps
 
 
 def _worker_alive(pid) -> bool:
@@ -1091,7 +1131,17 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
     control = kv.get("control") if isinstance(kv.get("control"), dict) else {}
     user_paused = bool(control.get("user_paused"))
     holding = bool(control.get("holding")) and user_paused
-    cache_bytes, cpu = _sample_machine(cache)
+    cache_bytes, cpu, recv_bps, sent_bps = _sample_machine(cache)
+    try:
+        from .retention import usage as processed_usage
+        configured_limit = fallback.get("processed_limit_gb")
+        try:
+            configured_limit = float(configured_limit) if configured_limit is not None else None
+        except (TypeError, ValueError):
+            configured_limit = None
+        processed = processed_usage(cache, configured_limit)
+    except Exception:
+        processed = {"bytes": 0, "limit_gb": 20.0, "limit_bytes": 20_000_000_000, "sectors": []}
     log_tail, log_size = read_log_tail(cache)
     max_gb = worker.get("max_cache_gb", fallback.get("max_cache_gb"))
     try:
@@ -1129,6 +1179,9 @@ def snapshot(cache: Path, *, fallback: dict | None = None) -> dict:
             "max_cache_gb": max_gb,
             "cache_bytes": cache_bytes,
             "cpu_percent": cpu,
+            "net_recv_bps": recv_bps,
+            "net_sent_bps": sent_bps,
+            "processed": processed,
             "pid": worker.get("pid") or 0,
             "worker_alive": _worker_alive(worker.get("pid")),
             "mode": worker.get("mode") if worker.get("mode") in PACE_MODES else "live",

@@ -26,13 +26,14 @@ max_miss_fraction = 0.02 # fraction of stars only one worker managed to measure
 # replicas = 1             # older override; [verification] copies_required is the switch
 
 [verification]
-# 2: two different accounts must agree. 1: the first accepted upload counts,
-# and no second copy is issued. Existing copies are never deleted.
-copies_required = 2
+# The process always checks one upload before it trusts a batch. 2 is still
+# accepted so an older file starts, and is not used. Existing rows stay.
+copies_required = 1
 
 [accounts]
-# invite: signup needs a code from `rhexas coord invite create` (the default).
-# open: anyone can create an account on megarhexas.com.
+# Signup and device linking are closed in the running process. These keys
+# stay so an older coord.toml still loads. Worker tokens come from
+# `rhexas coord token create`.
 signup = "invite"
 public_origin = "https://megarhexas.com"
 api_public_url = "https://api.megarhexas.com"

@@ -85,9 +85,10 @@ def test_two_workers_share_a_unit_and_a_third_does_not(tmp_path):
         first = store.claim(ids["ada"])
         second = store.claim(ids["bea"])
         third = store.claim(ids["cam"])
-        assert first["tics"] == second["tics"] == [1, 2]
+        assert first["tics"] == [1, 2]
+        assert second["tics"] == [3, 4]
         assert first["assignment_id"] != second["assignment_id"]
-        assert third["tics"] == [3, 4]
+        assert third is None
         assert store.claim(ids["ada"])["assignment_id"] == first["assignment_id"]
         assert store.authenticate("nope") is None
         assert store.authenticate(tokens["ada"])["name"] == "ada"
@@ -106,10 +107,10 @@ def test_agreeing_results_credit_both_workers_and_store_the_candidate(tmp_path):
         store.enroll_tics(107, [1, 2], unit_size=500)
         _, ids = _ids(store, "ada", "bea")
         ada = store.claim(ids["ada"])
-        bea = store.claim(ids["bea"])
-        assert store.submit(ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1)])["verdict"] == "pending"
-        done = store.submit(ids["bea"], bea["assignment_id"], [_star(1), _star(2)], [_cand(1), _cand(2, status="known_TOI")])
+        assert store.claim(ids["bea"]) is None
+        done = store.submit(ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1), _cand(2, status="known_TOI")])
         assert done["verdict"] == "agreed"
+        assert done["detail"].startswith("verified ")
         assert done["candidates"] == 1
         snap = store.status()
         assert snap["units_agreed"] == 1
@@ -117,9 +118,9 @@ def test_agreeing_results_credit_both_workers_and_store_the_candidate(tmp_path):
         assert snap["candidates_new"] == 1
         by_name = {row["name"]: row for row in store.workers_public()}
         assert by_name["ada"]["stars_searched"] == 2
-        assert by_name["bea"]["stars_searched"] == 2
+        assert by_name["bea"]["stars_searched"] == 0
         assert by_name["ada"]["candidates_found"] == 1
-        assert by_name["bea"]["candidates_found"] == 1
+        assert by_name["bea"]["candidates_found"] == 0
         assert store.claim(ids["ada"]) is None
         assert store.candidates_public()[0]["tic"] == 1
     finally:
@@ -132,10 +133,9 @@ def test_disagreement_reissues_without_credit(tmp_path):
         store.enroll_tics(96, [7], unit_size=500)
         _, ids = _ids(store, "ada", "bea", "cam")
         ada = store.claim(ids["ada"])
-        bea = store.claim(ids["bea"])
-        store.submit(ids["ada"], ada["assignment_id"], [_star(7, period=1.0)], [])
-        result = store.submit(ids["bea"], bea["assignment_id"], [_star(7, period=9.0)], [])
+        result = store.submit(ids["ada"], ada["assignment_id"], [_star(7, period=-1.0)], [])
         assert result["verdict"] == "disagreed"
+        assert "implausible" in result["detail"]
         by_name = {row["name"]: row for row in store.workers_public()}
         assert by_name["ada"]["stars_searched"] == 0
         assert by_name["bea"]["candidates_found"] == 0
@@ -149,7 +149,7 @@ def test_disagreement_reissues_without_credit(tmp_path):
         assert snap["units_submitted"] == 0
         assert snap["tics_submitted"] == 0
         rejected = [row for row in store.contributions() if row["outcome"] == "rejected"]
-        assert len(rejected) == 2
+        assert len(rejected) == 1
         assert all(row["verified"] == 0 and row["project"] == "exoplanets" for row in rejected)
     finally:
         store.close()
@@ -219,7 +219,7 @@ def test_http_auth_claim_and_admin_page(tmp_path):
         assert listed == 200
         catalog = json.loads(body)["projects"]
         assert catalog[0]["name"] == "exoplanets"
-        assert catalog[0]["replicas"] == 2
+        assert catalog[0]["replicas"] == 1
         missing, _, _ = _call(
             port, "POST", "/api/v1/projects/asteroids/tasks/claim", {},
             headers={"Authorization": f"Bearer {token}"},
@@ -228,7 +228,7 @@ def test_http_auth_claim_and_admin_page(tmp_path):
         scoped, _, body = _call(
             port, "GET", "/api/v1/projects/exoplanets/status", headers={"Cookie": cookie},
         )
-        assert scoped == 200 and json.loads(body)["replicas"] == 2
+        assert scoped == 200 and json.loads(body)["replicas"] == 1
 
         client = CoordinatorClient(f"http://127.0.0.1:{port}", token, timeout=10)
         assignment = client.claim()["assignment"]
@@ -240,12 +240,12 @@ def test_http_auth_claim_and_admin_page(tmp_path):
         )
         assert legacy == 200
         assert json.loads(raw)["assignment"]["assignment_id"] == assignment["assignment_id"]
-        second = CoordinatorClient(f"http://127.0.0.1:{port}", other, timeout=10).claim()["assignment"]
+        other_claim = CoordinatorClient(f"http://127.0.0.1:{port}", other, timeout=10).claim()
+        assert other_claim["assignment"] is None
         stars = [_star(1), _star(2)]
-        assert client.submit(assignment["assignment_id"], stars, [_cand(1)])["verdict"] == "pending"
-        assert CoordinatorClient(f"http://127.0.0.1:{port}", other, timeout=10).submit(
-            second["assignment_id"], stars, [_cand(1)]
-        )["verdict"] == "agreed"
+        submitted = client.submit(assignment["assignment_id"], stars, [_cand(1)])
+        assert submitted["verdict"] == "agreed"
+        assert submitted["detail"].startswith("verified ")
         status, _, body = _call(port, "GET", "/api/v1/candidates", headers={"Cookie": cookie})
         assert json.loads(body)["candidates"][0]["tic"] == 1
         store.revoke_worker("ada")
@@ -291,13 +291,13 @@ def test_units_carry_project_and_verified_credit(tmp_path):
         assert ada["project"] == "exoplanets"
         assert ada["user_id"] == ids["ada"]
         assert ada["payload"]["tics"] == [1, 2]
-        assert store.status()["replicas"] == 2
-        bea = store.claim(ids["bea"])
+        assert store.status()["replicas"] == 1
+        assert store.claim(ids["bea"]) is None
         stars = [_star(1), _star(2)]
-        store.submit(ids["ada"], ada["assignment_id"], stars, [_cand(1)])
-        store.submit(ids["bea"], bea["assignment_id"], stars, [_cand(1)])
+        done = store.submit(ids["ada"], ada["assignment_id"], stars, [_cand(1)])
+        assert done["verdict"] == "agreed"
         agreed = [row for row in store.contributions() if row["outcome"] == "agreed"]
-        assert {row["user_id"] for row in agreed} == {ids["ada"], ids["bea"]}
+        assert {row["user_id"] for row in agreed} == {ids["ada"]}
         assert all(row["verified"] == 1 and row["project"] == "exoplanets" for row in agreed)
         assert any(row["outcome"] == "submitted" and row["verified"] == 0 for row in store.contributions())
     finally:
@@ -437,28 +437,29 @@ def test_submitted_work_shows_before_the_second_replica_agrees(tmp_path):
         assert plain["activity"] == "working on sector 107 unit 1, 1/2 downloaded"
         assert plain["presence"] == "online"
 
-        pending = store.submit(
+        agreed = store.submit(
             ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1)],
         )
-        assert pending["verdict"] == "pending"
+        assert agreed["verdict"] == "agreed"
+        assert agreed["detail"].startswith("verified ")
         submitted = {row["name"]: row for row in store.workers_public()}["ada"]
         assert submitted["presence"] == "idle"
         assert submitted["activity"] == "waiting for work"
         assert submitted["stars_submitted"] == 2
-        assert submitted["stars_verified"] == 0
-        assert submitted["stars_searched"] == 0
+        assert submitted["stars_verified"] == 2
+        assert submitted["stars_searched"] == 2
         assert submitted["batches_submitted"] == 1
-        assert submitted["batches_verified"] == 0
+        assert submitted["batches_verified"] == 1
         assert submitted["candidates_submitted"] == 1
-        assert submitted["candidates_agreed"] == 0
-        assert submitted["candidates_found"] == 0
+        assert submitted["candidates_agreed"] == 1
+        assert submitted["candidates_found"] == 1
         snap = store.status()
-        assert snap["tics_submitted"] == 2
-        assert snap["units_submitted"] == 1
-        assert snap["tics_agreed"] == 0
+        assert snap["tics_submitted"] == 0
+        assert snap["units_submitted"] == 0
+        assert snap["tics_agreed"] == 2
         assert snap["tics_in_progress"] == 0
-        assert snap["sectors"][0]["tics_submitted"] == 2
-        assert snap["sectors"][0]["tics_agreed"] == 0
+        assert snap["sectors"][0]["tics_submitted"] == 0
+        assert snap["sectors"][0]["tics_agreed"] == 2
         handed = [row for row in store.contributions() if row["outcome"] == "submitted"]
         assert handed and all(row["verified"] == 0 for row in handed)
 
@@ -466,38 +467,28 @@ def test_submitted_work_shows_before_the_second_replica_agrees(tmp_path):
         assert second["tics"] == [3, 4]
         assert second["unit_id"] == 2
         snap = store.status()
-        assert snap["tics_submitted"] == 2
+        assert snap["tics_agreed"] == 2
         assert snap["tics_in_progress"] == 2
         assert snap["units_in_progress"] == 1
         working = {row["name"]: row for row in store.workers_public()}["ada"]
         assert working["activity"] == "working on sector 107 unit 2"
         assert working["stars_submitted"] == 2
 
-        bea = store.claim(ids["bea"])
-        assert bea["tics"] == [1, 2]
-        # Unit 1 already has a submission, so the second lease does not also paint it as in progress.
-        snap = store.status()
-        assert snap["tics_submitted"] == 2
-        assert snap["tics_in_progress"] == 2
-        assert snap["assignments_leased"] == 2
-
-        agreed = store.submit(ids["bea"], bea["assignment_id"], [_star(1), _star(2)], [_cand(1)])
-        assert agreed["verdict"] == "agreed"
+        assert store.claim(ids["bea"]) is None
         snap = store.status()
         assert snap["tics_agreed"] == 2
         assert snap["tics_submitted"] == 0
-        assert snap["units_agreed"] == 1
         assert snap["tics_in_progress"] == 2
+        assert snap["assignments_leased"] == 1
+        assert snap["units_agreed"] == 1
         both = {row["name"]: row for row in store.workers_public()}
         assert both["ada"]["stars_searched"] == 2
-        assert both["bea"]["stars_searched"] == 2
+        assert both["bea"]["stars_searched"] == 0
         assert both["ada"]["stars_verified"] == 2
-        assert both["ada"]["batches_submitted"] == 1
         assert both["ada"]["batches_verified"] == 1
         assert both["ada"]["candidates_agreed"] == 1
-        assert both["bea"]["batches_verified"] == 1
         credited = [row for row in store.contributions() if row["verified"] == 1]
-        assert {row["user_id"] for row in credited} == {ids["ada"], ids["bea"]}
+        assert {row["user_id"] for row in credited} == {ids["ada"]}
         assert all(row["outcome"] == "agreed" for row in credited)
 
         admin = store.ensure_admin()
@@ -636,14 +627,14 @@ def test_cli_status_and_token_list_show_the_split(tmp_path, capsys):
         store.close()
     assert coord_main(["--config", str(path), "status"]) == 0
     summary = capsys.readouterr().out
-    assert "0 verified, 1 submitted, 0 in progress, 1 total" in summary
-    assert "0 verified, 2 submitted, 0 in progress, 2 total" in summary
+    assert "1 verified, 0 submitted, 0 in progress, 1 total" in summary
+    assert "2 verified, 0 submitted, 0 in progress, 2 total" in summary
     assert coord_main(["--config", str(path), "token", "list"]) == 0
     listed = capsys.readouterr().out
     assert "ada" in listed
-    assert "stars=2 submitted/0 verified" in listed
-    assert "batches=1 submitted/0 verified" in listed
-    assert "candidates=1 submitted/0 agreed" in listed
+    assert "stars=2 submitted/2 verified" in listed
+    assert "batches=1 submitted/1 verified" in listed
+    assert "candidates=1 submitted/1 agreed" in listed
     assert "waiting for work" in listed
     assert "idle" in listed
     assert "just now" in listed
@@ -684,9 +675,8 @@ def test_prefetch_claim_holds_two_leases_and_keeps_replica_rules(tmp_path):
             progress={"phase": "download", "done": 1, "total": 2},
         )
         bea = store.claim(ids["bea"])
-        assert bea["tics"] == [1, 2]
-        ada2 = store.claim(ids["ada2"])
-        assert ada2["tics"] == [5, 6]
+        assert bea["tics"] == [5, 6]
+        assert store.claim(ids["ada2"]) is None
         current = app.handle(
             "GET", "/api/v1/projects/exoplanets/tasks/current", "",
             {"Authorization": f"Bearer {tokens['ada']}"},
@@ -769,7 +759,7 @@ def test_one_copy_counts_the_first_upload_and_issues_no_second(tmp_path):
         ada = store.claim(ids["ada"])
         done = store.submit(ids["ada"], ada["assignment_id"], [_star(1), _star(2)], [_cand(1)])
         assert done["verdict"] == "agreed"
-        assert done["detail"] == "checked once"
+        assert done["detail"].startswith("verified ")
         assert done["candidates"] == 1
         assert store.claim(ids["bea"]) is None
         assert store.status()["copies_required"] == 1
@@ -784,16 +774,53 @@ def test_one_copy_counts_the_first_upload_and_issues_no_second(tmp_path):
         store.close()
 
 
+def test_single_copy_rejects_incomplete_and_unknown_candidates(tmp_path):
+    store = _copy_store(tmp_path, 2)
+    try:
+        store.enroll_tics(107, [1, 2], unit_size=500)
+        store.enroll_tics(108, [8], unit_size=500)
+        _, ids = _ids(store, "ada")
+        preferred = store.claim(ids["ada"], sectors=[108])
+        assert preferred["sector"] == 108
+        failed = _star(8)
+        failed["error"] = "no result"
+        failed["period"] = None
+        ok = store.submit(ids["ada"], preferred["assignment_id"], [failed], [])
+        assert ok["verdict"] == "agreed"
+        assert ok["detail"].startswith("verified ")
+        leased = store.claim(ids["ada"])
+        assert leased["sector"] == 107
+        missing = store.submit(ids["ada"], leased["assignment_id"], [_star(1)], [])
+        assert missing["verdict"] == "disagreed"
+        assert missing["detail"].startswith("incomplete")
+        assert missing["receipt"]["complete"] is False
+        again = store.claim(ids["ada"], sectors=[107])
+        assert again["generation"] == 2
+        stray = store.submit(
+            ids["ada"], again["assignment_id"], [_star(1), _star(2)], [_cand(99)],
+        )
+        assert stray["verdict"] == "disagreed"
+        assert "not in this batch" in stray["detail"]
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM candidates").fetchone()["n"] == 0
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"] >= 2
+    finally:
+        store.close()
+
+
 def test_reverify_promotes_a_submitted_batch_without_deleting_copies(tmp_path):
+    """An older pending upload is checked in place. Result rows are not deleted."""
     path = tmp_path / "coord.sqlite"
-    store = Store(path, Settings(), clock=Clock(), copies_required=2)
+    store = Store(path, Settings(), clock=Clock(), copies_required=1)
     store.init_schema()
     try:
         store.enroll_tics(107, [1], unit_size=500)
         _, ids = _ids(store, "ada", "bea")
         ada = store.claim(ids["ada"])
-        pending = store.submit(ids["ada"], ada["assignment_id"], [_star(1)], [_cand(1)])
-        assert pending["verdict"] == "pending"
+        done = store.submit(ids["ada"], ada["assignment_id"], [_star(1)], [_cand(1)])
+        assert done["verdict"] == "agreed"
+        store.conn.execute("UPDATE units SET state='open', agreed_at=NULL WHERE sector=107")
+        store.conn.execute("UPDATE results SET verdict='pending'")
+        store.conn.execute("DELETE FROM candidates")
         before_results = store.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"]
         before_assignments = store.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"]
     finally:
@@ -810,7 +837,7 @@ def test_reverify_promotes_a_submitted_batch_without_deleting_copies(tmp_path):
         assert again.conn.execute("SELECT COUNT(*) AS n FROM assignments").fetchone()["n"] == before_assignments
         assert again.conn.execute("SELECT state FROM units").fetchone()["state"] == "agreed"
         verified = [row for row in again.contributions() if row["verified"] == 1]
-        assert len(verified) == 1
+        assert verified
         assert again.claim(ids["bea"]) is None
     finally:
         again.close()
@@ -823,17 +850,20 @@ def test_reverify_promotes_a_submitted_batch_without_deleting_copies(tmp_path):
         restored.enroll_tics(108, [8, 9], unit_size=500)
         first = restored.claim(ids["ada"])
         assert first["sector"] == 108
-        assert restored.submit(ids["ada"], first["assignment_id"], [_star(8), _star(9)], [])["verdict"] == "pending"
-        second = restored.claim(ids["bea"])
-        assert second["tics"] == first["tics"]
-        bad = restored.submit(ids["bea"], second["assignment_id"], [_star(8, period=9), _star(9, period=9)], [])
+        agreed = restored.submit(ids["ada"], first["assignment_id"], [_star(8), _star(9)], [])
+        assert agreed["verdict"] == "agreed"
+        assert restored.claim(ids["bea"]) is None
+        bad_unit = restored.enroll_tics(109, [11], unit_size=500)
+        assert bad_unit["sector"] == 109
+        leased = restored.claim(ids["ada"])
+        bad = restored.submit(ids["ada"], leased["assignment_id"], [_star(11, period=-1)], [])
         assert bad["verdict"] == "disagreed"
-        assert "outside tolerance" in bad["detail"] or "stars" in bad["detail"]
+        assert "implausible" in bad["detail"]
     finally:
         restored.close()
 
 
-def test_two_copy_mode_still_blocks_the_same_account(tmp_path):
+def test_one_copy_does_not_pair_a_second_account(tmp_path):
     store = _copy_store(tmp_path, 2)
     try:
         store.enroll_tics(107, [1, 2, 3, 4], unit_size=2)
@@ -843,12 +873,14 @@ def test_two_copy_mode_still_blocks_the_same_account(tmp_path):
             (ids["ada"], ids["ada2"]),
         )
         first = store.claim(ids["ada"])
-        store.submit(ids["ada"], first["assignment_id"], [_star(1), _star(2)], [])
+        done = store.submit(ids["ada"], first["assignment_id"], [_star(1), _star(2)], [])
+        assert done["verdict"] == "agreed"
         other = store.claim(ids["ada2"])
         assert other["unit_id"] != first["unit_id"]
         partner = store.claim(ids["bea"])
-        assert partner["unit_id"] == first["unit_id"]
+        assert partner is None or partner["unit_id"] != first["unit_id"]
         assert store.reverify()["promoted"] == 0
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM results").fetchone()["n"] == 1
     finally:
         store.close()
 
@@ -880,7 +912,7 @@ def test_reverify_cli_and_copies_config(tmp_path, capsys):
     assert load_coord_file(path).verification.copies_required == 1
     assert coord_main(["--config", str(path), "reverify"]) == 0
     printed = capsys.readouterr().out
-    assert "copies_required 1: 1 verified" in printed
+    assert "copies_required 1: 0 verified" in printed
     assert "Existing copies were kept." in printed
     assert coord_main(["--config", str(path), "status"]) == 0
     summary = capsys.readouterr().out
