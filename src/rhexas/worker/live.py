@@ -578,6 +578,7 @@ class Store:
             "progress_kind": "stars",
             "stars_done": 0,
             "stars_total": int(assignment.get("n_tics") or len(tics)),
+            "tics": [int(t) for t in tics],
             "eta_min": None,
             "per_s": None,
             "started_at": time.time(),
@@ -585,6 +586,19 @@ class Store:
         with self._locked() as conn:
             _write_kv(conn, "batch", batch)
             _write_kv(conn, "current", None)
+            try:
+                from .batch_index import register_unit
+                register_unit(
+                    conn,
+                    sector=batch["sector"],
+                    unit=batch["unit_id"],
+                    project=batch["project"],
+                    assignment_id=batch["assignment_id"],
+                    tics=[int(t) for t in tics],
+                    started_at=batch["started_at"],
+                )
+            except Exception:
+                pass
 
     def update_batch(self, **fields) -> None:
         with self._locked() as conn:
@@ -592,6 +606,13 @@ class Store:
             batch.update(fields)
             batch["updated"] = time.time()
             _write_kv(conn, "batch", batch)
+            stage = str(batch.get("stage") or "").lower()
+            if stage in {"uploaded", "waiting", "done"}:
+                try:
+                    from .batch_index import mark_unit_finished
+                    mark_unit_finished(conn, int(batch.get("sector") or 0), int(batch.get("unit_id") or 0))
+                except Exception:
+                    pass
 
     def mark_waiting(self) -> None:
         with self._locked() as conn:

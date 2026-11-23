@@ -381,6 +381,21 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
                 self._send(200, body, "application/json; charset=utf-8")
                 return
+            if path == "/api/batches/catalog":
+                from .batch_index import catalog
+                snap = snapshot(cache, fallback=fallback)
+                self._json(200, catalog(cache, snap))
+                return
+            if path == "/api/batches/view":
+                from .batch_index import unit_view
+                sector = self._query_int(parse_qs(parts.query), "sector")
+                unit = self._query_int(parse_qs(parts.query), "unit")
+                if sector is None or unit is None:
+                    self._json(400, {"error": "sector and unit are required"})
+                    return
+                snap = snapshot(cache, fallback=fallback)
+                self._json(200, unit_view(cache, sector, unit, snap=snap))
+                return
             if path == "/api/vetting":
                 from .vetting.runner import status_payload
                 self._json(200, status_payload(cache, vetting_on))

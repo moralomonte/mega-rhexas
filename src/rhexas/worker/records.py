@@ -47,7 +47,9 @@ def migrate(conn) -> None:
         conn.execute("ALTER TABLE candidates ADD COLUMN status TEXT")
     conn.execute("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('stars-v1')")
     from .vetting.store import migrate as migrate_vetting
+    from .batch_index import migrate as migrate_batch_index
     migrate_vetting(conn)
+    migrate_batch_index(conn)
 
 
 def table_ready(conn) -> bool:
