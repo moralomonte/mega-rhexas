@@ -3,7 +3,7 @@
 ; Uninstall does not delete %LOCALAPPDATA%\Mega Rhexas (token and cache).
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.4.2"
+  #define MyAppVersion "0.5.0"
 #endif
 
 #define MyAppName "Mega Rhexas"
