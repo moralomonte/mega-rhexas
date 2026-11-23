@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mega Rhexas · discoveries</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#05060f;--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--c2:#22d3ee}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:20px 18px 36px}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{margin:0;font-size:20px}
+h1 small{display:block;color:var(--mut);font-size:12px;font-weight:400}
+nav{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}
+nav a{color:var(--c2);text-decoration:none;font-size:13px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 16px;align-items:center}
+select,button{background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:7px 10px;font:inherit;font-size:13px}
+button{cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.card{background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:16px;padding:12px;text-decoration:none;color:inherit;display:block;transition:border-color .15s}
+.card:hover{border-color:rgba(34,211,238,.45)}
+.card h3{margin:0 0 6px;font-size:16px;font-variant-numeric:tabular-nums}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:12px;color:var(--mut)}
+.meta b{color:var(--tx);font-weight:600}
+.thumb{margin:8px 0;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.06)}
+.thumb img{display:block;width:100%;height:auto}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.badge{font-size:10px;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);color:var(--mut)}
+.badge.known{border-color:rgba(251,191,36,.35);color:var(--warn)}
+.badge.fp{border-color:rgba(248,113,113,.35);color:var(--err)}
+.badge.new{border-color:rgba(52,211,153,.35);color:var(--ok)}
+.pager{display:flex;gap:8px;align-items:center;margin-top:16px;color:var(--mut);font-size:13px}
+.empty{color:var(--mut);padding:24px;text-align:center;border:1px dashed var(--bd);border-radius:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><h1>Discoveries gallery <small>Transiting candidates — not confirmed planets</small></h1></div>
+<nav><a href="/sectors">Sectors</a><a href="/">Status</a><a href="/account">Account</a></nav>
+</header>
+<div class="toolbar">
+<label>Status <select id="status">
+<option value="all">All</option>
+<option value="new">New</option>
+<option value="under_review">Under review</option>
+<option value="false_positive">Likely false positive</option>
+<option value="known">Known catalog match</option>
+</select></label>
+<label>Sort <select id="sort">
+<option value="priority">Review priority</option>
+<option value="sde">SDE</option>
+<option value="date">Date agreed</option>
+</select></label>
+<button type="button" id="reload">Apply</button>
+<span id="count" class="badge"></span>
+</div>
+<div class="grid" id="grid"><p class="empty">Loading…</p></div>
+<div class="pager">
+<button type="button" id="prev">Prev</button>
+<span id="page-label">Page 1</span>
+<button type="button" id="next">Next</button>
+</div>
+</div>
+<script>
+let page=1;
+const perPage=24;
+const $=id=>document.getElementById(id);
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+function badgeClass(bucket){
+  if(bucket==='known') return 'badge known';
+  if(bucket==='false_positive') return 'badge fp';
+  if(bucket==='new') return 'badge new';
+  return 'badge';
+}
+async function load(){
+  const status=$('status').value;
+  const sort=$('sort').value;
+  const qs=new URLSearchParams({page:String(page),per_page:String(perPage),sort});
+  if(status!=='all') qs.set('status',status);
+  const res=await fetch('/api/v1/discoveries?'+qs,{credentials:'include'});
+  if(res.status===401){ location.href='/login?next='+encodeURIComponent('/discoveries'); return; }
+  const data=await res.json();
+  $('count').textContent=data.total+' candidate'+(data.total===1?'':'s');
+  $('page-label').textContent='Page '+data.page+' · '+data.total+' total';
+  const grid=$('grid'); grid.replaceChildren();
+  if(!data.items||!data.items.length){
+    grid.append(Object.assign(document.createElement('p'),{className:'empty',textContent:'No candidates in this filter.'}));
+    return;
+  }
+  for(const row of data.items){
+    const a=document.createElement('a');
+    a.className='card'; a.href=row.detail_url||('/discoveries/'+row.tic);
+    const known=row.known_match?`<span class="badge known">${esc(row.known_match.kind)}: ${esc(row.known_match.name)}</span>`:'';
+    a.innerHTML=`<h3>TIC ${esc(row.tic)} · candidate</h3>
+      <div class="thumb"><img src="${esc(row.thumb_url)}" width="160" height="72" alt="" loading="lazy"></div>
+      <div class="meta">
+        <span>Sector</span><b>${esc(row.sector)}</b>
+        <span>Period</span><b>${row.period!=null?Number(row.period).toFixed(4)+' d':'–'}</b>
+        <span>Depth</span><b>${row.depth!=null?(Number(row.depth)*1e6).toFixed(0)+' ppm':'–'}</b>
+        <span>Radius est.</span><b>${esc(row.radius_label)}</b>
+        <span>SDE / SNR</span><b>${row.sde!=null?Number(row.sde).toFixed(1):'–'} / ${row.snr!=null?Number(row.snr).toFixed(1):'–'}</b>
+        <span>Priority</span><b>${row.review_priority!=null?Number(row.review_priority).toFixed(1):'–'}</b>
+      </div>
+      <div class="badges">
+        <span class="${badgeClass(row.filter_bucket)}">${esc(row.status_label)}</span>
+        ${known}
+      </div>`;
+    grid.append(a);
+  }
+}
+$('reload').onclick=()=>{page=1;load();};
+$('prev').onclick=()=>{if(page>1){page--;load();}};
+$('next').onclick=()=>{page++;load();};
+[$('status'),$('sort')].forEach(el=>el.addEventListener('change',()=>{page=1;load();}));
+load();
+</script>
+</body>
+</html>
