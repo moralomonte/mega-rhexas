@@ -4,23 +4,523 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="rhexas-version" content="__APP_VERSION__">
+<meta http-equiv="Cache-Control" content="no-store">
 <link rel="icon" type="image/svg+xml" href="/img/triskelion.svg?v=__APP_VERSION__">
 <title>Mega Rhexas · Batches</title>
 <style>
-body{margin:0;background:#07091a;color:#e7ecff;font:14px/1.45 system-ui,sans-serif}
-.wrap{max-width:880px;margin:0 auto;padding:24px}
-a{color:#e7ecff}
-.card{margin-top:16px;border:1px solid #2a3148;border-radius:16px;padding:16px;background:#101428}
+:root{--bg:#07091a;--panel:#101428;--line:#2a3148;--tx:#e7ecff;--mut:#8b93b8;--ok:#34d399;--warn:#fbbf24;--c1:#7c5cff;--c2:#22d3ee}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:16px 18px 32px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none}
+.brand img{width:36px;height:36px}
+h1{font-size:18px;margin:0}
+h1 small{display:block;font-weight:400;color:var(--mut);font-size:12px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+nav a{color:var(--tx);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:650}
+nav a[aria-current="page"]{border-color:var(--c1);background:#7c5cff22}
+.pick{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0 8px}
+.pick label{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.pick select{background:#0c1022;color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font:inherit}
+.note{color:var(--mut);font-size:12px;margin:0 0 10px}
+.batch-progress{margin:8px 0 10px;max-width:560px}
+.batch-progress p{margin:0 0 6px;font-variant-numeric:tabular-nums;font-weight:650}
+.batch-progress .bar{height:6px;border-radius:99px;background:#ffffff18;overflow:hidden}
+.batch-progress .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .2s ease}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--mut);margin-bottom:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px;overflow:hidden}
+.panel h2{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:650}
+#panel-hex{grid-column:1/-1;min-height:120px}
+#panel-star{height:300px}
+#panel-replay{height:300px}
+#panel-sde,#panel-period,#panel-scatter,#panel-timeline{height:220px}
+.plot{height:132px;width:100%}
+.plot.tall{height:200px}
+.plot.hex{width:100%;min-height:72px;height:auto}
+canvas{display:block;width:100%;height:100%}
+.replay{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.replay button{border:1px solid var(--line);background:#0c1022;color:var(--tx);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+.replay button[aria-pressed="true"]{border-color:var(--c1);color:var(--c2)}
+.replay input{flex:1;min-width:120px}
+.tip{position:fixed;z-index:20;pointer-events:none;background:#1a2038;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12px;max-width:220px;display:none}
+.row{display:flex;justify-content:space-between;gap:12px;margin:4px 0;font-variant-numeric:tabular-nums}
+.row span{color:var(--mut)}
+@media (max-width:800px){.grid{grid-template-columns:1fr}#panel-hex{grid-column:auto}}
 </style>
 </head>
 <body>
 <div class="wrap">
-<p><a href="/?v=__APP_VERSION__">← Dashboard</a></p>
-<h1>Batches</h1>
-<div class="card">
-<p>Batch hex grid. Live view and replay come in a later phase. This page is a placeholder.</p>
-<p><a href="/sectors?v=__APP_VERSION__">Sectors and download-ahead</a></p>
+<header>
+<a class="brand" href="/?v=__APP_VERSION__"><img src="/img/triskelion.svg?v=__APP_VERSION__" alt="triskelion"><h1>Mega Rhexas<small id="ver">batch view</small></h1></a>
+<nav>
+<a href="/?v=__APP_VERSION__">Dashboard</a>
+<a href="/sectors?v=__APP_VERSION__">Sectors</a>
+<a aria-current="page" href="/batches?v=__APP_VERSION__">Batches</a>
+<a href="/vetting?v=__APP_VERSION__">Vetting</a>
+</nav>
+</header>
+<p class="note">Signals and candidates are unverified until the coordinator checks an upload. Nothing here is a confirmed planet.</p>
+<div class="pick">
+<label for="sector-pick">Sector</label>
+<select id="sector-pick"></select>
+<label for="unit-pick">Batch</label>
+<select id="unit-pick"></select>
+<span id="batch-meta" class="note"></span>
+</div>
+<div class="batch-progress" id="batch-progress">
+<p id="progress-text">–</p>
+<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i id="progress-bar"></i></div>
+</div>
+<div class="legend">
+<span><i style="background:#3a4158"></i>queued</span>
+<span><i style="background:#3b82f6"></i>downloading</span>
+<span><i style="background:#22d3ee"></i>searching</span>
+<span><i style="background:#166534"></i>quiet</span>
+<span><i style="background:#fbbf24"></i>signal</span>
+<span><i style="background:#a855f7"></i>candidate</span>
+<span><i style="background:#ef4444"></i>error</span>
+</div>
+<div class="grid">
+<section class="panel" id="panel-hex">
+<h2>Hex grid</h2>
+<div class="plot hex"><canvas id="hex" width="900" height="280"></canvas></div>
+</section>
+<section class="panel" id="panel-replay">
+<h2>Replay</h2>
+<div class="replay">
+<button type="button" id="play-btn">Play</button>
+<button type="button" data-speed="1" class="speed-btn" aria-pressed="true">1×</button>
+<button type="button" data-speed="4" class="speed-btn">4×</button>
+<button type="button" data-speed="16" class="speed-btn">16×</button>
+<input type="range" id="scrub" min="0" max="0" value="0" step="1">
+<span id="scrub-label">0 / 0</span>
+</div>
+<div class="row"><span>Mode</span><b id="live-label">–</b></div>
+</section>
+<section class="panel" id="panel-star">
+<h2>Selected star</h2>
+<div class="row"><span>TIC</span><b id="sel-tic">–</b></div>
+<div class="row"><span>Status</span><b id="sel-state">–</b></div>
+<div class="row"><span>Period / SDE</span><b id="sel-metrics">–</b></div>
+<div class="plot"><canvas id="curve" width="640" height="132"></canvas></div>
+<div class="plot"><canvas id="fold" width="640" height="132"></canvas></div>
+</section>
+<section class="panel" id="panel-sde">
+<h2>SDE histogram</h2>
+<div class="plot"><canvas id="sde" width="640" height="132"></canvas></div>
+</section>
+<section class="panel" id="panel-period">
+<h2>Period distribution</h2>
+<div class="plot"><canvas id="period" width="640" height="132"></canvas></div>
+</section>
+<section class="panel" id="panel-scatter">
+<h2>Depth vs period</h2>
+<div class="plot"><canvas id="scatter" width="640" height="132"></canvas></div>
+</section>
+<section class="panel" id="panel-timeline">
+<h2>Stars processed over time</h2>
+<div class="plot"><canvas id="timeline" width="640" height="132"></canvas></div>
+</section>
 </div>
 </div>
+<div class="tip" id="tip"></div>
+<script>
+const PAGE_VERSION="__APP_VERSION__";
+const $=id=>document.getElementById(id);
+let catalog=null, view=null, cells=[], replay=[], replayIdx=0, playing=false, speed=1, playTimer=null;
+let hover=null, selected=null, live=false, pollAt=0, replayFollow=false;
+const hexHit=[];
+const HEX_PAD=10;
+const HEX_W_RATIO=1.7;
+const HEX_H_RATIO=1.5;
+
+function fit(canvas, minH){
+  const plot=canvas.parentElement;
+  if(!plot) return null;
+  const dpr=Math.min(window.devicePixelRatio||1, 2);
+  const w=Math.max(1, plot.clientWidth);
+  const h=Math.max(minH||1, plot.clientHeight);
+  const bw=Math.max(1, Math.floor(w*dpr));
+  const bh=Math.max(1, Math.floor(h*dpr));
+  if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw; canvas.height=bh;}
+  return {w:bw,h:bh,dpr, cssW:w, cssH:h};
+}
+
+function planHexGrid(n, cssWidth){
+  const innerW=Math.max(1, cssWidth-HEX_PAD*2);
+  const maxRows=12;
+  let cols=Math.ceil(n/maxRows);
+  cols=Math.min(n, Math.max(cols, Math.floor(innerW/22)));
+  const w=innerW/(cols+0.5);
+  const h=w*(HEX_H_RATIO/HEX_W_RATIO);
+  const r=(w/HEX_W_RATIO)*0.92;
+  const rows=Math.ceil(n/cols);
+  const plotCssH=Math.ceil(HEX_PAD*2+rows*h);
+  return {cols, rows, w, h, r, innerW, plotCssH, cssWidth};
+}
+
+function placeHexHits(n, plan, scale){
+  hexHit.length=0;
+  const{cols, rows, w, h, r}=plan;
+  let i=0;
+  for(let row=0;row<rows && i<n;row++){
+    const offset=(row%2)?w/2:0;
+    for(let col=0;col<cols && i<n;col++,i++){
+      const cx=(HEX_PAD+offset+col*w+w/2)*scale;
+      const cy=(HEX_PAD+row*h+h/2)*scale;
+      hexHit.push({i,cx,cy,r:r*scale});
+    }
+  }
+}
+
+function syncHexPanel(plan){
+  const plot=document.querySelector(".plot.hex");
+  const panel=$("panel-hex");
+  if(plot) plot.style.height=plan.plotCssH+"px";
+  if(panel) panel.style.height=(plan.plotCssH+50)+"px";
+}
+
+function color(cell){
+  switch(cell.state){
+    case "downloading": return "#3b82f6";
+    case "searching": return "#22d3ee";
+    case "candidate": return "#a855f7";
+    case "error": return "#b91c1c";
+    case "signal":{
+      const s=typeof cell.sde==="number"?cell.sde:0;
+      const t=Math.min(1, Math.max(0, s/24));
+      const r=Math.round(120+120*t), g=Math.round(180-80*t), b=40;
+      return `rgb(${r},${g},${b})`;
+    }
+    case "quiet": return "#166534";
+    default: return "#2a3148";
+  }
+}
+
+function drawHex(replayMask){
+  const canvas=$("hex");
+  const plot=canvas.parentElement;
+  const cssW=Math.max(1, plot?.clientWidth||canvas.parentElement?.clientWidth||800);
+  const plan=planHexGrid(cells.length||1, cssW);
+  syncHexPanel(plan);
+  const box=fit(canvas, plan.plotCssH);
+  if(!box||!cells.length) return;
+  const scale=box.w/box.cssW;
+  placeHexHits(cells.length, plan, scale);
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,box.w,box.h);
+  replayMask=replayMask||null;
+  hexHit.forEach((hit,idx)=>{
+    const cell=cells[idx];
+    if(!cell) return;
+    let st=cell.state;
+    if(replayMask){
+      const m=replayMask[cell.tic];
+      if(m) st=m; else if(st!=="downloading"&&st!=="searching") st="queued";
+    }
+    const fill=color({...cell,state:st});
+    const x=hit.cx, y=hit.cy, rad=hit.r;
+    ctx.beginPath();
+    for(let k=0;k<6;k++){
+      const ang=Math.PI/3*k-Math.PI/6;
+      const px=x+rad*Math.cos(ang), py=y+rad*Math.sin(ang);
+      if(k===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fillStyle=fill;
+    ctx.fill();
+    if(selected===cell.tic){ctx.strokeStyle="#f8fafc"; ctx.lineWidth=2; ctx.stroke();}
+  });
+}
+
+function drawBars(canvas, hist, color){
+  const box=fit(canvas, 100);
+  if(!box) return;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,box.w,box.h);
+  ctx.fillStyle="#161b33";
+  ctx.fillRect(0,8,box.w,box.h-16);
+  const counts=hist.counts||[];
+  if(!counts.length) return;
+  const max=Math.max(...counts,1);
+  const bw=Math.max(2,(box.w-16)/counts.length-1);
+  counts.forEach((v,i)=>{
+    const h=(v/max)*(box.h-24);
+    ctx.fillStyle=color;
+    ctx.fillRect(8+i*(bw+1), box.h-8-h, bw, h);
+  });
+}
+
+function drawScatter(canvas, pts){
+  const box=fit(canvas, 100);
+  if(!box) return;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,box.w,box.h);
+  ctx.fillStyle="#161b33";
+  ctx.fillRect(0,8,box.w,box.h-16);
+  if(!pts.length) return;
+  const maxP=Math.max(...pts.map(p=>p[0]),1);
+  const maxD=Math.max(...pts.map(p=>Math.abs(p[1])),0.001);
+  pts.forEach(p=>{
+    const x=8+(p[0]/maxP)*(box.w-16);
+    const y=box.h-8-(Math.abs(p[1])/maxD)*(box.h-24);
+    ctx.fillStyle="#fbbf24";
+    ctx.fillRect(x-2,y-2,4,4);
+  });
+}
+
+function drawTimeline(canvas, series){
+  const box=fit(canvas, 100);
+  if(!box) return;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,box.w,box.h);
+  ctx.fillStyle="#161b33";
+  ctx.fillRect(0,8,box.w,box.h-16);
+  if(!series.length) return;
+  const maxT=Math.max(...series.map(p=>p[0]),1);
+  const maxN=Math.max(...series.map(p=>p[1]),1);
+  ctx.strokeStyle="#67e8f9";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  series.forEach((p,i)=>{
+    const x=8+(p[0]/maxT)*(box.w-16);
+    const y=box.h-8-(p[1]/maxN)*(box.h-24);
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+function drawSeries(canvas, pair, color){
+  const box=fit(canvas, 100);
+  if(!box||!pair||!pair.length) return;
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,box.w,box.h);
+  ctx.fillStyle="#161b33";
+  ctx.fillRect(0,8,box.w,box.h-16);
+  const xs=pair[0]||[], ys=pair[1]||[];
+  if(xs.length<2) return;
+  const min=Math.min(...ys), max=Math.max(...ys);
+  const span=max-min||0.001;
+  ctx.strokeStyle=color;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  xs.forEach((x,i)=>{
+    const px=8+(i/(xs.length-1))*(box.w-16);
+    const py=box.h-8-((ys[i]-min)/span)*(box.h-24);
+    if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+  });
+  ctx.stroke();
+}
+
+function fillCatalog(data){
+  catalog=data;
+  const secSel=$("sector-pick"), unitSel=$("unit-pick");
+  secSel.textContent=""; unitSel.textContent="";
+  const sectors=data.sectors||[];
+  sectors.forEach(s=>{
+    const opt=document.createElement("option");
+    opt.value=String(s.sector); opt.textContent="Sector "+s.sector;
+    secSel.appendChild(opt);
+  });
+  const def=data.default||{};
+  if(def.sector) secSel.value=String(def.sector);
+  refillUnits();
+}
+
+function refillUnits(){
+  const sec=parseInt($("sector-pick").value,10);
+  const unitSel=$("unit-pick");
+  unitSel.textContent="";
+  const bucket=(catalog.sectors||[]).find(s=>s.sector===sec);
+  const units=bucket?bucket.units:[];
+  units.forEach(u=>{
+    const opt=document.createElement("option");
+    opt.value=String(u.unit);
+    opt.textContent="Unit "+u.unit+(u.live?" (live)":"");
+    unitSel.appendChild(opt);
+  });
+  const def=catalog.default||{};
+  if(def.sector===sec&&def.unit) unitSel.value=String(def.unit);
+}
+
+function starsTotal(){
+  const p=view&&view.progress;
+  return Math.max(view?.n_tics||0, p?.stars_total||0, 1);
+}
+
+function updateProgress(){
+  if(!view) return;
+  const total=starsTotal();
+  let done;
+  if(replayFollow&&replay.length){
+    done=(playing||replayIdx>0)?Math.min(replayIdx+1, total):0;
+  }else if(view.live){
+    done=view.progress?.stars_done??0;
+  }else{
+    done=total;
+  }
+  const pct=Math.min(100, Math.round((100*done)/total));
+  $("progress-text").textContent=`${done} / ${total} stars, ${pct}%`;
+  $("progress-bar").style.width=pct+"%";
+  const bar=$("batch-progress").querySelector(".bar");
+  if(bar){bar.setAttribute("aria-valuenow", String(pct)); bar.setAttribute("aria-valuetext", `${done} of ${total} stars`);}
+}
+
+function paintView(data){
+  view=data; cells=data.tics||[]; live=!!data.live;
+  replay=data.replay||[];
+  $("scrub").max=String(Math.max(0, replay.length-1));
+  $("scrub").value=String(replayIdx);
+  $("scrub-label").textContent=replay.length?`${replayIdx} / ${replay.length}`:"0 / 0";
+  $("live-label").textContent=live?"Live batch (updates every ~1.5 s)":"Finished batch";
+  $("batch-meta").textContent=`${data.n_tics||0} TICs · unit size ${data.unit_size||500}`;
+  const g=data.graphs||{};
+  drawHex(replayMask());
+  drawBars($("sde"), g.sde_hist||{counts:[]}, "#c4b5fd");
+  drawBars($("period"), g.period_hist||{counts:[]}, "#67e8f9");
+  drawScatter($("scatter"), g.depth_period||[]);
+  drawTimeline($("timeline"), g.processed_timeline||[]);
+  drawHex(replayMask());
+  updateProgress();
+}
+
+function replayMask(){
+  if(playing||replayIdx>0){
+    const cut=replay.slice(0, replayIdx+(playing?0:1));
+    const map={};
+    cut.forEach(ev=>{map[ev.tic]=ev.state;});
+    return map;
+  }
+  return live?null:{};
+}
+
+function pickSelection(){
+  if(!selected) return;
+  const cell=cells.find(c=>c.tic===selected);
+  if(!cell){$("sel-tic").textContent="–"; return;}
+  $("sel-tic").textContent=String(cell.tic);
+  $("sel-state").textContent=cell.state;
+  const bits=[];
+  if(cell.period!=null) bits.push("P="+Number(cell.period).toFixed(3)+" d");
+  if(cell.sde!=null) bits.push("SDE="+Number(cell.sde).toFixed(1));
+  $("sel-metrics").textContent=bits.length?bits.join(" · "):"–";
+  fetch(`/api/star?tic=${cell.tic}&sector=${view.sector}&unit=${view.unit}`, {cache:"no-store"})
+    .then(r=>r.ok?r.json():null)
+    .then(star=>{
+      if(!star||!star.available) return;
+      drawSeries($("curve"), star.raw, "#a5b4fc");
+      drawSeries($("fold"), star.fold, "#34d399");
+    }).catch(()=>{});
+}
+
+async function loadCatalog(){
+  const res=await fetch("/api/batches/catalog",{cache:"no-store"});
+  if(!res.ok) return;
+  fillCatalog(await res.json());
+  await loadView();
+}
+
+async function loadView(){
+  const sec=parseInt($("sector-pick").value,10);
+  const unit=parseInt($("unit-pick").value,10);
+  if(!sec||!unit) return;
+  const res=await fetch(`/api/batches/view?sector=${sec}&unit=${unit}`,{cache:"no-store"});
+  if(!res.ok) return;
+  if(!replayFollow) replayIdx=0;
+  paintView(await res.json());
+  if(selected) pickSelection();
+}
+
+function tickReplay(){
+  if(!playing||!replay.length) return;
+  replayIdx=Math.min(replay.length-1, replayIdx+1);
+  $("scrub").value=String(replayIdx);
+  $("scrub-label").textContent=`${replayIdx} / ${replay.length}`;
+  drawHex(replayMask());
+  updateProgress();
+  if(replayIdx>=replay.length-1){
+    playing=false;
+    $("play-btn").textContent="Play";
+    clearInterval(playTimer);
+    if(live){
+      replayFollow=false;
+      drawHex(null);
+      updateProgress();
+    }
+  }
+}
+
+$("sector-pick").onchange=()=>{replayFollow=false; refillUnits(); loadView();};
+$("unit-pick").onchange=()=>{replayFollow=false; loadView();};
+$("play-btn").onclick=()=>{
+  playing=!playing;
+  $("play-btn").textContent=playing?"Pause":"Play";
+  replayFollow=true;
+  if(playing){
+    if(replayIdx>=replay.length-1) replayIdx=0;
+    clearInterval(playTimer);
+    playTimer=setInterval(tickReplay, Math.max(40, 400/speed));
+  }else clearInterval(playTimer);
+  updateProgress();
+};
+document.querySelectorAll(".speed-btn").forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll(".speed-btn").forEach(b=>b.setAttribute("aria-pressed","false"));
+    btn.setAttribute("aria-pressed","true");
+    speed=parseInt(btn.dataset.speed,10)||1;
+    if(playing){clearInterval(playTimer); playTimer=setInterval(tickReplay, Math.max(40, 400/speed));}
+  };
+});
+$("scrub").oninput=()=>{
+  replayFollow=true;
+  replayIdx=parseInt($("scrub").value,10)||0;
+  $("scrub-label").textContent=`${replayIdx} / ${replay.length}`;
+  drawHex(replayMask());
+  updateProgress();
+};
+
+$("hex").addEventListener("mousemove", ev=>{
+  const canvas=$("hex");
+  const rect=canvas.getBoundingClientRect();
+  const sx=(ev.clientX-rect.left)*(canvas.width/rect.width);
+  const sy=(ev.clientY-rect.top)*(canvas.height/rect.height);
+  let found=null;
+  for(const hit of hexHit){
+    if(Math.hypot(sx-hit.cx,sy-hit.cy)<hit.r){found=cells[hit.i]; break;}
+  }
+  const tip=$("tip");
+  if(!found){tip.style.display="none"; hover=null; return;}
+  hover=found;
+  tip.style.display="block";
+  tip.style.left=(ev.clientX+12)+"px";
+  tip.style.top=(ev.clientY+12)+"px";
+  const bits=[`TIC ${found.tic}`, found.state];
+  if(found.period!=null) bits.push(`P=${Number(found.period).toFixed(3)} d`);
+  if(found.sde!=null) bits.push(`SDE=${Number(found.sde).toFixed(1)}`);
+  tip.textContent=bits.join(" · ");
+});
+$("hex").addEventListener("mouseleave", ()=>{$("tip").style.display="none";});
+$("hex").addEventListener("click", ()=>{
+  if(!hover) return;
+  selected=hover.tic;
+  drawHex(replayMask());
+  pickSelection();
+});
+
+async function poll(){
+  const now=Date.now();
+  if(now-pollAt<1400) return;
+  pollAt=now;
+  if(!live) return;
+  await loadView();
+}
+window.addEventListener("resize", ()=>{if(view) paintView(view);});
+loadCatalog();
+setInterval(poll, 1500);
+$("ver").textContent="v"+PAGE_VERSION;
+</script>
 </body>
 </html>
