@@ -33,13 +33,13 @@ nav a[aria-current="page"]{border-color:var(--c1);background:#7c5cff22}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px;overflow:hidden}
 .panel h2{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:650}
-#panel-hex{height:360px;grid-column:1/-1}
+#panel-hex{grid-column:1/-1;min-height:120px}
 #panel-star{height:300px}
 #panel-replay{height:300px}
 #panel-sde,#panel-period,#panel-scatter,#panel-timeline{height:220px}
 .plot{height:132px;width:100%}
 .plot.tall{height:200px}
-.plot.hex{height:280px}
+.plot.hex{width:100%;min-height:72px;height:auto}
 canvas{display:block;width:100%;height:100%}
 .replay{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .replay button{border:1px solid var(--line);background:#0c1022;color:var(--tx);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
@@ -133,6 +133,9 @@ const $=id=>document.getElementById(id);
 let catalog=null, view=null, cells=[], replay=[], replayIdx=0, playing=false, speed=1, playTimer=null;
 let hover=null, selected=null, live=false, pollAt=0, replayFollow=false;
 const hexHit=[];
+const HEX_PAD=10;
+const HEX_W_RATIO=1.7;
+const HEX_H_RATIO=1.5;
 
 function fit(canvas, minH){
   const plot=canvas.parentElement;
@@ -143,7 +146,41 @@ function fit(canvas, minH){
   const bw=Math.max(1, Math.floor(w*dpr));
   const bh=Math.max(1, Math.floor(h*dpr));
   if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw; canvas.height=bh;}
-  return {w:bw,h:bh,dpr};
+  return {w:bw,h:bh,dpr, cssW:w, cssH:h};
+}
+
+function planHexGrid(n, cssWidth){
+  const innerW=Math.max(1, cssWidth-HEX_PAD*2);
+  const maxRows=12;
+  let cols=Math.ceil(n/maxRows);
+  cols=Math.min(n, Math.max(cols, Math.floor(innerW/22)));
+  const w=innerW/(cols+0.5);
+  const h=w*(HEX_H_RATIO/HEX_W_RATIO);
+  const r=(w/HEX_W_RATIO)*0.92;
+  const rows=Math.ceil(n/cols);
+  const plotCssH=Math.ceil(HEX_PAD*2+rows*h);
+  return {cols, rows, w, h, r, innerW, plotCssH, cssWidth};
+}
+
+function placeHexHits(n, plan, scale){
+  hexHit.length=0;
+  const{cols, rows, w, h, r}=plan;
+  let i=0;
+  for(let row=0;row<rows && i<n;row++){
+    const offset=(row%2)?w/2:0;
+    for(let col=0;col<cols && i<n;col++,i++){
+      const cx=(HEX_PAD+offset+col*w+w/2)*scale;
+      const cy=(HEX_PAD+row*h+h/2)*scale;
+      hexHit.push({i,cx,cy,r:r*scale});
+    }
+  }
+}
+
+function syncHexPanel(plan){
+  const plot=document.querySelector(".plot.hex");
+  const panel=$("panel-hex");
+  if(plot) plot.style.height=plan.plotCssH+"px";
+  if(panel) panel.style.height=(plan.plotCssH+50)+"px";
 }
 
 function color(cell){
@@ -163,31 +200,18 @@ function color(cell){
   }
 }
 
-function layoutHex(n, box){
-  const cols=Math.ceil(Math.sqrt(n*1.15));
-  const rows=Math.ceil(n/cols);
-  const r=Math.min(box.w/(cols*1.85), box.h/(rows*1.7));
-  const w=r*1.7, h=r*1.5;
-  hexHit.length=0;
-  let i=0;
-  for(let row=0;row<rows && i<n;row++){
-    const offset=(row%2)?w/2:0;
-    for(let col=0;col<cols && i<n;col++,i++){
-      const cx=offset+col*w+w/2+8;
-      const cy=row*h+h/2+8;
-      hexHit.push({i,cx,cy,r:r*0.92,w,h});
-    }
-  }
-  return {r,w,h};
-}
-
 function drawHex(replayMask){
   const canvas=$("hex");
-  const box=fit(canvas, 200);
+  const plot=canvas.parentElement;
+  const cssW=Math.max(1, plot?.clientWidth||canvas.parentElement?.clientWidth||800);
+  const plan=planHexGrid(cells.length||1, cssW);
+  syncHexPanel(plan);
+  const box=fit(canvas, plan.plotCssH);
   if(!box||!cells.length) return;
+  const scale=box.w/box.cssW;
+  placeHexHits(cells.length, plan, scale);
   const ctx=canvas.getContext("2d");
   ctx.clearRect(0,0,box.w,box.h);
-  const lay=layoutHex(cells.length, box);
   replayMask=replayMask||null;
   hexHit.forEach((hit,idx)=>{
     const cell=cells[idx];

@@ -10,7 +10,6 @@ from rhexas.worker.dashboard import bind_server, make_handler
 from rhexas.worker.live import Store, publish_star
 
 PANELS = {
-    "panel-hex": 360,
     "panel-replay": 300,
     "panel-star": 300,
     "panel-sde": 220,
@@ -43,6 +42,23 @@ _MEASURE = """
     out[id] = {h: box.height, w: box.width, n, bw, bh};
   }
   return out;
+}
+"""
+
+_HEX_WIDTH = """
+() => {
+  const panel = document.getElementById('panel-hex');
+  const canvas = document.getElementById('hex');
+  const plot = canvas.parentElement;
+  const pr = panel.getBoundingClientRect();
+  const cr = canvas.getBoundingClientRect();
+  return {
+    panelW: pr.width,
+    plotW: plot.clientWidth,
+    canvasCssW: cr.width,
+    canvasPxW: canvas.width,
+    panelH: pr.height,
+  };
 }
 """
 
@@ -146,7 +162,31 @@ def test_batches_page_panels_and_soak(served):
                 got = first[name]
                 assert got is not None, name
                 assert abs(got["h"] - height) <= 2, got
-            assert first["panel-hex"]["n"] > 20
+            hex_shape = page.evaluate(_HEX_WIDTH)
+            assert hex_shape["plotW"] >= hex_shape["panelW"] * 0.92, hex_shape
+            assert hex_shape["canvasCssW"] >= hex_shape["plotW"] * 0.95, hex_shape
+            hex_panel = page.evaluate(
+                """() => {
+                  const c = document.getElementById('hex');
+                  const ctx = c.getContext('2d');
+                  const data = ctx.getImageData(0, 0, c.width, c.height).data;
+                  let minx = c.width, maxx = 0;
+                  const step = Math.max(1, Math.floor(c.width / 400));
+                  for (let y = 0; y < c.height; y += step) {
+                    for (let x = 0; x < c.width; x += step) {
+                      const i = (y * c.width + x) * 4;
+                      if (data[i + 3] > 40 && data[i] + data[i + 1] + data[i + 2] > 60) {
+                        if (x < minx) minx = x;
+                        if (x > maxx) maxx = x;
+                      }
+                    }
+                  }
+                  return {span: maxx > minx ? (maxx - minx) / c.width : 0, h: c.height};
+                }"""
+            )
+            assert hex_panel["span"] > 0.55, hex_panel
+            assert 100 <= hex_shape["panelH"] <= 340, hex_shape
+            hex_h0 = hex_shape["panelH"]
             heap0 = page.evaluate("() => (performance.memory && performance.memory.usedJSHeapSize) || 0")
             page.screenshot(path=str(shots / "batch-view-live.png"), full_page=True)
             page.click("#play-btn")
@@ -158,6 +198,8 @@ def test_batches_page_panels_and_soak(served):
                 got = later[name]
                 assert abs(got["h"] - height) <= 2, f"{name} drifted to {got['h']}"
                 assert got["bw"] <= 5000 and got["bh"] <= 1200, got
+            hex_h1 = page.evaluate(_HEX_WIDTH)["panelH"]
+            assert abs(hex_h1 - hex_h0) <= 2, (hex_h0, hex_h1)
             heap1 = page.evaluate("() => (performance.memory && performance.memory.usedJSHeapSize) || 0")
             if heap0 and heap1:
                 assert heap1 < heap0 * 1.8 + 8_000_000, (heap0, heap1)
