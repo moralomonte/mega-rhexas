@@ -13,6 +13,8 @@ _TASKS = {"claim", "current", "heartbeat", "submit", "release", "peek", "receipt
 
 _PAGE = "status.html"
 _SECTORS_PAGE = "sectors.html"
+_DISCOVERIES_PAGE = "discoveries.html"
+_DISCOVERY_PAGE = "discovery_detail.html"
 _FAVICON = "favicon.svg"
 _COOKIE = "rhexas_admin"
 _MAX_BODY = 8_000_000
@@ -84,6 +86,8 @@ class App:
         self.max_body = max_body
         self.page = page if page is not None else _load_page()
         self.sectors_page = _load_asset(_SECTORS_PAGE)
+        self.discoveries_page = _load_asset(_DISCOVERIES_PAGE)
+        self.discovery_page = _load_asset(_DISCOVERY_PAGE)
         self.favicon = _load_asset(_FAVICON)
         self.accounts = accounts or AccountsConfig()
         self.mailer = mailer if mailer is not None else SmtpMailer(smtp)
@@ -125,6 +129,13 @@ class App:
             return Response(200, self.page, "text/html; charset=utf-8")
         if method == "GET" and path == "/sectors":
             return self._sectors_page(headers)
+        if method == "GET" and path == "/discoveries":
+            return self._discoveries_page(headers)
+        discovery = _discovery_tic_path(path)
+        if method == "GET" and discovery is not None:
+            return self._discovery_detail_page(headers, discovery)
+        if method == "GET" and path.startswith("/api/v1/discoveries/") and path.endswith("/thumb.svg"):
+            return self._discovery_thumb(headers, path)
         if method == "GET" and path == "/api/v1/mission/progress":
             return self._mission_progress(headers, query)
         if method == "GET" and path == "/favicon.svg":
@@ -156,6 +167,19 @@ class App:
                 from .mission import mission_progress
                 project = _first_text(query.get("project"))
                 return _json(200, mission_progress(self.store, project or None))
+            if path == "/api/v1/discoveries":
+                if method != "GET":
+                    return _error(405, "method not allowed", "method")
+                if not self._operator_ok(headers):
+                    return _error(401, "unauthorized", "unauthorized")
+                return self._discoveries_api(query)
+            detail_path = _discovery_api_path(path)
+            if detail_path is not None:
+                if method != "GET":
+                    return _error(405, "method not allowed", "method")
+                if not self._operator_ok(headers):
+                    return _error(401, "unauthorized", "unauthorized")
+                return self._discovery_api(detail_path, query)
             if not self.store.admin_ok(_admin_token(headers)):
                 return _error(401, "unauthorized", "unauthorized")
             if method == "POST" and path == "/api/v1/candidates/review":
@@ -188,6 +212,47 @@ class App:
             from .routes_account import _redirect
             return _redirect(f"/login?next={quote('/sectors')}")
         return Response(200, self.sectors_page, "text/html; charset=utf-8")
+
+    def _discoveries_page(self, headers: dict) -> Response:
+        if not self._operator_ok(headers):
+            from .routes_account import _redirect
+            return _redirect(f"/login?next={quote('/discoveries')}")
+        return Response(200, self.discoveries_page, "text/html; charset=utf-8")
+
+    def _discovery_detail_page(self, headers: dict, tic: int) -> Response:
+        if not self._operator_ok(headers):
+            from .routes_account import _redirect
+            return _redirect(f"/login?next={quote(f'/discoveries/{tic}')}")
+        html = self.discovery_page.replace(b"__TIC__", str(int(tic)).encode("utf-8"))
+        return Response(200, html, "text/html; charset=utf-8")
+
+    def _discoveries_api(self, query: dict) -> Response:
+        project = _first_text(query.get("project")) or None
+        page = _first_int(query.get("page"), 1)
+        per_page = _first_int(query.get("per_page"), 24)
+        status = _first_text(query.get("status")) or None
+        sort = _first_text(query.get("sort")) or "priority"
+        return _json(200, self.store.discoveries_gallery(
+            page=page, per_page=per_page, status=status, sort=sort, project=project,
+        ))
+
+    def _discovery_api(self, tic: int, query: dict) -> Response:
+        project = _first_text(query.get("project")) or None
+        detail = self.store.discovery_detail(tic, project)
+        if detail is None:
+            return _error(404, "no candidate for that TIC", "not_found")
+        return _json(200, detail)
+
+    def _discovery_thumb(self, headers: dict, path: str) -> Response:
+        if not self._operator_ok(headers):
+            return _error(401, "unauthorized", "unauthorized")
+        try:
+            tic = int(path.split("/")[-2])
+        except (IndexError, ValueError):
+            return _error(404, "not found", "not_found")
+        from .discoveries_gallery import read_or_write_thumbnail, thumb_cache_dir
+        body = read_or_write_thumbnail(thumb_cache_dir(self.store.path), tic)
+        return Response(200, body, "image/svg+xml")
 
     def _mission_progress(self, headers: dict, query: dict) -> Response:
         if not self._worker_or_operator(headers):
@@ -349,6 +414,26 @@ def _first_int(values, default: int) -> int:
         return int(values[0])
     except (TypeError, ValueError):
         return default
+
+
+def _discovery_tic_path(path: str) -> int | None:
+    prefix = "/discoveries/"
+    if not path.startswith(prefix):
+        return None
+    tail = path[len(prefix):].strip("/")
+    if not tail.isdigit():
+        return None
+    return int(tail)
+
+
+def _discovery_api_path(path: str) -> int | None:
+    prefix = "/api/v1/discoveries/"
+    if not path.startswith(prefix) or path.endswith("/thumb.svg"):
+        return None
+    tail = path[len(prefix):].strip("/")
+    if not tail.isdigit():
+        return None
+    return int(tail)
 
 
 def _task_path(path: str) -> tuple[str, str] | None:

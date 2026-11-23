@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mega Rhexas · candidate TIC __TIC__</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#05060f;--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--c2:#22d3ee;--warn:#fbbf24;--ok:#34d399}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 18px 40px}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+h1{margin:0;font-size:22px}
+nav{margin-left:auto;display:flex;gap:10px}
+nav a{color:var(--c2);text-decoration:none;font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:16px;padding:14px 16px}
+.card h2{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;margin:0}
+dt{color:var(--mut)}
+dd{margin:0;font-variant-numeric:tabular-nums}
+#scale-wrap canvas{display:block;width:100%;max-width:520px;height:220px;background:#070818;border-radius:12px;border:1px solid var(--bd)}
+.note{color:var(--mut);font-size:12px;margin-top:8px}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);margin-right:6px}
+.err{color:#f87171}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><h1 id="title">TIC __TIC__ · candidate</h1></div>
+<nav><a href="/discoveries">Gallery</a><a href="/sectors">Sectors</a><a href="/">Status</a></nav>
+</header>
+<p id="load" class="note">Loading…</p>
+<div class="grid" id="content" hidden>
+<section class="card">
+<h2>Signal</h2>
+<dl id="signal"></dl>
+<img id="thumb" alt="Phase-fold thumbnail" width="320" style="margin-top:10px;border-radius:8px;border:1px solid var(--bd)">
+</section>
+<section class="card">
+<h2>Review</h2>
+<dl id="review"></dl>
+<p class="note" id="status-detail"></p>
+</section>
+<section class="card" style="grid-column:1/-1">
+<h2>To-scale sizes &amp; orbit</h2>
+<div id="scale-wrap"><canvas id="scale" width="520" height="220"></canvas></div>
+<p class="note" id="orbit-note"></p>
+</section>
+</div>
+</div>
+<script>
+const TIC=__TIC__;
+const $=id=>document.getElementById(id);
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function addRows(dl,pairs){for(const [k,v] of pairs){const dt=document.createElement('dt');dt.textContent=k;const dd=document.createElement('dd');dd.innerHTML=v;dl.append(dt,dd);}}
+function drawScale(data){
+  const SUN_R=109.2;
+  const c=$('scale'); const ctx=c.getContext('2d');
+  const w=c.width,h=c.height; ctx.clearRect(0,0,w,h);
+  const star=data.star_radius_earth, cand=data.candidate_radius_earth;
+  const refs=data.reference_bodies||[];
+  if(!star&&!cand){$('orbit-note').textContent='Stellar radius unknown — size comparison unavailable.'; return;}
+  const bodies=[{name:'Star',r:star||SUN_R,color:'#fbbf24'},{name:'Candidate',r:cand,color:'#22d3ee'},...refs.map(b=>({name:b.name,r:b.radius_earth,color:b.color}))].filter(b=>b.r&&b.r>0);
+  const maxR=Math.max(...bodies.map(b=>b.r),1);
+  const baseY=h*0.55; const gap=Math.min(70,w/(bodies.length+2));
+  let x=40;
+  ctx.fillStyle='#94a3b8'; ctx.font='11px system-ui,sans-serif';
+  for(const b of bodies){
+    const px=Math.max(4,b.r/maxR*28);
+    ctx.beginPath(); ctx.fillStyle=b.color; ctx.arc(x,baseY,px,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#cbd5e1'; ctx.fillText(b.name,x-px,baseY+px+14);
+    ctx.fillText(b.r.toFixed(b.r<10?2:0)+' R⊕',x-px,baseY+px+28);
+    x+=gap+px*2;
+  }
+  if(data.orbit_au!=null){
+    const orbitW=Math.min(180,data.orbit_au*40);
+    const ox=x+30, oy=baseY;
+    ctx.strokeStyle='#475569'; ctx.beginPath(); ctx.ellipse(ox,oy,orbitW,orbitW*0.35,0,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#64748b'; ctx.fillText('Orbit '+data.orbit_au+' AU',ox-orbitW,oy-40);
+    ctx.fillText(data.orbit_note||'',ox-orbitW,oy-26);
+  } else {
+    $('orbit-note').textContent='Orbit not shown — need a valid period.';
+  }
+}
+(async()=>{
+  const res=await fetch('/api/v1/discoveries/'+TIC,{credentials:'include'});
+  if(res.status===401){ location.href='/login?next='+encodeURIComponent(location.pathname); return;}
+  if(res.status===404){ $('load').textContent='No agreed candidate for this TIC.'; $('load').className='err'; return;}
+  const row=await res.json();
+  $('load').hidden=true; $('content').hidden=false;
+  $('title').textContent='TIC '+row.tic+' · candidate';
+  document.title='Mega Rhexas · candidate TIC '+row.tic;
+  $('thumb').src=row.thumb_url;
+  addRows($('signal'),[
+    ['Sector',esc(row.sector)],
+    ['Period',row.period!=null?Number(row.period).toFixed(6)+' d':'–'],
+    ['Depth',row.depth!=null?(Number(row.depth)*1e6).toFixed(1)+' ppm':'–'],
+    ['Est. radius',esc(row.radius_label)],
+    ['SDE',row.sde!=null?Number(row.sde).toFixed(2):'–'],
+    ['SNR',row.snr!=null?Number(row.snr).toFixed(2):'–'],
+    ['Priority',row.review_priority!=null?Number(row.review_priority).toFixed(1):'–'],
+  ]);
+  const known=row.known_match?`<span class="badge">${esc(row.known_match.kind)}: ${esc(row.known_match.name)} (${esc(row.known_match.source)})</span>`:'<span class="note">No TOI/CTOI/archive match in cache.</span>';
+  addRows($('review'),[
+    ['Status',esc(row.status_label)],
+    ['Filter',esc(row.filter_label)],
+    ['Catalog',known],
+    ['Vetting flags',(row.vetting_flags&&row.vetting_flags.length)?row.vetting_flags.map(esc).join('<br>'):'—'],
+  ]);
+  $('status-detail').textContent=row.status_detail||'';
+  drawScale(row.to_scale||{});
+})();
+</script>
+</body>
+</html>

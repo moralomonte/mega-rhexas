@@ -1146,6 +1146,38 @@ class Store:
             })
         return out
 
+    def _agreed_at_by_tic(self, tics: list[int]) -> dict[int, str]:
+        if not tics:
+            return {}
+        marks = ",".join("?" for _ in tics)
+        rows = self.conn.execute(
+            f"""SELECT c.tic, MAX(u.agreed_at) AS agreed_at
+                FROM candidates c
+                JOIN units u ON u.id = c.unit_id
+                WHERE c.tic IN ({marks}) AND u.agreed_at IS NOT NULL
+                GROUP BY c.tic""",
+            [int(tic) for tic in tics],
+        ).fetchall()
+        return {int(row["tic"]): str(row["agreed_at"] or "") for row in rows}
+
+    def discoveries_gallery(
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 24,
+        status: str | None = None,
+        sort: str = "priority",
+        project: str | None = None,
+    ) -> dict:
+        from .discoveries_gallery import build_gallery_payload
+        return build_gallery_payload(
+            self, page=page, per_page=per_page, status=status, sort=sort, project=project,
+        )
+
+    def discovery_detail(self, tic: int, project: str | None = None) -> dict | None:
+        from .discoveries_gallery import build_detail_payload
+        return build_detail_payload(self, tic, project)
+
     def candidates_public(self, limit: int = 50, project: str | None = None) -> list[dict]:
         """One row per TIC, highest review priority first.
 
