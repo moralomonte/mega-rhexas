@@ -142,9 +142,10 @@ def browser_url(host: str, port: int) -> str:
 class DashboardHooks:
     """Optional desktop services. The worker dashboard runs without them."""
 
-    def __init__(self, setup=None, updates=None):
+    def __init__(self, setup=None, updates=None, mission_progress=None):
         self.setup = setup
         self.updates = updates
+        self.mission_progress = mission_progress
 
 
 def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | None = None):
@@ -178,6 +179,22 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
 
         def _json(self, code: int, payload) -> None:
             self._send(code, dumps_safe(payload), "application/json; charset=utf-8")
+
+        def _mission_progress(self) -> None:
+            fetch = services.mission_progress
+            if fetch is None:
+                self._json(200, {"ok": False, "detail": "mission progress is not configured on this dashboard"})
+                return
+            try:
+                payload = fetch()
+            except Exception as exc:
+                self._json(200, {"ok": False, "detail": str(exc)[:160]})
+                return
+            if isinstance(payload, dict):
+                body = {"ok": True, **payload}
+            else:
+                body = {"ok": False, "detail": "unexpected coordinator response"}
+            self._json(200, body)
 
         def _post(self):
             parts = urlsplit(self.path)
@@ -357,6 +374,9 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             if path in ("/api/state", "/api/status"):
                 body = dumps_safe(snapshot(cache, fallback=fallback))
                 self._send(200, body, "application/json; charset=utf-8")
+                return
+            if path == "/api/mission/progress":
+                self._mission_progress()
                 return
             if path == "/api/log":
                 lines, size = read_log_tail(cache, limit=200)

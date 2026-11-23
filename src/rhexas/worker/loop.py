@@ -1626,7 +1626,17 @@ def run_from_args(cfg: Config, args) -> int:
             )
             return 2
         if getattr(args, "dashboard", False):
-            from .dashboard import fallback_resources, launch_in_thread
+            from .dashboard import DashboardHooks, fallback_resources, launch_in_thread
+
+            def _mission_progress():
+                from .client import CoordinatorClient
+                from ..coord.projects import DEFAULT_PROJECT
+                token_value = load_token(cfg)
+                url = (cfg.worker.coordinator_url or "").strip()
+                if not token_value or not url:
+                    return {"detail": "coordinator URL or token is not set"}
+                return CoordinatorClient(url, token_value, project=DEFAULT_PROJECT).mission_progress()
+
             try:
                 launch_in_thread(
                     cache_dir(cfg),
@@ -1634,6 +1644,7 @@ def run_from_args(cfg: Config, args) -> int:
                     port=getattr(args, "dashboard_port", None),
                     open_browser=not getattr(args, "no_browser", False),
                     fallback=fallback_resources(cfg),
+                    services=DashboardHooks(mission_progress=_mission_progress),
                 )
             except (OSError, ValueError) as exc:
                 print(f"rhexas worker: dashboard did not start ({exc})", file=sys.stderr)

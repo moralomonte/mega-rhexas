@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 from .projects import DEFAULT_PROJECT
 from .store import CoordError, Store
@@ -12,6 +12,7 @@ from .vetting import PRIORITY_HELP, REVIEW_STATUSES
 _TASKS = {"claim", "current", "heartbeat", "submit", "release", "peek", "receipt"}
 
 _PAGE = "status.html"
+_SECTORS_PAGE = "sectors.html"
 _FAVICON = "favicon.svg"
 _COOKIE = "rhexas_admin"
 _MAX_BODY = 8_000_000
@@ -82,6 +83,7 @@ class App:
         self.store = store
         self.max_body = max_body
         self.page = page if page is not None else _load_page()
+        self.sectors_page = _load_asset(_SECTORS_PAGE)
         self.favicon = _load_asset(_FAVICON)
         self.accounts = accounts or AccountsConfig()
         self.mailer = mailer if mailer is not None else SmtpMailer(smtp)
@@ -121,6 +123,10 @@ class App:
             return _json(200, {"ok": True})
         if method == "GET" and path in ("/", "/index.html"):
             return Response(200, self.page, "text/html; charset=utf-8")
+        if method == "GET" and path == "/sectors":
+            return self._sectors_page(headers)
+        if method == "GET" and path == "/api/v1/mission/progress":
+            return self._mission_progress(headers, query)
         if method == "GET" and path == "/favicon.svg":
             return Response(200, self.favicon, "image/svg+xml")
         if method == "POST" and path == "/login":
@@ -142,12 +148,53 @@ class App:
                 return _error(404, "not found", "not_found")
             return self._work(method, action, headers, body, DEFAULT_PROJECT)
         if path.startswith("/api/v1/"):
+            if path == "/api/v1/mission/overview":
+                if method != "GET":
+                    return _error(405, "method not allowed", "method")
+                if not self._operator_ok(headers):
+                    return _error(401, "unauthorized", "unauthorized")
+                from .mission import mission_progress
+                project = _first_text(query.get("project"))
+                return _json(200, mission_progress(self.store, project or None))
             if not self.store.admin_ok(_admin_token(headers)):
                 return _error(401, "unauthorized", "unauthorized")
             if method == "POST" and path == "/api/v1/candidates/review":
                 return self._set_review(body)
             return self._admin_read(method, path, query)
         return _error(404, "not found", "not_found")
+
+    def _operator_ok(self, headers: dict) -> bool:
+        from . import identity
+        from .auth import SESSION_COOKIE
+        if self.store.admin_ok(_admin_token(headers)):
+            return True
+        cookie_header = ""
+        for key, value in headers.items():
+            if key.lower() == "cookie":
+                cookie_header = value
+                break
+        session = _cookies(cookie_header).get(SESSION_COOKIE, "")
+        return identity.account_for_session(self.store, session) is not None
+
+    def _worker_or_operator(self, headers: dict) -> bool:
+        if self._operator_ok(headers):
+            return True
+        worker = self.store.authenticate(_bearer(headers))
+        return worker is not None
+
+    def _sectors_page(self, headers: dict) -> Response:
+        if not self._operator_ok(headers):
+            from .auth import safe_next
+            from .routes_account import _redirect
+            return _redirect(f"/login?next={quote('/sectors')}")
+        return Response(200, self.sectors_page, "text/html; charset=utf-8")
+
+    def _mission_progress(self, headers: dict, query: dict) -> Response:
+        if not self._worker_or_operator(headers):
+            return _error(401, "unauthorized", "unauthorized")
+        from .mission import compact_progress
+        project = _first_text(query.get("project"))
+        return _json(200, compact_progress(self.store, project or None))
 
     def _login(self, body: bytes) -> Response:
         payload = _payload(body)
@@ -287,6 +334,12 @@ def _payload(body: bytes) -> dict:
     if not isinstance(data, dict):
         raise CoordError("body must be a JSON object", 400)
     return data
+
+
+def _first_text(values) -> str:
+    if not values:
+        return ""
+    return str(values[0]).strip()
 
 
 def _first_int(values, default: int) -> int:
