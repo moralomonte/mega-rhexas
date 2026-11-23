@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from rhexas.worker.batch_index import UNIT_SIZE, catalog, register_unit, unit_view
-from rhexas.worker.live import DB_NAME, Store
+from rhexas.worker.batch_index import UNIT_SIZE, catalog, unit_view
+from rhexas.worker.live import Store
 
 
 def test_register_unit_and_progress_in_view(tmp_path):

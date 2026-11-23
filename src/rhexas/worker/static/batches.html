@@ -420,7 +420,12 @@ function tickReplay(){
   if(replayIdx>=replay.length-1){
     playing=false;
     $("play-btn").textContent="Play";
-    if(live) playing=false;
+    clearInterval(playTimer);
+    if(live){
+      replayFollow=false;
+      drawHex(null);
+      updateProgress();
+    }
   }
 }
 
