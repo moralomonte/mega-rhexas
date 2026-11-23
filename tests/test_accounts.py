@@ -79,6 +79,40 @@ def _signup(app, email="ada@example.com", name="Ada", password="correct horse", 
     })
 
 
+def _seed(store, email="ada@example.com", name="Ada", password="correct horse"):
+    """Insert an account without the closed signup route."""
+    from rhexas.coord.store import iso
+    email_key = auth.normalize_email(email)
+    display = auth.check_display_name(name)
+    now = iso(store.clock())
+    store.conn.execute(
+        """INSERT INTO accounts (
+               email, email_key, password_hash, display_name, display_key, provider,
+               provider_sub, email_verified_at, created_at, legacy, trust_score, tier
+           ) VALUES (?, ?, ?, ?, ?, 'password', NULL, NULL, ?, 0, NULL, '')""",
+        (email_key, email_key, auth.hash_password(password), display, display.casefold(), now),
+    )
+    store.conn.commit()
+    return int(store.conn.execute(
+        "SELECT id FROM accounts WHERE email_key=?", (email_key,),
+    ).fetchone()["id"])
+
+
+def _login(app, email="ada@example.com", password="correct horse"):
+    return _post(app, "/api/v1/login", {"email": email, "password": password})
+
+
+def _own(store, account_id, name, hostname):
+    token = store.create_worker(name)
+    worker = store.authenticate(token)
+    store.conn.execute(
+        "UPDATE workers SET account_id=?, hostname=?, kind='device' WHERE id=?",
+        (account_id, hostname, worker["id"]),
+    )
+    store.conn.commit()
+    return token, int(worker["id"])
+
+
 def _star(tic, period=1.5, sde=10.0, depth=0.01):
     return {"tic": tic, "period": period, "sde": sde, "depth": depth, "error": None, "snr": 9.0, "n_transits": 4}
 
@@ -87,13 +121,16 @@ def test_signup_login_logout_and_me(tmp_path):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        created = _signup(app)
-        assert created.status == 201
+        closed = _signup(app)
+        assert closed.status == 403
+        assert "Signup is closed" in closed.body.decode()
+        _seed(store)
+        created = _login(app)
+        assert created.status == 200
         body = _json(created)
         assert body["display_name"] == "Ada"
         assert body["email"] == "ada@example.com"
         assert body["email_verified"] is False
-        assert body["email_verification"] == "skipped"
         assert body["provider"] == "password"
         assert "scrypt" not in created.body.decode()
         assert "rhs_" not in created.body.decode()
@@ -125,7 +162,7 @@ def test_signup_login_logout_and_me(tmp_path):
         assert gone.status == 401
 
         short = _signup(app, email="bea@example.com", name="Bea", password="short")
-        assert short.status == 400
+        assert short.status == 403
         cols = {row["name"] for row in store.conn.execute("PRAGMA table_info(accounts)")}
         assert {"provider", "provider_sub", "trust_score", "tier", "password_hash"} <= cols
     finally:
@@ -136,7 +173,8 @@ def test_local_cookie_is_lax_without_secure(tmp_path):
     store = _store(tmp_path)
     try:
         app = App(store, accounts=AccountsConfig(signup="open", cookie_secure=False))
-        created = _signup(app, email="cam@example.com", name="Cam")
+        _seed(store, email="cam@example.com", name="Cam")
+        created = _login(app, email="cam@example.com")
         cookie = _cookie(created)
         assert "SameSite=Lax" in cookie
         assert "Secure" not in cookie
@@ -150,19 +188,22 @@ def test_open_signup_signs_in_and_links_a_device(tmp_path):
     try:
         app = _open(store)
         config = _json(app.handle("GET", "/api/v1/public/config", "", {}, b""))
-        assert config == {"signup": "open", "copies_required": 2}
+        assert config == {"signup": "closed", "copies_required": 1, "device_linking": "closed"}
         created = _signup(app)
-        assert created.status == 201
-        session = _session(created)
-        logged = _post(app, "/api/v1/login", {"email": "ada@example.com", "password": "correct horse"})
+        assert created.status == 403
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"] == 0
+        _seed(store)
+        logged = _login(app)
         assert logged.status == 200
-        cookie = {"Cookie": f"rhexas_session={session}", "Content-Type": "application/json"}
-        started = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
-        approved = _post(app, "/api/v1/device/approve", {"code": started["user_code"]}, cookie)
-        assert approved.status == 200
-        polled = _json(_post(app, "/api/v1/device/poll", {"device_code": started["device_code"]}))
-        assert polled["token"].startswith("rhx_")
-        assert store.authenticate(polled["token"])["name"]
+        cookie = {"Cookie": f"rhexas_session={_session(logged)}", "Content-Type": "application/json"}
+        started = _post(app, "/api/v1/device/start", {"hostname": "laptop"})
+        assert started.status == 403
+        assert "Device linking is closed" in started.body.decode()
+        approved = _post(app, "/api/v1/device/approve", {"code": "ABCD"}, cookie)
+        assert approved.status == 403
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM device_grants").fetchone()["n"] == 0
+        token = store.create_worker("ada-pc")
+        assert store.authenticate(token)["name"] == "ada-pc"
     finally:
         store.close()
 
@@ -172,31 +213,25 @@ def test_honeypot_email_and_device_cap(tmp_path, monkeypatch):
     try:
         app = _open(store)
         bad_email = _signup(app, email="not-an-email", name="Ada")
-        assert bad_email.status == 400
+        assert bad_email.status == 403
         trapped = _post(app, "/api/v1/signup", {
             "email": "ada@example.com",
             "password": "correct horse",
             "display_name": "Ada",
             "company": "filled by a bot",
         })
-        assert trapped.status == 400
+        assert trapped.status == 403
         assert store.conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"] == 0
-        created = _signup(app)
-        assert created.status == 201
-        monkeypatch.setattr(auth, "MAX_DEVICES_PER_ACCOUNT", 1)
-        cookie = {"Cookie": f"rhexas_session={_session(created)}", "Content-Type": "application/json"}
-        first = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
-        assert _post(app, "/api/v1/device/approve", {"code": first["user_code"]}, cookie).status == 200
-        second = _json(_post(app, "/api/v1/device/start", {"hostname": "desktop"}))
-        capped = _post(app, "/api/v1/device/approve", {"code": second["user_code"]}, cookie)
-        assert capped.status == 409
+        account_id = _seed(store)
+        cookie = {"Cookie": f"rhexas_session={_session(_login(app))}", "Content-Type": "application/json"}
+        assert _post(app, "/api/v1/device/start", {"hostname": "laptop"}).status == 403
+        token, device_id = _own(store, account_id, "laptop", "laptop")
         devices = _json(app.handle("GET", "/api/v1/me/devices", "", cookie, b""))["devices"]
-        laptop = next(row for row in devices if row["hostname"] == "laptop")
+        assert devices[0]["hostname"] == "laptop"
         assert app.handle(
-            "POST", f"/api/v1/me/devices/{laptop['id']}/revoke", "", cookie, b"{}",
+            "POST", f"/api/v1/me/devices/{device_id}/revoke", "", cookie, b"{}",
         ).status == 200
-        third = _json(_post(app, "/api/v1/device/start", {"hostname": "spare"}))
-        assert _post(app, "/api/v1/device/approve", {"code": third["user_code"]}, cookie).status == 200
+        assert store.authenticate(token) is None
     finally:
         store.close()
 
@@ -207,7 +242,8 @@ def test_login_and_device_link_are_rate_limited_per_ip(tmp_path, monkeypatch):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        assert _signup(app).status == 201
+        _seed(store)
+        assert _login(app).status == 200
         headers = {"X-Forwarded-For": "203.0.113.8"}
         assert _post(app, "/api/v1/login", {
             "email": "ada@example.com", "password": "wrong-password-1",
@@ -223,9 +259,9 @@ def test_login_and_device_link_are_rate_limited_per_ip(tmp_path, monkeypatch):
             "email": "ada@example.com", "password": "correct horse",
         }, {"X-Forwarded-For": "203.0.113.9"})
         assert other.status == 200
-        assert _post(app, "/api/v1/device/start", {"hostname": "one"}, headers).status == 200
+        assert _post(app, "/api/v1/device/start", {"hostname": "one"}, headers).status == 403
         started = _post(app, "/api/v1/device/start", {"hostname": "two"}, headers)
-        assert started.status == 429
+        assert started.status == 403
     finally:
         store.close()
 
@@ -236,22 +272,21 @@ def test_public_config_follows_invite_and_one_copy(tmp_path):
     try:
         invite = App(store)
         hidden = _json(invite.handle("GET", "/api/v1/public/config", "", {}, b""))
-        assert hidden == {"signup": "invite", "copies_required": 1}
+        assert hidden == {"signup": "closed", "copies_required": 1, "device_linking": "closed"}
         blocked = _signup(invite)
         assert blocked.status == 403
         page = invite.handle("GET", "/signup", "", {}, b"").body.decode()
-        assert "Invite code" in page
-        assert 'name="company"' in page
+        assert "Signup is closed" in page
         opened = App(store, accounts=AccountsConfig(signup="open", cookie_secure=False))
         shown = _json(opened.handle("GET", "/api/v1/public/config", "", {}, b""))
-        assert shown == {"signup": "open", "copies_required": 1}
+        assert shown["signup"] == "closed"
+        assert shown["copies_required"] == 1
         stats = _json(opened.handle("GET", "/api/v1/public/stats", "", {}, b""))
         assert stats["copies_required"] == 1
         created = _signup(opened, invite="")
-        assert created.status == 201
+        assert created.status == 403
         open_page = opened.handle("GET", "/signup", "", {}, b"").body.decode()
-        assert "Invite code" not in open_page
-        assert "checked once" in open_page
+        assert "Signup is closed" in open_page
     finally:
         store.close()
 
@@ -267,9 +302,10 @@ def test_invite_only_is_the_default_and_codes_are_single_use(tmp_path, capsys):
         )
         assert code.startswith("inv_")
         ok = _signup(app, invite=code)
-        assert ok.status == 201
+        assert ok.status == 403
         again = _signup(app, email="bea@example.com", name="Bea", invite=code)
         assert again.status == 403
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()["n"] == 0
     finally:
         store.close()
 
@@ -298,15 +334,15 @@ def test_rate_limit_trusts_the_proxy_hop(tmp_path, monkeypatch):
         first = _post(app, "/api/v1/signup", {
             "email": "ada@example.com", "password": "correct horse", "display_name": "Ada",
         }, headers)
-        assert first.status == 201
+        assert first.status == 403
         second = _post(app, "/api/v1/signup", {
             "email": "bea@example.com", "password": "correct horse", "display_name": "Bea",
         }, headers)
-        assert second.status == 429
+        assert second.status == 403
         other = _post(app, "/api/v1/signup", {
             "email": "cam@example.com", "password": "correct horse", "display_name": "Cam",
         }, {"X-Forwarded-For": "203.0.113.9"})
-        assert other.status == 201
+        assert other.status == 403
     finally:
         store.close()
 
@@ -316,11 +352,11 @@ def test_signup_is_rate_limited(tmp_path, monkeypatch):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        assert _signup(app, email="a@example.com", name="Aaa").status == 201
-        assert _signup(app, email="b@example.com", name="Bbb").status == 201
+        assert _signup(app, email="a@example.com", name="Aaa").status == 403
+        assert _signup(app, email="b@example.com", name="Bbb").status == 403
         limited = _signup(app, email="c@example.com", name="Ccc")
-        assert limited.status == 429
-        assert _json(limited)["code"] == "rate_limited"
+        assert limited.status == 403
+        assert "Signup is closed" in limited.body.decode()
     finally:
         store.close()
 
@@ -329,8 +365,7 @@ def test_public_site_cors_and_public_stats_hide_emails(tmp_path):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        created = _signup(app)
-        assert created.status == 201
+        assert _signup(app).status == 403
         origin = {"Origin": "https://megarhexas.com"}
         stats = app.handle("GET", "/api/v1/public/stats", "", origin, b"")
         assert stats.status == 200
@@ -352,85 +387,36 @@ def test_public_site_cors_and_public_stats_hide_emails(tmp_path):
         store.close()
 
 
-def test_html_pages_and_device_flow_happy_path(tmp_path, monkeypatch):
+def test_html_pages_and_pasted_token(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     store = _store(tmp_path)
-    httpd = None
     try:
         app = _open(store)
         page = app.handle("GET", "/signup", "", {}, b"").body.decode()
+        assert app.handle("GET", "/signup", "", {}, b"").status == 403
+        assert "Signup is closed" in page
         assert "animation:trspin 12s linear infinite" in page
-        assert "prefers-reduced-motion:reduce" in page
-        assert 'class="trisk spin"' in page
         form = "email=ada%40example.com&password=correct+horse&display_name=Ada".encode()
         signed = app.handle("POST", "/signup", "", {"Content-Type": "application/x-www-form-urlencoded"}, form)
-        assert signed.status == 303
-        session = _session(signed)
+        assert signed.status == 403
+        account_id = _seed(store)
+        session = _session(_login(app))
         account = app.handle("GET", "/account", "", {"Cookie": f"rhexas_session={session}"}, b"")
         assert account.status == 200
         assert b"Ada" in account.body
-        assert b"Stars pending" in account.body
 
         started = _post(app, "/api/v1/device/start", {"hostname": "laptop"})
-        assert started.status == 200
-        grant = _json(started)
-        assert grant["verification_url"] == "https://api.megarhexas.com/link"
-        assert "code=" not in grant["verification_url"]
-        assert grant["expires_in"] == 600
-        assert grant["interval"] == 5
-        link = app.handle("GET", "/link", f"code={grant['user_code']}", {"Cookie": f"rhexas_session={session}"}, b"")
-        html = link.body.decode()
-        assert link.status == 200
-        assert "Link this computer: <b>laptop</b>" in html
-        assert "Approve" in html
-        approved = app.handle(
-            "POST", "/link/approve", "",
-            {"Cookie": f"rhexas_session={session}", "Content-Type": "application/x-www-form-urlencoded"},
-            f"code={grant['user_code']}".encode(),
-        )
-        assert approved.status == 303
-        assert "linked=1" in dict(approved.headers)["Location"]
-
-        polled = _post(app, "/api/v1/device/poll", {"device_code": grant["device_code"]})
-        assert polled.status == 200
-        token = _json(polled)["token"]
-        assert token.startswith("rhx_")
-        assert store.authenticate(token)["name"]
-        devices = app.handle("GET", "/api/v1/me/devices", "", {"Cookie": f"rhexas_session={session}"}, b"")
-        listed = _json(devices)["devices"]
-        assert listed[0]["hostname"] == "laptop"
-        assert "token" not in listed[0]
-
-        httpd = make_server(store, "127.0.0.1", 0)
-        import threading
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        port = httpd.server_address[1]
-        seen = {}
-
-        def opener(url):
-            code = parse_qs(urlsplit(url).query)["code"][0]
-            decision = _post(
-                app, "/api/v1/device/approve", {"code": code},
-                {"Cookie": f"rhexas_session={session}"},
-            )
-            assert decision.status == 200
-            seen["url"] = url
-
-        saved = link_this_computer(
-            f"http://127.0.0.1:{port}",
-            hostname="desktop",
-            open_browser=True,
-            opener=opener,
-            sleeper=lambda _seconds: None,
-        )
-        assert saved.startswith("rhx_")
-        assert load_saved_token() == saved
-        assert token_path() == tmp_path / "xdg" / "rhexas" / "worker.token"
-        assert "code=" in seen["url"]
+        assert started.status == 403
+        link = app.handle("GET", "/link", "", {}, b"")
+        assert link.status == 403
+        assert b"Device linking is closed" in link.body
+        token, _device = _own(store, account_id, "laptop", "laptop")
+        assert store.authenticate(token)["name"] == "laptop"
+        from rhexas.worker.login import save_worker_token
+        saved = save_worker_token(token)
+        assert load_saved_token() == token
+        assert saved == token_path()
     finally:
-        if httpd is not None:
-            httpd.shutdown()
-            httpd.server_close()
         store.close()
 
 
@@ -438,39 +424,20 @@ def test_device_code_expires_and_cannot_be_reused(tmp_path):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        session = _session(_signup(app))
+        _seed(store)
+        session = _session(_login(app))
         cookie = {"Cookie": f"rhexas_session={session}", "Content-Type": "application/json"}
-        started = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
-        store.clock.now += timedelta(seconds=601)
-        expired = _post(app, "/api/v1/device/poll", {"device_code": started["device_code"]})
-        assert expired.status == 400
-        assert _json(expired)["status"] == "expired"
-        assert "rhx_" not in expired.body.decode()
+        started = _post(app, "/api/v1/device/start", {"hostname": "laptop"})
+        assert started.status == 403
+        expired = _post(app, "/api/v1/device/poll", {"device_code": "gone"})
+        assert expired.status == 403
         denied = app.handle(
             "POST", "/api/v1/device/approve", "", cookie,
-            json.dumps({"code": started["user_code"]}).encode(),
+            json.dumps({"code": "ABCD"}).encode(),
         )
-        assert denied.status == 400
-
-        fresh = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
-        approved = app.handle(
-            "POST", "/api/v1/device/approve", "", cookie,
-            json.dumps({"code": fresh["user_code"]}).encode(),
-        )
-        assert approved.status == 200
-        first = _post(app, "/api/v1/device/poll", {"device_code": fresh["device_code"]})
-        token = _json(first)["token"]
-        assert token.startswith("rhx_")
-        second = _post(app, "/api/v1/device/poll", {"device_code": fresh["device_code"]})
-        assert second.status == 400
-        assert _json(second)["status"] == "consumed"
-        assert token not in second.body.decode()
-        assert "rhx_" not in second.body.decode()
-        reused = app.handle(
-            "POST", "/api/v1/device/approve", "", cookie,
-            json.dumps({"code": fresh["user_code"]}).encode(),
-        )
-        assert reused.status == 400
+        assert denied.status == 403
+        assert "rhx_" not in started.body.decode()
+        assert store.conn.execute("SELECT COUNT(*) AS n FROM device_grants").fetchone()["n"] == 0
     finally:
         store.close()
 
@@ -479,41 +446,26 @@ def test_revoke_device_and_same_account_cannot_replicate(tmp_path):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        session = _session(_signup(app))
+        account_id = _seed(store)
+        session = _session(_login(app))
         cookie = {"Cookie": f"rhexas_session={session}"}
-
-        def link(hostname):
-            started = _json(_post(app, "/api/v1/device/start", {"hostname": hostname}))
-            approved = _post(
-                app, "/api/v1/device/approve", {"code": started["user_code"]},
-                {**cookie, "Content-Type": "application/json"},
-            )
-            assert approved.status == 200
-            token = _json(_post(app, "/api/v1/device/poll", {"device_code": started["device_code"]}))["token"]
-            return token, store.authenticate(token)["id"]
-
-        laptop, laptop_id = link("laptop")
-        desktop, desktop_id = link("desktop")
+        laptop, laptop_id = _own(store, account_id, "laptop", "laptop")
+        desktop, desktop_id = _own(store, account_id, "desktop", "desktop")
         assert laptop_id != desktop_id
         store.enroll_tics(107, [1, 2, 3, 4], unit_size=2)
         first = store.claim(laptop_id)
         assert first["tics"] == [1, 2]
-        store.submit(laptop_id, first["assignment_id"], [_star(1), _star(2)], [])
+        done = store.submit(laptop_id, first["assignment_id"], [_star(1), _star(2)], [])
+        assert done["verdict"] == "agreed"
         second = store.claim(desktop_id)
         assert second is not None
         assert second["unit_id"] != first["unit_id"]
-        assert second["tics"] != first["tics"]
         other = store.create_worker("bea")
         bea = store.authenticate(other)["id"]
-        replica = store.claim(bea)
-        assert replica["tics"] == [1, 2]
-        assert replica["unit_id"] == first["unit_id"]
-        done = store.submit(bea, replica["assignment_id"], [_star(1), _star(2)], [])
-        assert done["verdict"] == "agreed"
+        assert store.claim(bea) is None
         credited = [row for row in store.contributions() if row["outcome"] == "agreed"]
         accounts = {row["account_id"] for row in credited}
-        assert len(accounts) == 2
-        assert None not in accounts
+        assert accounts == {account_id}
 
         stats = app.handle("GET", "/api/v1/me/stats", "", cookie, b"")
         mine = _json(stats)
@@ -522,7 +474,7 @@ def test_revoke_device_and_same_account_cannot_replicate(tmp_path):
         assert mine["email"] == "ada@example.com"
         public = _json(app.handle("GET", "/api/v1/public/stats", "", {}, b""))
         names = {row["display_name"] for row in public["leaderboard"]}
-        assert names == {"Ada", "bea"}
+        assert "Ada" in names
         assert public["sectors"][0]["sector"] == 107
         assert public["tics_agreed"] == 2
         dumped = json.dumps(public)
@@ -565,20 +517,18 @@ def test_pending_credit_until_another_account_agrees(tmp_path):
     store = _store(tmp_path)
     try:
         app = _open(store)
-        session = _session(_signup(app))
+        account_id = _seed(store)
+        session = _session(_login(app))
         cookie = {"Cookie": f"rhexas_session={session}", "Content-Type": "application/json"}
-        started = _json(_post(app, "/api/v1/device/start", {"hostname": "laptop"}))
-        assert _post(
-            app, "/api/v1/device/approve", {"code": started["user_code"]}, cookie,
-        ).status == 200
-        token = _json(_post(app, "/api/v1/device/poll", {"device_code": started["device_code"]}))["token"]
-        worker = store.authenticate(token)["id"]
+        token, worker = _own(store, account_id, "laptop", "laptop")
+        assert token.startswith("rhx_")
         store.enroll_tics(96, [7], unit_size=500)
         assignment = store.claim(worker)
-        store.submit(worker, assignment["assignment_id"], [_star(7)], [])
+        done = store.submit(worker, assignment["assignment_id"], [_star(7)], [])
+        assert done["verdict"] == "agreed"
         pending = _json(app.handle("GET", "/api/v1/me/stats", "", cookie, b""))
-        assert pending["stars_pending"] == 1
-        assert pending["stars_verified"] == 0
+        assert pending["stars_pending"] == 0
+        assert pending["stars_verified"] == 1
         assert pending["email_verified"] is False
     finally:
         store.close()
@@ -677,8 +627,8 @@ def test_legacy_invites_migrate_and_still_count_as_different_accounts(tmp_path):
         assert accounts == {"ada": "ada", "bea": "bea"}
         first = store.claim(ada["id"])
         second = store.claim(bea["id"])
-        assert first["tics"] == second["tics"] == [1, 2]
-        assert first["assignment_id"] != second["assignment_id"]
+        assert first["tics"] == [1, 2]
+        assert second is None
         backfilled = store.contributions()[0]
         assert backfilled["user_id"] == ada["id"]
         assert backfilled["account_id"] is not None
@@ -693,17 +643,8 @@ def test_verification_email_is_optional(tmp_path):
         mail = CapturedMail()
         app = App(store, accounts=AccountsConfig(signup="open", cookie_secure=True), mailer=mail)
         created = _signup(app)
-        assert created.status == 201
-        assert _json(created)["email_verification"] == "sent"
-        assert mail.messages[0]["to"] == "ada@example.com"
-        link = next(line for line in mail.messages[0]["body"].splitlines() if line.startswith("http"))
-        parsed = urlsplit(link)
-        confirmed = app.handle("GET", parsed.path, parsed.query, {}, b"")
-        assert confirmed.status == 303
-        me = app.handle(
-            "GET", "/api/v1/me", "", {"Cookie": f"rhexas_session={_session(created)}"}, b"",
-        )
-        assert _json(me)["email_verified"] is True
+        assert created.status == 403
+        assert mail.messages == []
         assert SmtpConfig().enabled() is False
     finally:
         store.close()

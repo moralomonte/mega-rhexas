@@ -518,10 +518,9 @@ def test_status_page_explains_the_score_and_the_checks():
 
 def _agree(store, tic, sector=14, period=1.5, snr=20.0, odd_even=None, secondary=None, duration=0.1):
     store.enroll_tics(sector, [tic], unit_size=500)
-    tokens = {name: store.create_worker(name + str(sector)) for name in ("ada", "bea")}
-    ids = {name: store.authenticate(token)["id"] for name, token in tokens.items()}
-    first = store.claim(ids["ada"])
-    second = store.claim(ids["bea"])
+    token = store.create_worker("ada" + str(sector))
+    worker = store.authenticate(token)["id"]
+    first = store.claim(worker)
     stars = [_star(tic, period=period)]
     cand = _cand(tic)
     cand["period"] = period
@@ -529,6 +528,5 @@ def _agree(store, tic, sector=14, period=1.5, snr=20.0, odd_even=None, secondary
     cand["duration"] = duration
     cand["odd_even_sigma"] = odd_even
     cand["sec_sigma"] = secondary
-    assert store.submit(ids["ada"], first["assignment_id"], stars, [cand])["verdict"] == "pending"
-    done = store.submit(ids["bea"], second["assignment_id"], stars, [cand])
+    done = store.submit(worker, first["assignment_id"], stars, [cand])
     assert done["verdict"] == "agreed"

@@ -137,6 +137,8 @@ prefetch = 1
 queue_max = 3
 # Sector light curves stay under this. The Sectors page can change it.
 max_cache_gb = 20
+# Processed light curves and result files kept for replay. Candidates are not auto-deleted.
+processed_limit_gb = 20
 
 [vetting]
 # Local advisory checks for candidates found on this computer. Off by default,

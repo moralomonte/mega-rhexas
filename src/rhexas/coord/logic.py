@@ -194,3 +194,48 @@ def new_tic_ids(candidates: list[dict]) -> set[int]:
 
 def measured_count(stars: list[dict]) -> int:
     return sum(1 for star in stars if not star_failed(star))
+
+
+def verify_single_copy(unit_tics: list[int], stars: list[dict], candidates: list[dict]) -> tuple[bool, str]:
+    """Check one stored upload before the coordinator trusts it.
+
+    The worker's own summary is not enough. Every TIC in the batch must have
+    a stored star row. A row is either an explicit failure or a plausible
+    measurement (positive period, finite SDE and depth inside a wide physical
+    window). A NEW candidate must name a TIC in the batch whose stored star
+    was actually measured. Two uploads are not compared.
+    """
+    expected = [int(tic) for tic in unit_tics]
+    indexed = index_stars(stars)
+    missing = [tic for tic in expected if tic not in indexed]
+    if missing:
+        return False, (
+            f"incomplete: {len(missing)} of {len(expected)} stars missing from the stored result"
+        )
+    bad: list[int] = []
+    for tic in expected:
+        star = indexed[tic]
+        if star_failed(star):
+            continue
+        period = float(star["period"])
+        depth = float(star["depth"])
+        sde = float(star["sde"])
+        if not (0 < period <= 1000) or not (-0.5 <= depth <= 1.5) or not (-1e6 <= sde <= 1e6):
+            bad.append(tic)
+    if bad:
+        shown = ", ".join(str(tic) for tic in bad[:5])
+        return False, f"implausible measurements (TIC {shown})"
+    allowed = set(expected)
+    for row in candidates:
+        if not isinstance(row, dict):
+            return False, "candidate row is not an object"
+        try:
+            tic = int(row["tic"])
+        except (KeyError, TypeError, ValueError):
+            return False, "candidate is missing a tic"
+        if tic not in allowed:
+            return False, f"candidate TIC {tic} is not in this batch"
+        if str(row.get("status") or "") == "NEW" and star_failed(indexed.get(tic)):
+            return False, f"candidate TIC {tic} has no measurement in the stored result"
+    measured = sum(1 for tic in expected if not star_failed(indexed[tic]))
+    return True, f"verified {measured} of {len(expected)} stars"

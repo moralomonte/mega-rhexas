@@ -40,6 +40,9 @@ _FILES = {
     "/favicon.ico": ("img/favicon.svg", "image/svg+xml"),
     "/sectors": ("sectors.html", "text/html; charset=utf-8"),
     "/vetting": ("vetting.html", "text/html; charset=utf-8"),
+    "/batches": ("batches.html", "text/html; charset=utf-8"),
+    "/discoveries": ("discoveries.html", "text/html; charset=utf-8"),
+    "/candidates": ("candidates.html", "text/html; charset=utf-8"),
 }
 
 
@@ -65,6 +68,7 @@ def fallback_resources(cfg) -> dict:
         "min_free_gb": worker.min_free_gb,
         "coordinator_url": public_coordinator_url(worker.coordinator_url),
         "vetting_enabled": bool(getattr(getattr(cfg, "vetting", None), "enabled", False)),
+        "processed_limit_gb": getattr(worker, "processed_limit_gb", 20.0),
     }
 
 
@@ -192,6 +196,15 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return
             if path == "/api/holdings/cap":
                 self._post_cap()
+                return
+            if path == "/api/prefetch/sectors":
+                self._post_sectors()
+                return
+            if path == "/api/retention/limit":
+                self._post_retention_limit()
+                return
+            if path == "/api/retention/delete":
+                self._post_retention_delete()
                 return
             if path == "/api/setup/token":
                 self._post_token()
@@ -360,6 +373,9 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return
             if path == "/api/holdings":
                 self._json(200, self._holdings())
+                return
+            if path == "/api/retention":
+                self._json(200, self._retention())
                 return
             if path == "/api/sectors":
                 body = dumps_safe(sectors_payload(snapshot(cache, fallback=fallback), self.server.server_address[1]))
@@ -625,6 +641,57 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 self._json(400, {"ok": False, "error": "storage cap must be greater than 0"})
                 return
             self._json(200, {"ok": True, "max_cache_gb": cap})
+
+        def _retention(self):
+            from .retention import active_sectors, maybe_enforce, processed_limit_gb, usage
+            configured = fallback.get("processed_limit_gb")
+            try:
+                configured = float(configured) if configured is not None else None
+            except (TypeError, ValueError):
+                configured = None
+            maybe_enforce(cache, configured, active=active_sectors(cache))
+            return usage(cache, configured)
+
+        def _post_sectors(self):
+            from .holdings import write_download_sectors
+            data = self._read_json(4096)
+            if data is None or "sectors" not in data:
+                self._json(400, {"ok": False, "error": "sectors is required"})
+                return
+            try:
+                chosen = write_download_sectors(cache, data.get("sectors"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "sectors": chosen})
+
+        def _post_retention_limit(self):
+            from .retention import active_sectors, enforce, write_processed_limit_gb
+            data = self._read_json(256)
+            if not data or data.get("processed_limit_gb") is None:
+                self._json(400, {"ok": False, "error": "processed_limit_gb is required"})
+                return
+            try:
+                limit = write_processed_limit_gb(cache, float(data["processed_limit_gb"]))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "processed limit must be greater than 0"})
+                return
+            outcome = enforce(cache, limit, active=active_sectors(cache))
+            self._json(200, {"ok": True, "processed_limit_gb": limit, "deleted": outcome.get("deleted") or []})
+
+        def _post_retention_delete(self):
+            from .retention import active_sectors, delete_sector
+            data = self._read_json(256)
+            if not data or data.get("sector") is None:
+                self._json(400, {"ok": False, "error": "sector is required"})
+                return
+            try:
+                sector = int(data["sector"])
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "sector is required"})
+                return
+            result = delete_sector(cache, sector, active=active_sectors(cache))
+            self._json(200 if result.get("ok") else 409, result)
 
         def _send(self, code: int, body: bytes, content_type: str) -> None:
             self.send_response(code)

@@ -25,14 +25,24 @@ class CoordinatorClient:
     def current(self) -> dict:
         return self._request("GET", self._task("current"), None)
 
-    def claim(self, *, prefetch: bool = False) -> dict:
-        """Lease a batch. ``prefetch`` asks for another lease while earlier ones are held."""
-        body = {"prefetch": True} if prefetch else {}
+    def claim(self, *, prefetch: bool = False, sectors: list[int] | None = None) -> dict:
+        """Lease a batch. ``prefetch`` asks for another lease while earlier ones are held.
+
+        ``sectors`` limits the lease. Omit it, as the installed app does, to take any sector.
+        """
+        body: dict = {}
+        if prefetch:
+            body["prefetch"] = True
+        if sectors:
+            body["sectors"] = [int(sector) for sector in sectors]
         return self._request("POST", self._task("claim"), body)
 
-    def peek(self) -> dict:
+    def peek(self, *, sectors: list[int] | None = None) -> dict:
         """Next unit's size, without reserving it. Older coordinators 404."""
-        return self._request("POST", self._task("peek"), {})
+        body: dict = {}
+        if sectors:
+            body["sectors"] = [int(sector) for sector in sectors]
+        return self._request("POST", self._task("peek"), body)
 
     def receipt(self, assignment_id: int) -> dict:
         """Whether the coordinator stored a row for every star in this unit."""

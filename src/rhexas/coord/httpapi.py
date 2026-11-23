@@ -219,14 +219,18 @@ class App:
         if action == "claim":
             # ``prefetch`` asks for another lease, up to max_outstanding.
             # Omitted, claim stays one lease so a v0.3 worker is unchanged.
+            # ``sectors`` is optional. The installed app omits it.
             assignment = self.store.claim(
                 worker["id"], project=project, prefetch=payload.get("prefetch") is True,
+                sectors=_sector_list(payload.get("sectors")),
             )
             if assignment is None:
                 return _json(200, {"assignment": None, "retry_after_s": 60})
             return _json(200, {"assignment": assignment})
         if action == "peek":
-            preview = self.store.peek(worker["id"], project=project)
+            preview = self.store.peek(
+                worker["id"], project=project, sectors=_sector_list(payload.get("sectors")),
+            )
             return _json(200, {"preview": preview})
         assignment_id = payload.get("assignment_id")
         if assignment_id is None:
@@ -250,6 +254,25 @@ class App:
                 worker["id"], assignment_id, payload.get("stars"), payload.get("candidates"), project,
             ))
         return _error(404, "not found", "not_found")
+
+
+def _sector_list(raw) -> list[int] | None:
+    """Sector filter from a claim body. Missing or empty means no filter."""
+    if raw is None:
+        return None
+    if isinstance(raw, (str, int)) and not isinstance(raw, bool):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return None
+    found: list[int] = []
+    for item in raw:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            found.append(number)
+    return found or None
 
 
 def _payload(body: bytes) -> dict:

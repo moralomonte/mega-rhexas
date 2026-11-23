@@ -143,6 +143,8 @@ class WorkerConfig:
     cache_dir: str = "worker-cache"
     prefetch: int = 1  # 0 waits for the upload; 1 fills the download-ahead queue during search
     queue_max: int = 3  # hard maximum of units downloaded ahead of the one being scanned
+    # Processed light curves and result files kept for replay. Candidates are not auto-deleted.
+    processed_limit_gb: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -476,6 +478,8 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("worker.prefetch must be 0 or 1")
     if cfg.worker.queue_max < 0:
         raise ConfigError("worker.queue_max must be >= 0")
+    if cfg.worker.processed_limit_gb <= 0:
+        raise ConfigError("worker.processed_limit_gb must be > 0")
     if not (5 <= cfg.vetting.radius_arcsec <= 60):
         raise ConfigError("vetting.radius_arcsec must be between 5 and 60")
     if not (2 <= cfg.vetting.timeout_s <= 90):
@@ -609,6 +613,7 @@ _WORKER_CAST = {
     "cache_dir": _as_str,
     "prefetch": _as_int,
     "queue_max": _as_int,
+    "processed_limit_gb": _as_float,
 }
 _VETTING_CAST = {
     "enabled": _as_bool,

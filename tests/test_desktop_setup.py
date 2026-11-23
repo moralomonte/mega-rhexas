@@ -182,10 +182,10 @@ def test_setup_page_saves_a_pasted_token_without_showing_it(tmp_path, monkeypatc
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
             page = response.read()
         setup = page[page.index(b'id="setup"'):page.index(b'class="grid"', page.index(b'id="setup"'))]
-        assert b"Sign in with megarhexas.com" in setup
+        assert b"Sign in with megarhexas.com" not in setup
         assert b"Paste a token" in setup
-        assert setup.index(b"Sign in with megarhexas.com") < setup.index(b"Paste a token")
-        assert b'class="go" id="setup-signin"' in setup
+        assert b"Device linking is closed" in setup
+        assert b'id="setup-signin"' not in setup
         assert b'class="texty" id="setup-paste"' in setup
         assert b"Paste invite token" not in page
         assert b"invite" not in setup.lower()

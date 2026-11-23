@@ -21,6 +21,7 @@ from .logic import (
     new_tic_ids,
     normalize_candidates,
     normalize_stars,
+    verify_single_copy,
 )
 from .projects import DEFAULT_PROJECT, get_handler, parse_project
 from .settings import Settings
@@ -423,12 +424,39 @@ def new_token() -> str:
     return "rhx_" + secrets.token_urlsafe(32)
 
 
+def _sector_filter(sectors) -> set[int] | None:
+    """Positive sector numbers, or None when the worker did not choose any.
+
+    An empty list and a missing list both mean every enrolled sector. A bad
+    entry is skipped so an older client that sends something unexpected still
+    gets a batch.
+    """
+    if not sectors or isinstance(sectors, (str, bytes)):
+        return None
+    found: set[int] = set()
+    try:
+        items = list(sectors)
+    except TypeError:
+        return None
+    for item in items:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            found.add(number)
+    return found or None
+
+
 class Store:
-    def __init__(self, path: Path | str, settings: Settings | None = None, clock=None, copies_required: int = 2):
+    def __init__(self, path: Path | str, settings: Settings | None = None, clock=None, copies_required: int = 1):
         self.path = Path(path)
         self.settings = settings or Settings()
-        # 1 pauses the second copy. Anything else keeps the two-copy path.
-        self.copies_required = 1 if int(copies_required) == 1 else 2
+        # Single-user search: every batch is checked once. The argument stays
+        # so older callers and an existing coord.toml still construct a store.
+        # Two-copy pairing is not used. No table is dropped.
+        _ = copies_required
+        self.copies_required = 1
         self.clock = clock or utcnow
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
@@ -447,34 +475,18 @@ class Store:
         self._catalog_index = {}
 
     def replica_count(self, project: str) -> int:
-        """How many distinct workers must finish a unit.
+        """How many uploads a batch needs before it can be trusted.
 
-        ``copies_required = 1`` pauses the second copy. The two-account rule,
-        the agreement check, and pending credit stay in this file and run
-        again when ``copies_required`` is 2. A toml ``replicas`` override
-        still applies in that two-copy mode.
+        Always 1. The server still checks that one upload (see
+        ``verify_single_copy``) before the batch is agreed. A toml
+        ``replicas`` value is not used.
         """
-        project = self._require_project(project)
-        if self.copies_required == 1:
-            return 1
-        if self.settings.replicas is not None:
-            return int(self.settings.replicas)
-        return get_handler(project).replicas
+        self._require_project(project)
+        return 1
 
     def public_copies(self) -> int:
-        """1 when a batch is kept after one upload, otherwise 2.
-
-        This is what public pages should say. It follows the verification
-        switch, and also the older ``replicas = 1`` override.
-        """
-        if self.copies_required == 1:
-            return 1
-        try:
-            if self.replica_count(DEFAULT_PROJECT) <= 1:
-                return 1
-        except CoordError:
-            return 2
-        return 2
+        """Public pages say one checked copy. Two-copy pairing is not used."""
+        return 1
 
     def projects_public(self) -> list[dict]:
         from .projects import HANDLERS
@@ -611,13 +623,14 @@ class Store:
             self._event(conn, "info", f"enrolled {project} sector {sector}: {stars} stars in {len(chunks)} units")
         return {"project": project, "sector": sector, "stars": stars, "units": len(chunks), "unit_size": size}
 
-    def claim(self, worker_id: int, project: str = DEFAULT_PROJECT, *, prefetch: bool = False) -> dict | None:
+    def claim(self, worker_id: int, project: str = DEFAULT_PROJECT, *, prefetch: bool = False,
+              sectors: list[int] | None = None) -> dict | None:
         """Lease one batch. With ``prefetch``, a worker may hold several.
 
         A call without ``prefetch`` still returns the batch already leased, so a
-        worker from before download-ahead does not pick up an extra unit. Each
-        extra lease follows the same unit rules: two copies come from two
-        accounts, and a unit that already has a copy is chosen first.
+        worker from before download-ahead does not pick up an extra unit.
+        ``sectors``, when set, limits the lease to those TESS sectors. Omitting
+        it (the installed app) still takes the next open batch of any sector.
         ``max_outstanding`` is the cap, including the unit being scanned.
         """
         project = self._require_project(project)
@@ -634,7 +647,7 @@ class Store:
                 if prefetch:
                     return None
                 return live[0] if live else None
-            chosen = self._pick_unit(conn, worker_id, project)
+            chosen = self._pick_unit(conn, worker_id, project, sectors=sectors)
             if chosen is None:
                 return None
             unit, filled = chosen
@@ -761,7 +774,7 @@ class Store:
             outcome["receipt"] = self._receipt_body(conn, assignment_id, unit)
             return outcome
 
-    def peek(self, worker_id: int, project: str = DEFAULT_PROJECT) -> dict | None:
+    def peek(self, worker_id: int, project: str = DEFAULT_PROJECT, sectors: list[int] | None = None) -> dict | None:
         """The next unit's size, without leasing it.
 
         The worker estimates disk use from ``n_tics`` before it reserves.
@@ -772,7 +785,7 @@ class Store:
             now = self.clock()
             self._expire(conn, now)
             self._touch(conn, worker_id, now)
-            chosen = self._pick_unit(conn, worker_id, project)
+            chosen = self._pick_unit(conn, worker_id, project, sectors=sectors)
             if chosen is None:
                 return None
             unit, _filled = chosen
@@ -883,42 +896,41 @@ class Store:
         ).fetchall()
 
     def _settle(self, conn, unit, peers, now, *, announce_wait: bool, worker_id) -> dict:
-        """Keep a batch, or leave it waiting. Callers are already in a transaction.
+        """Trust a batch only after the stored upload passes a server-side check.
 
-        One required copy finishes on the uploads already stored. Two required
-        copies still compare period, SDE, depth, and ``max_miss_fraction``,
-        and still refuse to pair two devices from the same account (that rule
-        runs when the second copy is claimed, not here).
+        One copy is required. The check reads the rows already written for this
+        assignment: every TIC in the batch, plausible measurements, and NEW
+        candidates that match a measured star. A failed check reissues the
+        batch and does not insert candidates. Older result rows are kept.
         """
         need = self.replica_count(unit["project"])
         if len(peers) < need:
-            waiting = "waiting for a second worker" if need == 2 else f"waiting for {need} copies"
+            waiting = f"waiting for {need} copies"
             if announce_wait and worker_id is not None:
                 self._event(
                     conn, "info",
                     f"{self._name(conn, worker_id)} submitted unit {unit['id']} ({waiting})",
                 )
             return {"status": "accepted", "verdict": "pending", "detail": waiting}
-        if need <= 1:
-            confirmed = self._finish(conn, unit, peers, "checked once", now)
-            return {
-                "status": "accepted",
-                "verdict": "agreed",
-                "detail": "checked once",
-                "candidates": len(confirmed),
-            }
-        handler = get_handler(unit["project"])
+        peer = peers[0]
         payload = json.loads(unit["payload_json"])
-        base_stars = json.loads(peers[0]["stars_json"])
-        reason = "accepted"
-        for peer in peers[1:]:
-            ok, reason = handler.validate(
-                payload, base_stars, json.loads(peer["stars_json"]), self.settings,
-            )
-            if not ok:
-                self._reissue(conn, unit, reason)
-                return {"status": "accepted", "verdict": "disagreed", "detail": reason}
-        confirmed = self._finish(conn, unit, peers, reason, now)
+        tics = payload.get("tics") if isinstance(payload, dict) else []
+        if not isinstance(tics, list):
+            tics = []
+        try:
+            stars = json.loads(peer["stars_json"])
+            candidates = json.loads(peer["candidates_json"])
+        except (TypeError, json.JSONDecodeError):
+            stars, candidates = [], []
+        if not isinstance(stars, list):
+            stars = []
+        if not isinstance(candidates, list):
+            candidates = []
+        ok, reason = verify_single_copy([int(tic) for tic in tics], stars, candidates)
+        if not ok:
+            self._reissue(conn, unit, reason)
+            return {"status": "accepted", "verdict": "disagreed", "detail": reason}
+        confirmed = self._finish(conn, unit, [peer], reason, now)
         return {
             "status": "accepted",
             "verdict": "agreed",
@@ -1526,8 +1538,9 @@ class Store:
             f"unit {unit['id']} sector {unit['sector']} disagreed ({reason}); reissued as generation {nxt}",
         )
 
-    def _pick_unit(self, conn, worker_id: int, project: str):
+    def _pick_unit(self, conn, worker_id: int, project: str, sectors: list[int] | None = None):
         need = self.replica_count(project)
+        wanted = _sector_filter(sectors)
         units = conn.execute(
             """SELECT id, project, sector, generation, payload_json, n_tics
                FROM units WHERE state='open' AND project=? ORDER BY id""",
@@ -1535,14 +1548,15 @@ class Store:
         ).fetchall()
         best = None
         for unit in units:
+            if wanted is not None and int(unit["sector"]) not in wanted:
+                continue
             slots = conn.execute(
                 """SELECT worker_id FROM assignments
                    WHERE unit_id=? AND generation=? AND status IN ('leased', 'submitted')""",
                 (unit["id"], unit["generation"]),
             ).fetchall()
             holders = {int(slot["worker_id"]) for slot in slots}
-            # Two copies of one generation must be two accounts. A second device
-            # on the account that already holds this unit is not the other copy.
+            # One copy fills the batch. A second lease of the same generation is not issued.
             if len(slots) >= need or self._blocked_by_account(conn, worker_id, holders):
                 continue
             rank = (-len(slots), int(unit["id"]))

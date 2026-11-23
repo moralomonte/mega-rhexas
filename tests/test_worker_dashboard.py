@@ -334,9 +334,9 @@ def test_dashboard_endpoints_return_json_and_hide_the_token(tmp_path):
         assert ctype.startswith("text/html")
         text = page.decode("utf-8")
         assert "candidates, unverified" in text
-        assert "EventSource" in text
+        assert "setInterval(poll, 1500)" in text
         assert "triskelion" in text
-        assert "discovery" not in text.lower()
+        assert "does not announce a discovery" in text.lower()
         assert secret not in page
 
         ctype, events = _get(port, "/events?once=1")
@@ -435,37 +435,31 @@ def test_download_watcher_reports_file_rate_and_eta(tmp_path):
     assert batch["eta_min"] is not None and batch["eta_min"] >= 0
 
 
-def test_page_reuses_the_mission_control_screen():
+def test_page_is_the_fixed_shell():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
-    original = (Path(__file__).resolve().parents[1] / "dashboard" / "static" / "index.html").read_text(encoding="utf-8")
-    for marker in ('id="sky"', 'id="pgc"', 'id="hist"', 'id="lcc"', 'id="fdc"', "trspin", "auto-scroll", "EventSource"):
-        assert marker in text
-        assert marker in original
-    assert ">Slow<" in text and ">Normal<" in text and ">Realtime<" in text
-    assert "/api/star?tic=" in text
-    assert "addEventListener('star'" in text
-    assert 'id="proc_now"' in text
-    assert "not available" in text
-    assert "addEventListener('lc'" not in text
+    assert 'id="panel-cpu"' in text and 'id="panel-net"' in text
+    assert 'id="panel-state"' in text and 'id="panel-disk"' in text
+    assert "requestAnimationFrame" not in text
+    assert "getImageData" not in text
+    assert "EventSource" not in text
+    assert "classList.contains(\"plot\")" in text or "classList.contains('plot')" in text
     assert 'id="sectors"' in text and 'href="/sectors?v=__APP_VERSION__"' in text
-    assert "localStorage.getItem('rhexas.visual')" in text
+    assert text.find('id="sectors"') < text.find('id="vetting"')
+    assert 'href="/vetting?v=__APP_VERSION__"' in text
+    assert 'href="/batches?v=__APP_VERSION__"' in text
+    assert 'href="/discoveries?v=__APP_VERSION__"' in text
+    assert 'href="/candidates?v=__APP_VERSION__"' in text
     assert "fetch('/api/mode'" not in text
+    assert "/api/mode" not in text
     assert "candidates, unverified" in text
     assert "coin" not in text.lower()
-    assert "discovery" not in text.lower()
+    assert "does not announce a discovery" in text.lower()
     assert "passes vetting" not in text
     assert "★ NEW" not in text
-    assert "getImageData" not in text
-    assert "/api/cutout" in text
-    assert "rhexas-anim" in text
-    assert text.find('id="con"') < text.find('id="this-worker"')
-    assert "This worker" in text
-    assert "Pending until the coordinator agrees. Verified means it agreed." in text
-    assert "GB cap" in text
-    assert "localStorage.getItem('rhexas-anim')" in text
-    assert "rhexas.visual" in text
-    assert "/api/mode" not in text
+    assert "HIST_MAX" in text
+    assert "PAGE_VERSION" in text
+    assert 'id="run-switch"' in text
 
 
 def test_publish_star_stores_aperture_for_the_star_panel(tmp_path):
