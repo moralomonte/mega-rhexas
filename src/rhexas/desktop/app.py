@@ -15,7 +15,7 @@ from rhexas import __version__
 from rhexas.config import load_config
 from rhexas.worker.dashboard import DashboardHooks, fallback_resources, launch_in_thread
 from rhexas.worker.live import Store
-from rhexas.worker.loop import cache_dir, resolve_worker, run_worker
+from rhexas.worker.loop import cache_dir, mission_progress_hook, resolve_worker, run_worker
 
 from .paths import AppPaths
 from .setup import SetupGate
@@ -54,6 +54,10 @@ def apply_desktop_defaults(cfg, paths: AppPaths):
     )
 
 
+def desktop_dashboard_hooks(cfg, gate: SetupGate, board: UpdateBoard) -> DashboardHooks:
+    return DashboardHooks(setup=gate, updates=board, mission_progress=mission_progress_hook(cfg))
+
+
 def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int | None = None,
                 once: bool = False, quit_event: threading.Event | None = None,
                 paths: AppPaths | None = None) -> int:
@@ -71,7 +75,7 @@ def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int 
         port=port,
         open_browser=open_browser,
         fallback=fallback_resources(cfg),
-        services=DashboardHooks(setup=gate, updates=board),
+        services=desktop_dashboard_hooks(cfg, gate, board),
     )
     stop = quit_event or threading.Event()
 

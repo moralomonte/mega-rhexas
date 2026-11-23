@@ -11,7 +11,8 @@ from rhexas import __version__
 from rhexas.config import default_config
 from rhexas.desktop.device import DevicePoll, DeviceStart
 from rhexas.desktop.paths import AppPaths, app_data_dir
-from rhexas.desktop.app import apply_desktop_defaults, ensure_stdio
+from rhexas.desktop.app import apply_desktop_defaults, desktop_dashboard_hooks, ensure_stdio
+from rhexas.desktop.updates import UpdateBoard
 from rhexas.desktop.setup import SetupGate
 from rhexas.desktop.tokenstore import TokenError, read_token, windows_acl_command, write_token
 from rhexas.desktop.tray import MENU_LABELS
@@ -53,6 +54,19 @@ def test_desktop_defaults_are_the_friendly_ones(tmp_path):
     assert cfg.search.n_periods == 20000
     assert cfg.filt.sde_min == 6
     paths.ensure()
+
+
+def test_desktop_dashboard_hooks_include_mission_progress(tmp_path):
+    paths = AppPaths(tmp_path / "Mega Rhexas")
+    cfg = apply_desktop_defaults(default_config(tmp_path), paths)
+    gate = SetupGate(paths.root, cfg.worker.coordinator_url)
+    board = UpdateBoard(__version__)
+    hooks = desktop_dashboard_hooks(cfg, gate, board)
+    assert hooks.setup is gate
+    assert hooks.updates is board
+    assert callable(hooks.mission_progress)
+    missing = hooks.mission_progress()
+    assert missing == {"detail": "coordinator URL or token is not set"}
     assert Store(paths.cache).requested_mode() == "live"
 
 
