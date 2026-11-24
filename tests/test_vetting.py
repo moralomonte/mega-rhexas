@@ -15,10 +15,12 @@ from rhexas.worker.holdings import disk_used_bytes, holdings_view
 from rhexas.worker.live import DB_NAME, Store
 from rhexas.worker.loop import _notify_vetting
 from rhexas.worker.vetting.catalogs import (
+    TOI_URL,
     crossmatch,
     gaia_check,
     index_ctoi,
     index_toi,
+    load_catalog_list,
     parse_table,
     simbad_check,
     vsx_check,
@@ -560,3 +562,225 @@ def _write_fits(cache: Path, tic: int, sector: int, time_values, flux, _duration
     hdul[0].header["DEC_OBJ"] = 20.0
     name = f"tess2026-s{int(sector):04d}-{int(tic):016d}-0001-s_lc.fits"
     hdul.writeto(folder / name)
+
+
+def _offline(_url, _timeout):
+    return 404, "no"
+
+
+def _write_plain_fits(cache: Path, tic: int, sector: int, time_values, flux, *, centroid: bool) -> None:
+    from astropy.io import fits
+
+    folder = cache / "data" / f"s{int(sector):04d}"
+    folder.mkdir(parents=True, exist_ok=True)
+    columns = [
+        fits.Column(name="TIME", format="D", array=np.asarray(time_values, dtype=float)),
+        fits.Column(name="PDCSAP_FLUX", format="D", array=np.asarray(flux, dtype=float)),
+        fits.Column(name="QUALITY", format="J", array=np.zeros(len(time_values), dtype=np.int32)),
+    ]
+    if centroid:
+        columns.append(fits.Column(name="MOM_CENTR1", format="D", array=np.full(len(time_values), 5.0)))
+        columns.append(fits.Column(name="MOM_CENTR2", format="D", array=np.full(len(time_values), 6.0)))
+    hdul = fits.HDUList([
+        fits.PrimaryHDU(),
+        fits.BinTableHDU.from_columns(fits.ColDefs(columns), name="LIGHTCURVE"),
+    ])
+    name = f"tess2026-s{int(sector):04d}-{int(tic):016d}-0001-s_lc.fits"
+    hdul.writeto(folder / name, overwrite=True)
+
+
+def test_bls_fills_a_missing_epoch_from_the_light_curve(tmp_path):
+    period, t0, duration = 3.2, 5.0, 0.15
+    times = np.linspace(0.0, 20.0, 900)
+    phase = np.mod(times - t0, period) / period
+    centered = np.where(phase > 0.5, phase - 1.0, phase)
+    flux = np.ones(times.shape)
+    flux[np.abs(centered) <= 0.5 * duration / period] = 0.98
+    cache = tmp_path / "bls"
+    cache.mkdir()
+    _write_plain_fits(cache, 349911034, 89, times, flux, centroid=True)
+    outcome = evaluate(
+        cache,
+        {"tic": 349911034, "sector": 89, "period": period, "depth": 0.02},
+        VettingConfig(enabled=True, timeout_s=5, cache_max_mb=1),
+        fetcher=_offline,
+        now=1_000.0,
+    )
+    found = outcome["fields"]["t0"]
+    assert found is not None
+    delta = abs((found - t0) % period)
+    assert min(delta, period - delta) < 0.2
+    assert outcome["fields"]["period"] == pytest.approx(period)
+    assert outcome["fields"]["duration"] is not None
+    assert not any("No sector light curve" in str(item.get("reason") or "") for item in outcome["result"]["checks"])
+
+
+def test_a_missing_light_curve_stays_unavailable(tmp_path):
+    outcome = evaluate(
+        tmp_path / "empty",
+        {"tic": 1, "sector": 89, "period": 3.2},
+        VettingConfig(enabled=True, timeout_s=5, cache_max_mb=1),
+        fetcher=_offline,
+        now=1_000.0,
+    )
+    light = next(item for item in outcome["result"]["checks"] if item["name"] == "light_curve")
+    assert light["status"] == "unavailable"
+    centroid = next(item for item in outcome["result"]["checks"] if item["name"] == "centroid")
+    assert centroid["status"] == "unavailable"
+
+
+def test_tpf_download_runs_only_when_the_centroid_is_missing(tmp_path):
+    period = 3.2
+    times = np.linspace(0.0, 12.0, 200)
+    flux = np.ones(times.shape)
+    kinds = []
+
+    def download(_cache, _tic, _sector, kind):
+        kinds.append(kind)
+        return {"path": None}
+
+    cache = tmp_path / "tpf"
+    cache.mkdir()
+    settings = VettingConfig(enabled=True, timeout_s=5, cache_max_mb=1)
+    _write_plain_fits(cache, 11, 89, times, flux, centroid=False)
+    bare = evaluate(
+        cache, {"tic": 11, "sector": 89, "period": period, "t0": 1.0, "duration": 0.1},
+        settings, fetcher=_offline, now=1.0, download=download,
+    )
+    assert kinds == ["lc", "tpf"]
+    centroid = next(item for item in bare["result"]["checks"] if item["name"] == "centroid")
+    assert centroid["status"] == "unavailable"
+
+    kinds.clear()
+    _write_plain_fits(cache, 12, 89, times, flux, centroid=True)
+    evaluate(
+        cache, {"tic": 12, "sector": 89, "period": period, "t0": 1.0, "duration": 0.1},
+        settings, fetcher=_offline, now=1.0, download=download,
+    )
+    assert kinds == ["lc"]
+
+
+def test_simbad_uses_harvard_and_a_dead_service_stays_unavailable(tmp_path):
+    urls = []
+
+    def harvard(url, timeout):
+        urls.append(url)
+        if "simbad.cfa.harvard.edu" in url and "ident" in url:
+            return 200, _read("simbad_star.json")
+        if "simbad" in url:
+            return 200, _read("simbad_empty.json")
+        if "tic82" in url:
+            return 200, _read("tic.csv")
+        if "download_toi" in url:
+            return 200, _read("toi.csv")
+        if "download_ctoi" in url:
+            return 200, _read("ctoi.csv")
+        if "vsx" in url:
+            return 200, _read("vsx_empty.csv")
+        if "gaiadr3" in url or "I/355" in url:
+            return 200, _read("gaia_clean.csv")
+        return 404, "missing"
+
+    checks, _meta = crossmatch(
+        tmp_path / "harvard", 42, None, None, 0.01,
+        radius_arcsec=15, timeout_s=5, fetcher=harvard, cache_max_mb=1, now=1_000.0,
+    )
+    simbad_urls = [url for url in urls if "simbad" in url]
+    assert any("simbad.cfa.harvard.edu" in url for url in simbad_urls)
+    assert simbad_urls
+    assert not any("unistra.fr" in url or "u-strasbg.fr" in url for url in simbad_urls)
+    assert _by_name(checks)["simbad"]["status"] == "pass"
+
+    def down(url, timeout):
+        if "simbad" in url:
+            return 404, "gone"
+        if "tic82" in url:
+            return 200, _read("tic.csv")
+        if "download_" in url:
+            return 200, _read("toi.csv") if "toi" in url else _read("ctoi.csv")
+        if "vsx" in url:
+            return 200, _read("vsx_empty.csv")
+        if "gaia" in url or "I/355" in url:
+            return 200, _read("gaia_clean.csv")
+        return 404, "missing"
+
+    failed, _meta = crossmatch(
+        tmp_path / "down", 42, None, None, 0.01,
+        radius_arcsec=15, timeout_s=5, fetcher=down, cache_max_mb=1, now=1_000.0,
+    )
+    simbad = _by_name(failed)["simbad"]
+    assert simbad["status"] == "unavailable"
+
+
+def test_mast_coordinates_are_used_when_vizier_has_none(tmp_path):
+    seen = []
+
+    def fetcher(url, timeout):
+        seen.append(url)
+        if str(url).startswith("mast-tic://"):
+            return 200, json.dumps({
+                "data": [{"ra": 113.97, "dec": -65.68, "Tmag": 11.8, "rad": 1.3, "mass": 1.04}],
+            })
+        if "tic82" in url:
+            return 500, "vizier down"
+        if "download_toi" in url:
+            return 200, _read("toi.csv")
+        if "download_ctoi" in url:
+            return 200, _read("ctoi.csv")
+        if "simbad" in url:
+            return 200, _read("simbad_empty.json")
+        return 404, "vizier down"
+
+    checks, meta = crossmatch(
+        tmp_path / "mast", 349911034, None, None, 0.01,
+        radius_arcsec=15, timeout_s=5, fetcher=fetcher, cache_max_mb=1, now=1_000.0,
+    )
+    assert meta["ra"] == pytest.approx(113.97)
+    assert meta["dec"] == pytest.approx(-65.68)
+    assert any("113.9700000" in url and "vsx" in url for url in seen)
+    assert any("113.9700000" in url and ("gaiadr3" in url or "I/355" in url) for url in seen)
+    vsx = _by_name(checks)["vsx"]
+    gaia = _by_name(checks)["gaia"]
+    assert vsx["status"] == "unavailable"
+    assert gaia["status"] == "unavailable"
+    assert "no sky position" not in vsx["reason"]
+    assert "no sky position" not in gaia["reason"]
+
+
+def test_toi_list_retries_with_a_long_timeout_and_keeps_a_ttl(tmp_path):
+    import os
+
+    calls = []
+    stamp = time.time()
+    state = {"fails_left": 2}
+
+    def fetcher(url, timeout):
+        calls.append((url, timeout))
+        if state["fails_left"] > 0:
+            state["fails_left"] -= 1
+            raise TimeoutError("slow")
+        return 200, "TIC,TOI\n42,1.01\n"
+
+    text, error = load_catalog_list(tmp_path, "toi", TOI_URL, fetcher, 120, now=stamp, retries=3)
+    assert error == ""
+    assert "42,1.01" in text
+    assert [timeout for _url, timeout in calls] == [120, 120, 120]
+    calls.clear()
+    cached, cached_error = load_catalog_list(tmp_path, "toi", TOI_URL, fetcher, 120, now=stamp + 10, retries=3)
+    assert cached_error == ""
+    assert "42,1.01" in cached
+    assert calls == []
+    os.utime(tmp_path / "vetting" / "lists" / "toi.csv", (stamp - 3 * 24 * 3600, stamp - 3 * 24 * 3600))
+    refreshed, refresh_error = load_catalog_list(tmp_path, "toi", TOI_URL, fetcher, 120, now=stamp, retries=3)
+    assert refresh_error == ""
+    assert "42,1.01" in refreshed
+    assert len(calls) == 1
+
+    def fail(_url, _timeout):
+        calls.append(("fail", 0))
+        raise TimeoutError("still down")
+
+    missed, miss_error = load_catalog_list(tmp_path / "empty", "toi", TOI_URL, fail, 120, now=stamp, retries=3)
+    assert missed == ""
+    assert miss_error
+    assert sum(1 for url, _timeout in calls if url == "fail") == 3

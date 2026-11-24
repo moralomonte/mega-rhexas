@@ -1,7 +1,8 @@
-"""One candidate: light curve already on disk, then the public catalogs.
+"""One candidate: photometry, then the public catalogs.
 
 Nothing here runs on the scan thread. ``evaluate`` is what the background
-worker calls, and tests call it directly with a fake fetcher.
+worker calls, and tests call it directly with a fake fetcher. A review run
+can pass a download callback. The search path does not, so it never fetches.
 """
 from __future__ import annotations
 
@@ -200,8 +201,141 @@ def needs_catalog_retry(checks: list[dict]) -> bool:
     return any(item.get("name") in _RETRY_NAMES and item.get("status") == "unavailable" for item in checks)
 
 
-def evaluate(cache, row: dict, settings, fetcher=None, *, now: float | None = None) -> dict:
-    """Vet one candidate. Network errors are recorded; they do not raise."""
+def recover_ephemeris(time, flux, *, period=None, duration=None, quality=None) -> dict:
+    """Fill a missing period, t0, or duration from the light curve with BLS.
+
+    A value the caller already has is left alone. An empty dict means BLS
+    could not measure the dip, so the light-curve check stays unavailable.
+    """
+    import numpy as np
+    from astropy.timeseries import BoxLeastSquares
+
+    t = np.asarray(time, dtype=float)
+    y = np.asarray(flux, dtype=float)
+    mask = np.isfinite(t) & np.isfinite(y)
+    if quality is not None:
+        q = np.asarray(quality)
+        if getattr(q, "shape", None) == t.shape:
+            mask = mask & (np.nan_to_num(q) == 0)
+    t = t[mask]
+    y = y[mask]
+    if t.size < 40:
+        return {}
+    order = np.argsort(t)
+    t = t[order]
+    y = y[order]
+    med = float(np.median(y))
+    if not np.isfinite(med) or med == 0:
+        return {}
+    y = y / med
+    if t.size > 2500:
+        width = 10.0 / 1440.0
+        edges = np.arange(float(t[0]), float(t[-1]) + width, width)
+        if edges.size >= 3:
+            idx = np.digitize(t, edges) - 1
+            tb = []
+            yb = []
+            for i in range(edges.size - 1):
+                sel = y[idx == i]
+                if sel.size == 0:
+                    continue
+                tb.append(0.5 * (edges[i] + edges[i + 1]))
+                yb.append(float(np.median(sel)))
+            if len(tb) >= 40:
+                t = np.asarray(tb, dtype=float)
+                y = np.asarray(yb, dtype=float)
+    span = float(t[-1] - t[0])
+    if span <= 0:
+        return {}
+    known_period = _finite(period)
+    if known_period is not None and known_period > 0:
+        lo = max(0.3, known_period * 0.985)
+        hi = min(span / 1.5, known_period * 1.015)
+        if hi <= lo:
+            periods = np.array([known_period])
+        else:
+            periods = np.linspace(lo, hi, 48)
+    else:
+        hi = min(13.0, span / 1.5)
+        lo = 0.5
+        if hi <= lo:
+            return {}
+        periods = np.exp(np.linspace(np.log(lo), np.log(hi), 360))
+    known_duration = _finite(duration)
+    if known_duration is not None and known_duration > 0:
+        durs = np.array([known_duration])
+    else:
+        durs = np.array([0.04, 0.06, 0.08, 0.12, 0.16, 0.24])
+    durs = durs[(durs > 0) & (durs < span / 3)]
+    if durs.size == 0:
+        return {}
+    scatter = float(np.std(y)) or 1e-4
+    bls = BoxLeastSquares(t, y, np.full(t.size, scatter))
+    res = bls.power(periods, durs, objective="snr")
+    i = int(np.argmax(res.power))
+    found = {
+        "period": float(res.period[i]),
+        "t0": float(res.transit_time[i]),
+        "duration": float(res.duration[i]),
+    }
+    if not all(np.isfinite(value) for value in found.values()):
+        return {}
+    return found
+
+
+def _centroid_from_tpf(path, period, t0, duration) -> dict:
+    """Flux-weighted centroid from a target-pixel file. Empty when it cannot be read."""
+    try:
+        import numpy as np
+        from astropy.io import fits
+        from rhexas.worker.records import centroid_vs_phase
+
+        with fits.open(path, memmap=False) as hdul:
+            chosen = None
+            for hdu in hdul:
+                names = getattr(getattr(hdu, "columns", None), "names", None) or []
+                lookup = {str(name).upper(): name for name in names}
+                if "TIME" in lookup and "FLUX" in lookup:
+                    chosen = (hdu, lookup)
+                    break
+            if chosen is None:
+                return {}
+            hdu, lookup = chosen
+            data = hdu.data
+            flux = np.asarray(data[lookup["FLUX"]], dtype=float)
+            time_values = np.asarray(data[lookup["TIME"]], dtype=float)
+        if flux.ndim != 3 or time_values.shape[0] != flux.shape[0]:
+            return {}
+        ny, nx = flux.shape[1], flux.shape[2]
+        yy, xx = np.mgrid[0:ny, 0:nx]
+        cols = np.empty(flux.shape[0], dtype=float)
+        rows = np.empty(flux.shape[0], dtype=float)
+        for i in range(flux.shape[0]):
+            image = flux[i]
+            weights = np.where(np.isfinite(image), image, 0.0)
+            total = float(weights.sum())
+            if total <= 0:
+                cols[i] = np.nan
+                rows[i] = np.nan
+                continue
+            cols[i] = float((weights * xx).sum() / total)
+            rows[i] = float((weights * yy).sum() / total)
+        packed = centroid_vs_phase(time_values, cols, rows, period, t0, duration)
+    except Exception:
+        return {}
+    if not packed:
+        return {}
+    return {"centroid_sigma": packed.get("sigma"), "centroid_shift": packed.get("shift_arcsec")}
+
+
+def evaluate(cache, row: dict, settings, fetcher=None, *, now: float | None = None, download=None) -> dict:
+    """Vet one candidate. Network errors are recorded; they do not raise.
+
+    ``download(cache, tic, sector, kind)`` may fetch a missing light curve
+    (``kind`` ``"lc"``) before the photometry, and a target-pixel file
+    (``kind`` ``"tpf"``) only when the light curve has no centroid. Vetting
+    from the search path leaves ``download`` unset and never fetches.
+    """
     cache = Path(cache)
     tic = int(row["tic"])
     sector = int(row["sector"])
@@ -212,10 +346,28 @@ def evaluate(cache, row: dict, settings, fetcher=None, *, now: float | None = No
         record["period"] = signal["period"]
         record["t0"] = signal["t0"]
         record["duration"] = signal["duration"]
+    if callable(download):
+        try:
+            download(cache, tic, sector, "lc")
+        except Exception:
+            pass
     photo = _photometry(cache, tic, sector, record)
     for key in ("ra", "dec"):
         if signal[key] is None and photo.get(key) is not None:
             signal[key] = photo.get(key)
+    if photo.get("time") is not None and photo.get("flux") is not None:
+        if signal["t0"] is None or signal["period"] is None or signal["duration"] is None:
+            try:
+                filled = recover_ephemeris(
+                    photo["time"], photo["flux"],
+                    period=signal["period"], duration=signal["duration"],
+                    quality=photo.get("quality"),
+                )
+            except Exception:
+                filled = {}
+            for key in ("period", "t0", "duration"):
+                if signal[key] is None and filled.get(key) is not None:
+                    signal[key] = filled[key]
     radius = photo.get("radius")
     mass = photo.get("mass")
     # The centroid stored at search time wins. Recompute only when that column is empty.
@@ -225,6 +377,17 @@ def evaluate(cache, row: dict, settings, fetcher=None, *, now: float | None = No
         fresh = _centroid_from_columns(photo, signal)
         centroid_sigma = fresh.get("centroid_sigma", centroid_sigma)
         centroid_shift = fresh.get("centroid_shift", centroid_shift)
+    if centroid_sigma is None and photo.get("centroid_col") is None and callable(download):
+        info = None
+        try:
+            info = download(cache, tic, sector, "tpf")
+        except Exception:
+            info = None
+        path = info.get("path") if isinstance(info, dict) else None
+        if path:
+            fresh = _centroid_from_tpf(path, signal.get("period"), signal.get("t0"), signal.get("duration"))
+            centroid_sigma = fresh.get("centroid_sigma", centroid_sigma)
+            centroid_shift = fresh.get("centroid_shift", centroid_shift)
 
     checks: list[dict] = []
     try:

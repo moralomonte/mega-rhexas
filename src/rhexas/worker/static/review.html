@@ -162,7 +162,7 @@ $('queue').onclick=async()=>{
     const row=SHORTLIST.find(r=>+r.tic===tic&&detectionSector(r)===sector);
     if(!row)return;
     const det=(row.detections||[]).find(d=>+d.sector===sector)||(row.detections||[])[0]||{};
-    items.push({tic,sector,rank:row.rank,period:row.period??det.period,depth:row.depth??det.depth,snr:row.snr??det.snr,sde:row.sde??det.sde,t0:det.t0,duration:det.duration});
+    items.push({tic,sector,rank:row.rank,period:row.period??det.period,depth:row.depth??det.depth,snr:row.snr??det.snr,sde:row.sde??det.sde,t0:det.t0??row.t0??null,duration:det.duration??row.duration??null,ra:det.ra??row.ra??null,dec:det.dec??row.dec??null});
   });
   const res=await fetch('/api/review/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates:items})});
   const out=await res.json();

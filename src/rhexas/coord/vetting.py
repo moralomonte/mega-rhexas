@@ -886,6 +886,10 @@ def build_groups(detections: list[dict], caches: dict, reviews: dict, files: dic
             if review.get("note"):
                 sentence += " Note: " + str(review["note"])
         priority, parts = review_priority(best.get("snr"), best.get("sde"), len(sectors), checks, hand)
+        tic_payload = {}
+        tic_entry = cache.get("tic") if isinstance(cache, dict) else None
+        if isinstance(tic_entry, dict) and isinstance(tic_entry.get("payload"), dict):
+            tic_payload = tic_entry["payload"]
         flags = []
         for row in primary + extra:
             text = str(row.get("flags") or "").strip()
@@ -899,6 +903,10 @@ def build_groups(detections: list[dict], caches: dict, reviews: dict, files: dic
             "sectors_label": ", ".join(str(sector) for sector in sectors),
             "n_sectors": len(sectors),
             "period": as_float(best.get("period")),
+            "t0": as_float(best.get("t0")),
+            "duration": as_float(best.get("duration")),
+            "ra": as_float(tic_payload.get("ra")),
+            "dec": as_float(tic_payload.get("dec")),
             "period_note": period_note,
             "depth": as_float(best.get("depth")),
             "sde": as_float(best.get("sde")),
@@ -933,6 +941,7 @@ def _detection_public(row: dict, primary_ids: set[int], reference) -> dict:
     return {
         "sector": int(row["sector"]) if row.get("sector") is not None else None,
         "period": as_float(row.get("period")),
+        "t0": as_float(row.get("t0")),
         "depth": as_float(row.get("depth")),
         "sde": as_float(row.get("sde")),
         "snr": as_float(row.get("snr")),

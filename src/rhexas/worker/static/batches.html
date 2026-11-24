@@ -132,6 +132,7 @@ const PAGE_VERSION="__APP_VERSION__";
 const $=id=>document.getElementById(id);
 let catalog=null, view=null, cells=[], replay=[], replayIdx=0, playing=false, speed=1, playTimer=null;
 let hover=null, selected=null, live=false, pollAt=0, replayFollow=false;
+let picked=null, viewToken=0;
 const hexHit=[];
 const HEX_PAD=10;
 const HEX_W_RATIO=1.7;
@@ -207,10 +208,15 @@ function drawHex(replayMask){
   const plan=planHexGrid(cells.length||1, cssW);
   syncHexPanel(plan);
   const box=fit(canvas, plan.plotCssH);
-  if(!box||!cells.length) return;
+  if(!box) return;
+  const ctx=canvas.getContext("2d");
+  if(!cells.length){
+    ctx.clearRect(0,0,box.w,box.h);
+    hexHit.length=0;
+    return;
+  }
   const scale=box.w/box.cssW;
   placeHexHits(cells.length, plan, scale);
-  const ctx=canvas.getContext("2d");
   ctx.clearRect(0,0,box.w,box.h);
   replayMask=replayMask||null;
   hexHit.forEach((hit,idx)=>{
@@ -315,22 +321,34 @@ function drawSeries(canvas, pair, color){
   ctx.stroke();
 }
 
+function selectedIds(){
+  const sec=parseInt($("sector-pick").value,10);
+  const unit=parseInt($("unit-pick").value,10);
+  if(!sec||!unit) return null;
+  return {sector:sec, unit:unit};
+}
+
 function fillCatalog(data){
   catalog=data;
-  const secSel=$("sector-pick"), unitSel=$("unit-pick");
-  secSel.textContent=""; unitSel.textContent="";
+  const secSel=$("sector-pick");
+  const keep=picked;
+  secSel.textContent="";
   const sectors=data.sectors||[];
   sectors.forEach(s=>{
     const opt=document.createElement("option");
     opt.value=String(s.sector); opt.textContent="Sector "+s.sector;
     secSel.appendChild(opt);
   });
-  const def=data.default||{};
-  if(def.sector) secSel.value=String(def.sector);
-  refillUnits();
+  let sec=null;
+  if(keep && sectors.some(s=>s.sector===keep.sector)) sec=keep.sector;
+  else if(data.default && data.default.sector) sec=data.default.sector;
+  else if(sectors.length) sec=sectors[0].sector;
+  if(sec!=null) secSel.value=String(sec);
+  refillUnits(keep);
+  if(!picked) picked=selectedIds();
 }
 
-function refillUnits(){
+function refillUnits(keep){
   const sec=parseInt($("sector-pick").value,10);
   const unitSel=$("unit-pick");
   unitSel.textContent="";
@@ -342,8 +360,14 @@ function refillUnits(){
     opt.textContent="Unit "+u.unit+(u.live?" (live)":"");
     unitSel.appendChild(opt);
   });
-  const def=catalog.default||{};
-  if(def.sector===sec&&def.unit) unitSel.value=String(def.unit);
+  let unit=null;
+  if(keep && keep.sector===sec && units.some(u=>u.unit===keep.unit)) unit=keep.unit;
+  else {
+    const def=catalog.default||{};
+    if(def.sector===sec && def.unit && units.some(u=>u.unit===def.unit)) unit=def.unit;
+    else if(units.length) unit=units[0].unit;
+  }
+  if(unit!=null) unitSel.value=String(unit);
 }
 
 function starsTotal(){
@@ -424,10 +448,13 @@ async function loadCatalog(){
 }
 
 async function loadView(){
-  const sec=parseInt($("sector-pick").value,10);
-  const unit=parseInt($("unit-pick").value,10);
-  if(!sec||!unit) return;
-  const res=await fetch(`/api/batches/view?sector=${sec}&unit=${unit}`,{cache:"no-store"});
+  const ids=selectedIds();
+  if(!ids) return;
+  const token=++viewToken;
+  const res=await fetch(`/api/batches/view?sector=${ids.sector}&unit=${ids.unit}`,{cache:"no-store"});
+  if(token!==viewToken) return;
+  const now=selectedIds();
+  if(!now || now.sector!==ids.sector || now.unit!==ids.unit) return;
   if(!res.ok) return;
   if(!replayFollow) replayIdx=0;
   paintView(await res.json());
@@ -453,8 +480,17 @@ function tickReplay(){
   }
 }
 
-$("sector-pick").onchange=()=>{replayFollow=false; refillUnits(); loadView();};
-$("unit-pick").onchange=()=>{replayFollow=false; loadView();};
+$("sector-pick").onchange=()=>{
+  replayFollow=false;
+  refillUnits(null);
+  picked=selectedIds();
+  loadView();
+};
+$("unit-pick").onchange=()=>{
+  replayFollow=false;
+  picked=selectedIds();
+  loadView();
+};
 $("play-btn").onclick=()=>{
   playing=!playing;
   $("play-btn").textContent=playing?"Pause":"Play";

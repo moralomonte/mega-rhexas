@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS local_review (
     depth REAL,
     snr REAL,
     sde REAL,
+    ra REAL,
+    dec REAL,
     rank INTEGER,
     state TEXT NOT NULL DEFAULT 'queued',
     verdict TEXT,
@@ -35,9 +37,21 @@ CREATE INDEX IF NOT EXISTS local_review_state ON local_review(state, updated_at)
 """
 
 
+def _mapping(row) -> dict:
+    """sqlite3.Row has no ``.get``. Callers share one dict shape."""
+    if isinstance(row, dict):
+        return row
+    return {key: row[key] for key in row.keys()}
+
+
 def migrate(conn) -> None:
     vetting_migrate(conn)
     conn.executescript(_TABLE)
+    have = {row[1] for row in conn.execute("PRAGMA table_info(local_review)")}
+    if "ra" not in have:
+        conn.execute("ALTER TABLE local_review ADD COLUMN ra REAL")
+    if "dec" not in have:
+        conn.execute("ALTER TABLE local_review ADD COLUMN dec REAL")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY)"
     )
@@ -102,10 +116,13 @@ def list_rows(conn) -> list[dict]:
 
 
 def get_row(conn, tic: int, sector: int):
-    return conn.execute(
+    row = conn.execute(
         "SELECT * FROM local_review WHERE tic=? AND sector=?",
         (int(tic), int(sector)),
     ).fetchone()
+    if row is None:
+        return None
+    return _mapping(row)
 
 
 def claim_next(conn, now: float):
@@ -121,7 +138,7 @@ def claim_next(conn, now: float):
         "UPDATE local_review SET state='running', updated_at=? WHERE tic=? AND sector=?",
         (float(now), int(row["tic"]), int(row["sector"])),
     )
-    return {key: row[key] for key in row.keys()}
+    return _mapping(row)
 
 
 def save_result(conn, tic, sector, *, verdict, result, upload_state, upload_detail,
@@ -156,7 +173,8 @@ def mark_cancelled(conn, tic: int, sector: int) -> bool:
 
 
 def detail_public_row(row) -> dict:
-    result = loads(row["result_json"]) if row.get("result_json") else {}
+    row = _mapping(row)
+    result = loads(row.get("result_json")) if row.get("result_json") else {}
     return {
         "tic": int(row["tic"]),
         "sector": int(row["sector"]),
@@ -184,11 +202,12 @@ def enqueue_selected(conn, items: list[dict], now: float) -> int:
         if existing and existing["state"] in ("running", "done"):
             continue
         conn.execute(
-            """INSERT INTO local_review (tic, sector, period, t0, duration, depth, snr, sde, rank, state, cancelled, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)
+            """INSERT INTO local_review (tic, sector, period, t0, duration, depth, snr, sde, ra, dec, rank, state, cancelled, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)
                ON CONFLICT(tic, sector) DO UPDATE SET
                    state='queued', cancelled=0, period=excluded.period, t0=excluded.t0, duration=excluded.duration,
-                   depth=excluded.depth, snr=excluded.snr, sde=excluded.sde, rank=excluded.rank, updated_at=excluded.updated_at""",
+                   depth=excluded.depth, snr=excluded.snr, sde=excluded.sde, ra=excluded.ra, dec=excluded.dec,
+                   rank=excluded.rank, updated_at=excluded.updated_at""",
             (
                 tic,
                 sector,
@@ -198,6 +217,8 @@ def enqueue_selected(conn, items: list[dict], now: float) -> int:
                 item.get("depth"),
                 item.get("snr"),
                 item.get("sde"),
+                item.get("ra"),
+                item.get("dec"),
                 item.get("rank"),
                 float(now),
             ),
