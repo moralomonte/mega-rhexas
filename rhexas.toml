@@ -145,6 +145,13 @@ processed_limit_gb = 20
 # Edge or Chrome window instead of a normal browser tab.
 app_window = true
 
+[review]
+# Local deep checks for the coordinator shortlist (Review page).
+# concurrent = true runs one job at a time in the background while search continues.
+# concurrent = false waits for a gap between search units (one job per boundary).
+concurrent = true
+blas_threads = 1
+
 [vetting]
 # Local advisory checks for candidates found on this computer. Off by default,
 # so only a machine that opts in runs them. Set enabled = true and restart the

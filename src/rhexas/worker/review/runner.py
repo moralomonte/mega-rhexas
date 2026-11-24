@@ -1,15 +1,25 @@
 """Background local review: one coordinator shortlist candidate at a time."""
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 import time
 from pathlib import Path
 
+from rhexas.config import ReviewConfig, VettingConfig
+
 from ..vetting.checks import DISCLAIMER
 from ..vetting.evaluate import evaluate as default_evaluate
 from ..vetting.runner import _lower_priority
-from .gate import estimate_fits_bytes, processed_headroom, search_busy
+from .gate import (
+    estimate_fits_bytes,
+    may_start_review,
+    processed_headroom,
+    search_busy,
+    search_wait_minutes,
+    unit_boundary_open,
+)
 from .store import (
     claim_next,
     detail_public_row,
@@ -29,6 +39,8 @@ DISCLAIMER_NOTE = (
 _RUNNERS: dict[str, "ReviewRunner"] = {}
 _REGISTRY = threading.Lock()
 
+_REVIEW_JOB_MIN = 4.0
+
 
 def _connect(cache: Path):
     from ..live import DB_NAME, _connect as open_db
@@ -36,10 +48,43 @@ def _connect(cache: Path):
     return open_db(Path(cache) / DB_NAME, write=True)
 
 
+@contextlib.contextmanager
+def _limited_compute_threads(n: int):
+    """Cap BLAS/OpenMP while review runs so search keeps most cores."""
+    n = max(1, int(n))
+    keys = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    saved = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ[key] = str(n)
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 class ReviewRunner:
-    def __init__(self, cache, vetting_settings, coordinator_factory=None, evaluate=None, clock=None):
+    def __init__(
+        self,
+        cache,
+        vetting_settings,
+        review_settings: ReviewConfig | None = None,
+        coordinator_factory=None,
+        evaluate=None,
+        clock=None,
+    ):
         self.cache = Path(cache)
         self.settings = vetting_settings
+        self.review = review_settings or ReviewConfig()
         self.coordinator_factory = coordinator_factory
         self.evaluate = evaluate or default_evaluate
         self.clock = clock or time.time
@@ -54,6 +99,8 @@ class ReviewRunner:
 
     def start(self) -> "ReviewRunner":
         if self.alive:
+            return self
+        if not self.review.concurrent:
             return self
         self._thread = threading.Thread(target=self._loop, name="rhexas-review", daemon=True)
         self._thread.start()
@@ -89,13 +136,24 @@ class ReviewRunner:
             conn.commit()
         finally:
             conn.close()
-        self.wake()
+        if self.review.concurrent:
+            self.wake()
+        else:
+            self.run_once(boundary=True)
         return count
 
-    def run_once(self) -> bool:
-        busy, _ = search_busy(self.cache)
-        if busy:
+    def run_once(self, *, boundary: bool = False) -> bool:
+        """Process at most one queued job when scheduling allows."""
+        concurrent = bool(self.review.concurrent)
+        if boundary and concurrent:
             return False
+        if not boundary:
+            allowed, _ = may_start_review(self.cache, concurrent=concurrent)
+            if not allowed:
+                return False
+        elif not unit_boundary_open(self.cache)[0]:
+            return False
+
         now = float(self.clock())
         conn = _connect(self.cache)
         try:
@@ -110,17 +168,9 @@ class ReviewRunner:
         if (tic, sector) in self._cancel:
             self._cancel.discard((tic, sector))
             return True
-        self._finish(claimed, now)
-        return True
 
-    def _finish(self, job, now: float) -> None:
-        tic = int(job["tic"])
-        sector = int(job["sector"])
-        if (tic, sector) in self._cancel:
-            self._cancel.discard((tic, sector))
-            return
-        busy, reason = search_busy(self.cache)
-        if busy:
+        allowed, _ = may_start_review(self.cache, concurrent=concurrent)
+        if not allowed and not concurrent:
             conn = _connect(self.cache)
             try:
                 migrate(conn)
@@ -131,6 +181,17 @@ class ReviewRunner:
                 conn.commit()
             finally:
                 conn.close()
+            return False
+
+        with _limited_compute_threads(self.review.blas_threads):
+            self._finish(claimed, now)
+        return True
+
+    def _finish(self, job, now: float) -> None:
+        tic = int(job["tic"])
+        sector = int(job["sector"])
+        if (tic, sector) in self._cancel:
+            self._cancel.discard((tic, sector))
             return
 
         est_bytes = estimate_fits_bytes(sector)
@@ -256,25 +317,40 @@ class ReviewRunner:
             if self._stop.is_set():
                 return
             if not worked:
-                self._wake.wait(3.0)
+                self._wake.wait(1.5 if self.review.concurrent else 3.0)
                 self._wake.clear()
             else:
-                self._stop.wait(0.5)
+                self._stop.wait(0.5 if self.review.concurrent else 1.0)
 
 
 def _key(cache: Path) -> str:
     return str(Path(cache).resolve())
 
 
-def ensure_runner(cache, vetting_settings, coordinator_factory=None, evaluate=None) -> ReviewRunner:
+def ensure_runner(
+    cache,
+    vetting_settings,
+    review_settings: ReviewConfig | None = None,
+    coordinator_factory=None,
+    evaluate=None,
+) -> ReviewRunner:
+    review_settings = review_settings or ReviewConfig()
     key = _key(cache)
     with _REGISTRY:
         current = _RUNNERS.get(key)
         if current is not None and current.alive:
             if coordinator_factory and current.coordinator_factory is None:
                 current.coordinator_factory = coordinator_factory
+            current.review = review_settings
+            current.settings = vetting_settings
             return current
-        runner = ReviewRunner(cache, vetting_settings, coordinator_factory=coordinator_factory, evaluate=evaluate)
+        runner = ReviewRunner(
+            cache,
+            vetting_settings,
+            review_settings=review_settings,
+            coordinator_factory=coordinator_factory,
+            evaluate=evaluate,
+        )
         runner.start()
         _RUNNERS[key] = runner
         return runner
@@ -286,6 +362,69 @@ def stop_all() -> None:
         _RUNNERS.clear()
     for runner in runners:
         runner.stop()
+
+
+def run_at_boundary(
+    cache,
+    vetting_settings,
+    review_settings: ReviewConfig | None = None,
+    coordinator_factory=None,
+    evaluate=None,
+) -> bool:
+    """At most one review job between search units (``review.concurrent = false``)."""
+    review_settings = review_settings or ReviewConfig()
+    if review_settings.concurrent:
+        return False
+    runner = ensure_runner(
+        cache,
+        vetting_settings,
+        review_settings=review_settings,
+        coordinator_factory=coordinator_factory,
+        evaluate=evaluate,
+    )
+    return runner.run_once(boundary=True)
+
+
+def notify_boundary(cache, vetting_settings, review_settings: ReviewConfig | None = None, coordinator_factory=None) -> None:
+    """Worker loop hook after a unit uploads."""
+    review_settings = review_settings or ReviewConfig()
+    if review_settings.concurrent:
+        ensure_runner(cache, vetting_settings, review_settings=review_settings, coordinator_factory=coordinator_factory).wake()
+        return
+    run_at_boundary(cache, vetting_settings, review_settings, coordinator_factory=coordinator_factory)
+
+
+def _queue_positions(rows: list[dict]) -> dict[tuple[int, int], int]:
+    queued = [
+        row for row in rows
+        if (row.get("state") or "queued") == "queued" and not row.get("cancelled")
+    ]
+    queued.sort(key=lambda row: (row.get("rank") if row.get("rank") is not None else 9999, row.get("updated_at") or 0, row["tic"]))
+    return {(int(row["tic"]), int(row["sector"])): i + 1 for i, row in enumerate(queued)}
+
+
+def _job_scheduler_note(row: dict, *, concurrent: bool, position: int | None, wait_min: float | None) -> str:
+    state = str(row.get("state") or "queued")
+    if state == "running":
+        return "checks running (low priority)" if concurrent else "checks running"
+    if state in ("done", "cancelled"):
+        return ""
+    if state != "queued":
+        return state
+    if concurrent:
+        if position and position > 1:
+            est = max(1, int(round((position - 1) * _REVIEW_JOB_MIN)))
+            return f"queued · position {position} · ~{est} min"
+        return "queued · runs in the background while search continues (low priority)"
+    unit_wait = wait_min
+    if unit_wait is not None:
+        unit_part = f"waits for the current unit to finish, ~{max(1, int(round(unit_wait)))} min"
+    else:
+        unit_part = "waits for the current unit to finish"
+    if position and position > 1:
+        job_part = f"position {position} · ~{max(1, int(round((position - 1) * _REVIEW_JOB_MIN)))} min after that"
+        return f"{unit_part}; {job_part}"
+    return unit_part
 
 
 def shortlist_payload(fetch_shortlist) -> dict:
@@ -322,9 +461,10 @@ def shortlist_payload(fetch_shortlist) -> dict:
     }
 
 
-def status_payload(cache, fetch_shortlist, vetting_settings) -> dict:
+def status_payload(cache, fetch_shortlist, vetting_settings, review_settings: ReviewConfig | None = None) -> dict:
     from rhexas import __version__
 
+    review_settings = review_settings or ReviewConfig()
     conn = _connect(cache)
     try:
         migrate(conn)
@@ -332,12 +472,37 @@ def status_payload(cache, fetch_shortlist, vetting_settings) -> dict:
     finally:
         conn.close()
     coord = shortlist_payload(fetch_shortlist)
+    positions = _queue_positions(rows)
+    wait_min = search_wait_minutes(cache)
+    busy, busy_reason = search_busy(cache)
+    concurrent = bool(review_settings.concurrent)
+    jobs = []
+    for row in rows:
+        key = (int(row["tic"]), int(row["sector"]))
+        position = positions.get(key)
+        enriched = dict(row)
+        enriched["queue_position"] = position
+        enriched["scheduler_note"] = _job_scheduler_note(
+            row, concurrent=concurrent, position=position, wait_min=wait_min,
+        )
+        jobs.append(enriched)
+    boundary_open, boundary_detail = unit_boundary_open(cache)
     return {
         "app_version": __version__,
         "disclaimer": DISCLAIMER_NOTE,
         "catalog_enabled": bool(getattr(vetting_settings, "enabled", False)),
         "coordinator": coord,
-        "jobs": rows,
+        "jobs": jobs,
+        "scheduler": {
+            "mode": "concurrent" if concurrent else "boundary",
+            "concurrent": concurrent,
+            "search_busy": busy,
+            "search_busy_reason": busy_reason or "",
+            "boundary_open": boundary_open,
+            "boundary_detail": boundary_detail,
+            "unit_wait_min": wait_min,
+            "blas_threads": int(review_settings.blas_threads),
+        },
     }
 
 
@@ -358,7 +523,19 @@ def detail_payload(cache, tic: int, sector: int) -> dict:
     return detail
 
 
-def queue_from_request(cache, items: list[dict], vetting_settings) -> dict:
-    runner = ensure_runner(cache, vetting_settings)
+def queue_from_request(
+    cache,
+    items: list[dict],
+    vetting_settings,
+    review_settings: ReviewConfig | None = None,
+    coordinator_factory=None,
+) -> dict:
+    review_settings = review_settings or ReviewConfig()
+    runner = ensure_runner(
+        cache,
+        vetting_settings,
+        review_settings=review_settings,
+        coordinator_factory=coordinator_factory,
+    )
     count = runner.queue_items(items)
-    return {"ok": True, "queued": count}
+    return {"ok": True, "queued": count, "scheduler_mode": "concurrent" if review_settings.concurrent else "boundary"}

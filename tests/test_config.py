@@ -39,6 +39,16 @@ def test_builtin_defaults_are_the_operational_disk_limits(tmp_path):
     assert cfg.worker.coordinator_url == "https://api.megarhexas.com"
     assert cfg.worker.procs == 2
     assert cfg.search.procs == 28
+    assert cfg.review.concurrent is True
+    assert cfg.review.blas_threads == 1
+
+
+def test_review_concurrent_loads_from_toml(tmp_path):
+    path = tmp_path / "rhexas.toml"
+    path.write_text("[review]\nconcurrent = false\nblas_threads = 2\n", encoding="utf-8")
+    cfg = load_config(path, environ={}, overrides={"root": tmp_path})
+    assert cfg.review.concurrent is False
+    assert cfg.review.blas_threads == 2
 
 
 def test_old_dashboard_mode_still_loads(tmp_path):

@@ -9,8 +9,15 @@ import pytest
 
 from rhexas.coord.httpapi import App
 from rhexas.coord.local_review import LocalReviewError, validate_local_check
-from rhexas.worker.review.gate import search_busy
-from rhexas.worker.review.runner import ReviewRunner, stop_all
+from rhexas.config import ReviewConfig
+from rhexas.worker.review.gate import (
+    clear_pending_reservations,
+    reserve_processed_bytes,
+    release_processed_bytes,
+    search_busy,
+    unit_boundary_open,
+)
+from rhexas.worker.review.runner import ReviewRunner, run_at_boundary, status_payload, stop_all
 from rhexas.worker.vetting.checks import light_checks, odd_even_check
 
 from test_coord import _cand, _star, _store
@@ -103,7 +110,7 @@ def test_odd_even_math_on_synthetic_curve():
     assert odd_even_check(times.tolist(), y.tolist(), period, t0, dur)["status"] in {"warn", "fail", "pass"}
 
 
-def test_review_runner_defers_when_search_busy(tmp_path):
+def test_review_runner_defers_when_search_busy_boundary_mode(tmp_path):
     from rhexas.worker.live import DB_NAME, Store
 
     cache = tmp_path / "cache"
@@ -112,8 +119,155 @@ def test_review_runner_defers_when_search_busy(tmp_path):
     live.begin_batch({"sector": 14, "unit_id": 1, "assignment_id": 1, "n_tics": 2, "tics": [1, 2]}, stage="searching")
     busy, _ = search_busy(cache)
     assert busy is True
-    runner = ReviewRunner(cache, type("S", (), {"enabled": False, "radius_arcsec": 15.0, "timeout_s": 5.0, "cache_max_mb": 1.0})())
+    review = ReviewConfig(concurrent=False)
+    runner = ReviewRunner(
+        cache,
+        type("S", (), {"enabled": False, "radius_arcsec": 15.0, "timeout_s": 5.0, "cache_max_mb": 1.0})(),
+        review_settings=review,
+    )
     assert runner.run_once() is False
+
+
+def test_review_runner_concurrent_while_search_busy(tmp_path):
+    from rhexas.config import VettingConfig
+    from rhexas.worker.live import DB_NAME, Store, _connect
+
+    cache = tmp_path / "cache-conc"
+    cache.mkdir()
+    conn = _connect(cache / DB_NAME, write=True)
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    conn.close()
+    live = Store(cache)
+    live.begin_batch({"sector": 14, "unit_id": 1, "assignment_id": 1, "n_tics": 2, "tics": [1, 2]}, stage="searching")
+    assert search_busy(cache)[0] is True
+
+    seen = []
+
+    def fake_evaluate(cache, row, settings, fetcher=None, **kw):
+        seen.append(int(row["tic"]))
+        return {
+            "verdict": "Needs review",
+            "result": {
+                "checks": [{"name": "test", "title": "Test", "status": "pass", "reason": "ok", "numbers": {}}],
+                "plot": {"phase": [0, 0.5, 1], "flux": [1, 0.99, 1]},
+                "links": {},
+            },
+        }
+
+    runner = ReviewRunner(cache, VettingConfig(), review_settings=ReviewConfig(concurrent=True), evaluate=fake_evaluate)
+    runner.queue_items([{"tic": 99, "sector": 14, "period": 1.0}])
+    assert runner.run_once() is True
+    assert seen == [99]
+
+
+def test_review_boundary_runs_after_upload_stage(tmp_path):
+    from rhexas.config import VettingConfig
+    from rhexas.worker.live import DB_NAME, Store, _connect
+
+    cache = tmp_path / "cache-bnd"
+    cache.mkdir()
+    conn = _connect(cache / DB_NAME, write=True)
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    conn.close()
+    live = Store(cache)
+    live.begin_batch({"sector": 14, "unit_id": 9, "assignment_id": 9, "n_tics": 1, "tics": [1]}, stage="searching")
+    assert unit_boundary_open(cache)[0] is False
+
+    def fake_evaluate(cache, row, settings, fetcher=None, **kw):
+        return {
+            "verdict": "Needs review",
+            "result": {
+                "checks": [{"name": "test", "title": "Test", "status": "pass", "reason": "ok", "numbers": {}}],
+                "plot": {"phase": [0, 1], "flux": [1, 1]},
+                "links": {},
+            },
+        }
+
+    review = ReviewConfig(concurrent=False)
+    runner = ReviewRunner(cache, VettingConfig(), review_settings=review, evaluate=fake_evaluate)
+    runner.queue_items([{"tic": 5, "sector": 14, "period": 1.1}])
+    live.update_batch(stage="uploaded", active=False, stars_done=1, stars_total=1)
+    assert unit_boundary_open(cache)[0] is True
+    assert runner.run_once(boundary=True) is True
+
+
+def test_processed_reserve_is_atomic_under_cap(tmp_path, monkeypatch):
+    from rhexas.worker.review import gate
+
+    cache = tmp_path / "cache-cap"
+    clear_pending_reservations(cache)
+    monkeypatch.setattr(gate, "processed_headroom", lambda _c, configured_gb=None: (900, 1000, ""))
+    assert reserve_processed_bytes(cache, 50)[0] is True
+    assert reserve_processed_bytes(cache, 50)[0] is True
+    assert reserve_processed_bytes(cache, 1)[0] is False
+    release_processed_bytes(cache, 50)
+    assert reserve_processed_bytes(cache, 50)[0] is True
+
+
+def test_lightcurve_download_lock_prevents_double_start(tmp_path, monkeypatch):
+    import threading
+
+    from rhexas.worker.review.fetch import ensure_lightcurve
+
+    cache = tmp_path / "cache-lock"
+    calls = []
+    done = threading.Event()
+    saved = tmp_path / "lc.fits"
+
+    def find_lc(_c, _tic, _sector):
+        if calls and saved.is_file():
+            return saved
+        return None
+
+    def fake_run(*_a, **_k):
+        calls.append(1)
+        done.wait(timeout=2)
+        saved.write_bytes(b"fits")
+        return 0
+
+    monkeypatch.setattr("rhexas.worker.review.fetch.find_lightcurve", find_lc)
+    monkeypatch.setattr("rhexas.worker.review.fetch.fits_gate", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr("rhexas.download.run", fake_run)
+
+    def first():
+        ensure_lightcurve(cache, 1, 14, sleeper=lambda _s: None)
+        done.set()
+
+    t1 = threading.Thread(target=first)
+    t2 = threading.Thread(target=lambda: ensure_lightcurve(cache, 1, 14, sleeper=lambda _s: None))
+    t1.start()
+    time.sleep(0.05)
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+    assert len(calls) == 1
+
+
+def test_review_status_shows_boundary_wait_note(tmp_path):
+    from rhexas.config import VettingConfig
+    from rhexas.worker.live import DB_NAME, Store, _connect
+    from rhexas.worker.review.store import enqueue_selected, migrate
+
+    cache = tmp_path / "cache-note"
+    cache.mkdir()
+    conn = _connect(cache / DB_NAME, write=True)
+    migrate(conn)
+    enqueue_selected(conn, [{"tic": 1, "sector": 14, "period": 1.0, "rank": 1}], 1.0)
+    conn.commit()
+    conn.close()
+    live = Store(cache)
+    live.begin_batch(
+        {"sector": 14, "unit_id": 2, "assignment_id": 2, "n_tics": 100, "tics": list(range(100))},
+        stage="searching",
+    )
+    live.update_batch(stars_done=40, stars_total=100, per_s=2.0, eta_min=30.0, active=True)
+    body = status_payload(cache, None, VettingConfig(), ReviewConfig(concurrent=False))
+    job = next(j for j in body["jobs"] if j["tic"] == 1)
+    assert "waits for the current unit to finish" in job["scheduler_note"]
+    assert "30" in job["scheduler_note"] or "~30" in job["scheduler_note"]
+    assert body["scheduler"]["mode"] == "boundary"
 
 
 def test_review_queue_serial(tmp_path):
@@ -295,7 +449,7 @@ def test_review_downloads_a_missing_light_curve_and_skips_when_it_does_not_fit(t
     called = []
     monkeypatch.setattr(
         "rhexas.worker.review.fetch.fits_gate",
-        lambda cache, nbytes: (False, "skipped download: it would pass the processed-data cap"),
+        lambda cache, nbytes, **kwargs: (False, "skipped download: it would pass the processed-data cap"),
     )
     tpf = ensure_tpf(tmp_path / "cache-tpf", tic, 89, downloader=lambda *args: called.append(args))
     assert called == []

@@ -53,7 +53,7 @@ tr.pick{cursor:pointer}tr.pick:hover{background:rgba(255,255,255,.04)}tr.on{back
 <table>
 <thead><tr>
 <th><input type="checkbox" id="all" aria-label="Select all"></th>
-<th>Rank</th><th>TIC</th><th>Sector</th><th>Period</th><th>Depth</th><th>SNR</th><th>Local job</th><th>Upload</th>
+<th>Rank</th><th>TIC</th><th>Sector</th><th>Period</th><th>Depth</th><th>SNR</th><th>Local job</th><th>Queue</th><th>Upload</th>
 </tr></thead>
 <tbody id="rows"></tbody>
 </table>
@@ -72,7 +72,7 @@ function checkVersion(v){if(!v||v===PAGE_VERSION)return;location.reload()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function badge(st){const name=String(st||'queued');const cls=['pass','warn','fail','unavailable','queued','running','done','cancelled'].includes(name)?name:'queued';return `<span class="badge ${cls}">${esc(name)}</span>`;}
 function ppm(v){if(v==null||!isFinite(+v))return '–';return Math.round(+v*1e6).toLocaleString()+' ppm'}
-let SHORTLIST=[], JOBS={}, OPEN=null, SELECTED=new Set();
+let SHORTLIST=[], JOBS={}, OPEN=null, SELECTED=new Set(), SCHEDULER=null;
 function jobKey(tic,sector){return `${tic}:${sector}`}
 function jobFor(tic,sector){return JOBS[jobKey(tic,sector)]}
 function detectionSector(row){
@@ -81,7 +81,7 @@ function detectionSector(row){
 }
 function paintRows(){
   const tbody=$('rows');
-  if(!SHORTLIST.length){tbody.innerHTML='<tr><td colspan="9" class="empty">No shortlist rows from the coordinator.</td></tr>';return}
+  if(!SHORTLIST.length){tbody.innerHTML='<tr><td colspan="10" class="empty">No shortlist rows from the coordinator.</td></tr>';return}
   tbody.innerHTML=SHORTLIST.map(row=>{
     const tic=+row.tic, sector=detectionSector(row);
     const key=jobKey(tic,sector);
@@ -95,6 +95,7 @@ function paintRows(){
       <td class="num">${esc((+row.period||0).toFixed(4))} d</td>
       <td class="num">${ppm(row.depth)}</td><td class="num">${esc(row.snr??'–')}</td>
       <td>${badge(job.state||'–')}</td>
+      <td class="note">${esc(job.scheduler_note||'–')}</td>
       <td>${badge(job.upload_state||'–')}</td></tr>`;
   }).join('');
   tbody.querySelectorAll('tr.pick').forEach(tr=>{
@@ -147,7 +148,9 @@ async function refresh(){
   checkVersion(body.app_version);
   $('disc').textContent=body.disclaimer||'';
   const coord=body.coordinator||{};
-  $('coord').textContent=coord.ok?`Shortlist: ${(coord.shortlist||[]).length} candidates · ${coord.disclaimer||''}`:(coord.detail||'Coordinator shortlist unavailable');
+  SCHEDULER=body.scheduler||null;
+  const mode=SCHEDULER&&(SCHEDULER.concurrent?'background (low priority)':'between search units');
+  $('coord').textContent=coord.ok?`Shortlist: ${(coord.shortlist||[]).length} candidates · scheduler: ${mode||'–'} · ${coord.disclaimer||''}`:(coord.detail||'Coordinator shortlist unavailable');
   SHORTLIST=coord.shortlist||[];
   JOBS={};
   (body.jobs||[]).forEach(j=>{JOBS[jobKey(j.tic,j.sector)]=j;});
@@ -166,7 +169,8 @@ $('queue').onclick=async()=>{
   });
   const res=await fetch('/api/review/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates:items})});
   const out=await res.json();
-  $('msg').textContent=out.ok?`Queued ${out.queued} candidate(s). Checks run one at a time while search is idle.`:(out.error||'Queue failed');
+  const sched=out.scheduler_mode==='boundary'?'between search units (one per unit gap)':'in the background while search continues';
+  $('msg').textContent=out.ok?`Queued ${out.queued} candidate(s). Checks run ${sched}.`:(out.error||'Queue failed');
   SELECTED.clear();await refresh();
 };
 $('cancel').onclick=async()=>{
