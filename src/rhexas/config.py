@@ -106,6 +106,14 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class DesktopConfig:
+    """Installed ``rhexas desktop`` app. Pipeline commands ignore this block."""
+
+    # Open the local dashboard in an Edge/Chrome --app= window instead of a tab.
+    app_window: bool = True
+
+
+@dataclass(frozen=True)
 class VettingConfig:
     """Local advisory checks for candidates on this computer.
 
@@ -180,6 +188,7 @@ class Config:
     multisector: MultisectorConfig = field(default_factory=MultisectorConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     vetting: VettingConfig = field(default_factory=VettingConfig)
+    desktop: DesktopConfig = field(default_factory=DesktopConfig)
 
     @property
     def sector_data(self) -> Path:
@@ -252,6 +261,7 @@ _TOP_KEYS = {
     "multisector": {f.name for f in fields(MultisectorConfig)},
     "worker": {f.name for f in fields(WorkerConfig)},
     "vetting": {f.name for f in fields(VettingConfig)},
+    "desktop": {f.name for f in fields(DesktopConfig)},
 }
 
 _ENV_KEYS = {
@@ -376,6 +386,7 @@ def _apply_toml(cfg: Config, path: Path) -> Config:
         multisector=_fill_dc(MultisectorConfig, data.get("multisector") or {}, _MULTI_CAST),
         worker=_fill_dc(WorkerConfig, data.get("worker") or {}, _WORKER_CAST),
         vetting=_fill_dc(VettingConfig, data.get("vetting") or {}, _VETTING_CAST),
+        desktop=_fill_dc(DesktopConfig, data.get("desktop") or {}, _DESKTOP_CAST),
     )
 
 
@@ -621,6 +632,7 @@ _VETTING_CAST = {
     "timeout_s": _as_float,
     "cache_max_mb": _as_float,
 }
+_DESKTOP_CAST = {"app_window": _as_bool}
 _MULTI_CAST = {
     "period_min_days": _as_float,
     "period_max_days": _as_float,

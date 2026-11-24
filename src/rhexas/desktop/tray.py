@@ -6,7 +6,8 @@ import sys
 import threading
 from pathlib import Path
 
-MENU_LABELS = ("Open dashboard", "Pause", "Quit")
+MENU_LABELS = ("Reopen dashboard window", "Pause", "Quit")
+MENU_LABELS_TAB = ("Open dashboard", "Pause", "Quit")
 
 # Native 16 and 32 (and the other sizes) from site/img/triskelion.svg.
 _ICON = Path(__file__).resolve().parent / "icons" / "triskelion.ico"
@@ -54,7 +55,7 @@ def triskelion_image():
     return image
 
 
-def start_tray(*, on_open, on_toggle_pause, on_quit, paused):
+def start_tray(*, on_open, on_toggle_pause, on_quit, paused, app_window: bool = True):
     """Start the tray on a background thread. Returns the icon, or None.
 
     ``paused`` is a callable so the checkmark follows the worker.
@@ -72,8 +73,13 @@ def start_tray(*, on_open, on_toggle_pause, on_quit, paused):
         print(f"tray icon is unavailable (no icon at {_ICON}); the dashboard is still open in the browser", flush=True)
         return None
 
+    items = []
+    if app_window:
+        items.append(pystray.MenuItem("Reopen dashboard window", lambda icon, item: on_open(), default=True))
+    else:
+        items.append(pystray.MenuItem("Open dashboard", lambda icon, item: on_open(), default=True))
     menu = pystray.Menu(
-        pystray.MenuItem("Open dashboard", lambda icon, item: on_open(), default=True),
+        *items,
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Pause", lambda icon, item: on_toggle_pause(), checked=lambda item: bool(paused())),
         pystray.Menu.SEPARATOR,
