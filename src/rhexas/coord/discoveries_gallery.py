@@ -189,6 +189,7 @@ def fold_thumbnail_svg(phase: list, flux: list, *, width: int = 160, height: int
 
 
 def thumb_cache_dir(db_path: Path) -> Path:
+    """Thumbnail directory beside the coordinator sqlite file (e.g. ``…/rhexas/thumbs``)."""
     return Path(db_path).resolve().parent / "thumbs"
 
 

@@ -1382,7 +1382,7 @@ class Store:
         try:
             from .discoveries_gallery import thumb_cache_dir
 
-            thumb = thumb_cache_dir(Path(self.path).resolve().parent) / f"tic-{tic}.svg"
+            thumb = thumb_cache_dir(self.path) / f"tic-{tic}.svg"
             thumb.unlink(missing_ok=True)
         except OSError:
             pass

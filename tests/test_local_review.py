@@ -63,6 +63,39 @@ def test_science_api_allows_worker_token(tmp_path):
         store.close()
 
 
+def test_save_local_check_invalidates_handler_thumb_path(tmp_path):
+    from rhexas.coord.discoveries_gallery import read_or_write_thumbnail, thumb_cache_dir
+
+    store = _store(tmp_path)
+    try:
+        store.enroll_tics(14, [9002], unit_size=500)
+        wid_token = store.create_worker("w")
+        wid = store.authenticate(wid_token)["id"]
+        assignment = store.claim(wid)
+        store.submit(wid, assignment["assignment_id"], [_star(9002)], [_cand(9002)])
+        cache_dir = thumb_cache_dir(store.path)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        thumb_path = cache_dir / "tic-9002.svg"
+        thumb_path.write_text("<svg>placeholder</svg>", encoding="utf-8")
+        store.save_local_check(
+            wid,
+            {
+                "tic": 9002,
+                "check_key": "invalidate-thumb",
+                "checks": [
+                    {"name": "test", "title": "Test", "status": "pass", "reason": "ok", "numbers": {}},
+                ],
+                "plot": {"phase": [0, 0.5, 1], "flux": [1, 0.99, 1]},
+            },
+        )
+        assert not thumb_path.is_file()
+        read_or_write_thumbnail(cache_dir, 9002, store=store)
+        assert thumb_path.is_file()
+        assert "placeholder" not in thumb_path.read_text(encoding="utf-8")
+    finally:
+        store.close()
+
+
 def test_local_check_post_auth_and_idempotent(tmp_path):
     store = _store(tmp_path)
     try:
