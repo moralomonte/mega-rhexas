@@ -75,6 +75,10 @@ def fallback_resources(cfg) -> dict:
             "timeout_s": float(getattr(getattr(cfg, "vetting", None), "timeout_s", 20.0)),
             "cache_max_mb": float(getattr(getattr(cfg, "vetting", None), "cache_max_mb", 200.0)),
         },
+        "review": {
+            "concurrent": bool(getattr(getattr(cfg, "review", None), "concurrent", True)),
+            "blas_threads": int(getattr(getattr(cfg, "review", None), "blas_threads", 1)),
+        },
         "processed_limit_gb": getattr(worker, "processed_limit_gb", 20.0),
     }
 
@@ -532,7 +536,7 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             self._json(200, request_rerun(cache, tic, sector, vetting_on))
 
         def _review_hooks(self):
-            from rhexas.config import VettingConfig
+            from rhexas.config import ReviewConfig, VettingConfig
 
             fetch = getattr(services, "science_shortlist", None)
             factory = getattr(services, "coordinator_client", None)
@@ -543,15 +547,20 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 timeout_s=float(raw.get("timeout_s", 20.0)),
                 cache_max_mb=float(raw.get("cache_max_mb", 200.0)),
             )
-            return fetch, factory, settings
+            raw_review = fallback.get("review") if isinstance(fallback.get("review"), dict) else {}
+            review = ReviewConfig(
+                concurrent=bool(raw_review.get("concurrent", True)),
+                blas_threads=int(raw_review.get("blas_threads", 1)),
+            )
+            return fetch, factory, settings, review
 
         def _review_status(self) -> None:
             from .review.runner import ensure_runner, status_payload
 
-            fetch, factory, settings = self._review_hooks()
+            fetch, factory, settings, review = self._review_hooks()
             if factory:
-                ensure_runner(cache, settings, coordinator_factory=factory)
-            self._json(200, status_payload(cache, fetch, settings))
+                ensure_runner(cache, settings, review_settings=review, coordinator_factory=factory)
+            self._json(200, status_payload(cache, fetch, settings, review))
 
         def _review_detail(self, query: dict) -> None:
             from .review.runner import detail_payload
@@ -595,10 +604,10 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             if not normalized:
                 self._json(400, {"ok": False, "error": "no valid candidates"})
                 return
-            fetch, factory, settings = self._review_hooks()
+            fetch, factory, settings, review = self._review_hooks()
             if factory:
-                ensure_runner(cache, settings, coordinator_factory=factory)
-            self._json(200, queue_from_request(cache, normalized, settings))
+                ensure_runner(cache, settings, review_settings=review, coordinator_factory=factory)
+            self._json(200, queue_from_request(cache, normalized, settings, review, coordinator_factory=factory))
 
         def _post_review_cancel(self) -> None:
             from .review.runner import ensure_runner
@@ -610,8 +619,11 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             except (TypeError, ValueError):
                 self._json(400, {"ok": False, "error": "tic and sector are required"})
                 return
-            _, factory, settings = self._review_hooks()
-            runner = ensure_runner(cache, settings, coordinator_factory=factory) if factory else None
+            _, factory, settings, review = self._review_hooks()
+            runner = (
+                ensure_runner(cache, settings, review_settings=review, coordinator_factory=factory)
+                if factory else None
+            )
             if runner is not None:
                 runner.request_cancel(tic, sector)
             self._json(200, {"ok": True, "tic": tic, "sector": sector})

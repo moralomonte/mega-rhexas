@@ -1280,6 +1280,17 @@ def run_unit(cfg: Config, cache: Path, client, assignment: dict, *, download, se
             live, "update_batch", stage="uploaded", active=False, progress_kind="stars",
             stars_done=n_tics, stars_total=n_tics, eta_min=0, per_s=None,
         )
+        _notify_review_boundary(cache, cfg)
+
+
+def _notify_review_boundary(cache: Path, cfg: Config) -> None:
+    try:
+        from .review.runner import notify_boundary
+
+        factory, _ = coordinator_client_hook(cfg)
+        notify_boundary(cache, cfg.vetting, cfg.review, coordinator_factory=factory)
+    except Exception:
+        return
 
 
 def _notify_vetting(cache: Path, cfg: Config) -> None:
@@ -1382,7 +1393,7 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         try:
             client_factory, _shortlist = coordinator_client_hook(cfg)
             from .review.runner import ensure_runner as ensure_review
-            ensure_review(cache, cfg.vetting, coordinator_factory=client_factory)
+            ensure_review(cache, cfg.vetting, review_settings=cfg.review, coordinator_factory=client_factory)
             print("local review queue ready (coordinator shortlist)", flush=True)
         except Exception as exc:
             print(f"local review did not start ({exc})", flush=True)

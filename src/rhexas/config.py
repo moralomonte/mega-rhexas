@@ -114,6 +114,20 @@ class DesktopConfig:
 
 
 @dataclass(frozen=True)
+class ReviewConfig:
+    """Coordinator shortlist review on this worker.
+
+    ``concurrent`` runs checks in a low-priority background thread while search
+    continues. When false, at most one queued job runs at each search unit
+    boundary (after upload, before the next claim).
+    """
+
+    concurrent: bool = True
+    # BLAS/OpenMP threads while a review job runs (search keeps its own settings).
+    blas_threads: int = 1
+
+
+@dataclass(frozen=True)
 class VettingConfig:
     """Local advisory checks for candidates on this computer.
 
@@ -188,6 +202,7 @@ class Config:
     multisector: MultisectorConfig = field(default_factory=MultisectorConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     vetting: VettingConfig = field(default_factory=VettingConfig)
+    review: ReviewConfig = field(default_factory=ReviewConfig)
     desktop: DesktopConfig = field(default_factory=DesktopConfig)
 
     @property
@@ -261,6 +276,7 @@ _TOP_KEYS = {
     "multisector": {f.name for f in fields(MultisectorConfig)},
     "worker": {f.name for f in fields(WorkerConfig)},
     "vetting": {f.name for f in fields(VettingConfig)},
+    "review": {f.name for f in fields(ReviewConfig)},
     "desktop": {f.name for f in fields(DesktopConfig)},
 }
 
@@ -386,6 +402,7 @@ def _apply_toml(cfg: Config, path: Path) -> Config:
         multisector=_fill_dc(MultisectorConfig, data.get("multisector") or {}, _MULTI_CAST),
         worker=_fill_dc(WorkerConfig, data.get("worker") or {}, _WORKER_CAST),
         vetting=_fill_dc(VettingConfig, data.get("vetting") or {}, _VETTING_CAST),
+        review=_fill_dc(ReviewConfig, data.get("review") or {}, _REVIEW_CAST),
         desktop=_fill_dc(DesktopConfig, data.get("desktop") or {}, _DESKTOP_CAST),
     )
 
@@ -497,6 +514,8 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("vetting.timeout_s must be between 2 and 90")
     if cfg.vetting.cache_max_mb <= 0:
         raise ConfigError("vetting.cache_max_mb must be > 0")
+    if cfg.review.blas_threads < 1:
+        raise ConfigError("review.blas_threads must be >= 1")
 
 
 def read_toml(path: Path) -> dict:
@@ -631,6 +650,10 @@ _VETTING_CAST = {
     "radius_arcsec": _as_float,
     "timeout_s": _as_float,
     "cache_max_mb": _as_float,
+}
+_REVIEW_CAST = {
+    "concurrent": _as_bool,
+    "blas_threads": _as_int,
 }
 _DESKTOP_CAST = {"app_window": _as_bool}
 _MULTI_CAST = {

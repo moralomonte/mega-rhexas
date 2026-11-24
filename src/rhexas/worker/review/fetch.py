@@ -13,7 +13,13 @@ from pathlib import Path
 from rhexas.config import default_config
 
 from ..vetting.evaluate import find_lightcurve
-from .gate import estimate_fits_bytes, estimate_tpf_bytes, fits_gate
+from .download_lock import lightcurve_lock
+from .gate import (
+    estimate_fits_bytes,
+    estimate_tpf_bytes,
+    fits_gate,
+    release_processed_bytes,
+)
 
 
 def ensure_lightcurve(cache: Path, tic: int, sector: int, *, getter=None, sleeper=None) -> dict:
@@ -34,68 +40,85 @@ def ensure_lightcurve(cache: Path, tic: int, sector: int, *, getter=None, sleepe
             "bytes": _size(existing),
         }
     estimate = int(estimate_fits_bytes(sector))
-    allowed, why = fits_gate(cache, estimate)
-    if not allowed:
-        return {"path": None, "downloaded": False, "skipped": True, "note": why, "bytes": 0}
-    from rhexas.download import run
+    lock = lightcurve_lock(tic, sector)
+    with lock:
+        existing = find_lightcurve(cache, tic, sector)
+        if existing is not None:
+            return {
+                "path": existing,
+                "downloaded": False,
+                "skipped": False,
+                "note": "light curve already on disk",
+                "bytes": _size(existing),
+            }
+        allowed, why = fits_gate(cache, estimate, reserve=True)
+        if not allowed:
+            return {"path": None, "downloaded": False, "skipped": True, "note": why, "bytes": 0}
+        from rhexas.download import run
 
-    cfg = replace(
-        default_config(cache),
-        sector=int(sector),
-        data_dir=(cache / "data").resolve(),
-        min_free_gb=0,
-        max_project_gb=10_000,
-    )
-    try:
-        code = run(
-            cfg,
-            threads=1,
-            tics={int(tic)},
-            getter=getter,
-            sleeper=sleeper or time.sleep,
+        cfg = replace(
+            default_config(cache),
+            sector=int(sector),
+            data_dir=(cache / "data").resolve(),
+            min_free_gb=0,
+            max_project_gb=10_000,
         )
-    except Exception as exc:
-        return {
-            "path": None,
-            "downloaded": False,
-            "skipped": False,
-            "note": f"light curve download did not finish ({str(exc)[:140]})",
-            "bytes": 0,
-        }
-    path = find_lightcurve(cache, tic, sector)
-    if path is not None:
-        return {
-            "path": path,
-            "downloaded": True,
-            "skipped": False,
-            "note": "downloaded the SPOC 2-minute light curve",
-            "bytes": _size(path) or estimate,
-        }
-    if code == 2:
-        note = "download stopped before the light curve was saved"
-    else:
-        note = "this TIC is not in the MAST sector light-curve list"
-    return {"path": None, "downloaded": False, "skipped": False, "note": note, "bytes": 0}
+        code = 1
+        try:
+            code = run(
+                cfg,
+                threads=1,
+                tics={int(tic)},
+                getter=getter,
+                sleeper=sleeper or time.sleep,
+            )
+        except Exception as exc:
+            return {
+                "path": None,
+                "downloaded": False,
+                "skipped": False,
+                "note": f"light curve download did not finish ({str(exc)[:140]})",
+                "bytes": 0,
+            }
+        finally:
+            release_processed_bytes(cache, estimate)
+        path = find_lightcurve(cache, tic, sector)
+        if path is not None:
+            return {
+                "path": path,
+                "downloaded": True,
+                "skipped": False,
+                "note": "downloaded the SPOC 2-minute light curve",
+                "bytes": _size(path) or estimate,
+            }
+        if code == 2:
+            note = "download stopped before the light curve was saved"
+        else:
+            note = "this TIC is not in the MAST sector light-curve list"
+        return {"path": None, "downloaded": False, "skipped": False, "note": note, "bytes": 0}
 
 
 def ensure_tpf(cache: Path, tic: int, sector: int, *, downloader=None) -> dict:
     """Download one SPOC target-pixel file when the centroid check needs it."""
     cache = Path(cache)
     estimate = int(estimate_tpf_bytes(sector))
-    allowed, why = fits_gate(cache, estimate)
+    allowed, why = fits_gate(cache, estimate, reserve=True)
     if not allowed:
         return {"path": None, "downloaded": False, "skipped": True, "note": why, "bytes": 0}
     downloader = downloader or _lightkurve_tpf
     try:
-        path = downloader(cache, int(tic), int(sector))
-    except Exception as exc:
-        return {
-            "path": None,
-            "downloaded": False,
-            "skipped": False,
-            "note": f"target pixel file was not downloaded ({str(exc)[:140]})",
-            "bytes": 0,
-        }
+        try:
+            path = downloader(cache, int(tic), int(sector))
+        except Exception as exc:
+            return {
+                "path": None,
+                "downloaded": False,
+                "skipped": False,
+                "note": f"target pixel file was not downloaded ({str(exc)[:140]})",
+                "bytes": 0,
+            }
+    finally:
+        release_processed_bytes(cache, estimate)
     if not path:
         return {
             "path": None,
