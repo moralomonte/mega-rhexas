@@ -444,6 +444,14 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             if path == "/api/cutout":
                 self._cutout(parse_qs(parts.query))
                 return
+            if path.split("?", 1)[0] == "/candidates":
+                from rhexas import __version__
+                target = f"/vetting?v={__version__}"
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             spec = _FILES.get(path)
             if spec is None:
                 self._send(404, b"not found", "text/plain; charset=utf-8")

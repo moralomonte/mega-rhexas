@@ -507,13 +507,15 @@ def test_migration_adds_tables_without_touching_candidate_or_result_rows(tmp_pat
         store.close()
 
 
-def test_status_page_explains_the_score_and_the_checks():
-    page = Path(__file__).resolve().parents[1].joinpath("src/rhexas/coord/status.html").read_text(encoding="utf-8")
-    assert "priority_help" in page
-    assert "Odd/even" in page
-    assert "Secondary" in page
-    assert "/api/v1/candidates/review" in page
-    assert "Candidates both workers agreed on" in page
+def test_status_page_links_science_tools():
+    root = Path(__file__).resolve().parents[1].joinpath("src/rhexas/coord")
+    status = (root / "status.html").read_text(encoding="utf-8")
+    assert "/candidates" in status
+    assert "/vetting" in status
+    vetting = (root / "vetting.html").read_text(encoding="utf-8")
+    assert "priority_help" in vetting
+    assert "Odd/even" in vetting
+    assert "/api/v1/candidates/review" in vetting
 
 
 def _agree(store, tic, sector=14, period=1.5, snr=20.0, odd_even=None, secondary=None, duration=0.1):
