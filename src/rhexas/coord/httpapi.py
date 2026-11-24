@@ -190,9 +190,18 @@ class App:
                 return self._discovery_api(detail_path, query)
             science = _science_api(method, path)
             if science is not None:
-                if not self._operator_ok(headers):
+                if path == "/api/v1/candidates/science":
+                    if not self._worker_or_operator(headers):
+                        return _error(401, "unauthorized", "unauthorized")
+                elif not self._operator_ok(headers):
                     return _error(401, "unauthorized", "unauthorized")
                 return science(self, query, body)
+            local = _local_check_api(method, path)
+            if local is not None:
+                worker = self.store.authenticate(_bearer(headers))
+                if worker is None:
+                    return _error(401, "unauthorized", "unauthorized")
+                return local(self, query, body, worker)
             if method == "POST" and path == "/api/v1/candidates/review":
                 if not self._operator_ok(headers):
                     return _error(401, "unauthorized", "unauthorized")
@@ -260,6 +269,30 @@ class App:
             ),
         })
 
+    def _post_local_check(self, query: dict, body: bytes, worker: dict) -> Response:
+        tic_raw = _first_text(query.get("tic"))
+        if not tic_raw:
+            return _error(400, "tic query parameter is required", "bad_request")
+        try:
+            tic = int(tic_raw)
+        except ValueError:
+            return _error(400, "tic must be an integer", "bad_request")
+        try:
+            if body:
+                import json
+                payload = json.loads(body.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("object")
+                payload = dict(payload)
+                payload.setdefault("tic", tic)
+            else:
+                payload = {"tic": tic}
+            stored = self.store.save_local_check(int(worker["id"]), payload)
+        except CoordError as exc:
+            return _error(exc.status, str(exc), _code(exc.status))
+        except Exception:
+            return _error(400, "invalid local check body", "bad_request")
+        return _json(200, stored)
     def _science_refresh_trigger(self) -> Response:
         refresher = getattr(self.store, "science_refresher", None)
         if refresher is None:
@@ -319,7 +352,7 @@ class App:
         except (IndexError, ValueError):
             return _error(404, "not found", "not_found")
         from .discoveries_gallery import read_or_write_thumbnail, thumb_cache_dir
-        body = read_or_write_thumbnail(thumb_cache_dir(self.store.path), tic)
+        body = read_or_write_thumbnail(thumb_cache_dir(self.store.path), tic, store=self.store)
         return Response(200, body, "image/svg+xml")
 
     def _mission_progress(self, headers: dict, query: dict) -> Response:
@@ -521,6 +554,12 @@ def _science_api(method: str, path: str):
         return lambda app, query, body: app._science_refresh_trigger()
     if method == "GET" and path == "/api/v1/candidates/export":
         return lambda app, query, body: app._science_export(query)
+    return None
+
+
+def _local_check_api(method: str, path: str):
+    if method == "POST" and path == "/api/v1/candidates/local-check":
+        return lambda app, query, body, worker: app._post_local_check(query, body, worker)
     return None
 
 

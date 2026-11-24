@@ -43,6 +43,7 @@ _FILES = {
     "/batches": ("batches.html", "text/html; charset=utf-8"),
     "/discoveries": ("discoveries.html", "text/html; charset=utf-8"),
     "/candidates": ("candidates.html", "text/html; charset=utf-8"),
+    "/review": ("review.html", "text/html; charset=utf-8"),
 }
 
 
@@ -68,6 +69,12 @@ def fallback_resources(cfg) -> dict:
         "min_free_gb": worker.min_free_gb,
         "coordinator_url": public_coordinator_url(worker.coordinator_url),
         "vetting_enabled": bool(getattr(getattr(cfg, "vetting", None), "enabled", False)),
+        "vetting": {
+            "enabled": bool(getattr(getattr(cfg, "vetting", None), "enabled", False)),
+            "radius_arcsec": float(getattr(getattr(cfg, "vetting", None), "radius_arcsec", 15.0)),
+            "timeout_s": float(getattr(getattr(cfg, "vetting", None), "timeout_s", 20.0)),
+            "cache_max_mb": float(getattr(getattr(cfg, "vetting", None), "cache_max_mb", 200.0)),
+        },
         "processed_limit_gb": getattr(worker, "processed_limit_gb", 20.0),
     }
 
@@ -142,10 +149,13 @@ def browser_url(host: str, port: int) -> str:
 class DashboardHooks:
     """Optional desktop services. The worker dashboard runs without them."""
 
-    def __init__(self, setup=None, updates=None, mission_progress=None):
+    def __init__(self, setup=None, updates=None, mission_progress=None, science_shortlist=None,
+                 coordinator_client=None):
         self.setup = setup
         self.updates = updates
         self.mission_progress = mission_progress
+        self.science_shortlist = science_shortlist
+        self.coordinator_client = coordinator_client
 
 
 def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | None = None):
@@ -234,6 +244,12 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 return
             if path == "/api/vetting/rerun":
                 self._post_vetting_rerun()
+                return
+            if path == "/api/review/queue":
+                self._post_review_queue()
+                return
+            if path == "/api/review/cancel":
+                self._post_review_cancel()
                 return
             self._drain()
             self._try_send(405, b"read only", "text/plain; charset=utf-8")
@@ -426,6 +442,12 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
             if path == "/api/vetting/export":
                 self._vetting_export(parse_qs(parts.query))
                 return
+            if path == "/api/review":
+                self._review_status()
+                return
+            if path == "/api/review/detail":
+                self._review_detail(parse_qs(parts.query))
+                return
             if path in ("/api/detail", "/api/star"):
                 self._star(parse_qs(parts.query), legacy=path == "/api/detail")
                 return
@@ -508,6 +530,89 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                 self._json(400, {"ok": False, "error": "tic and sector are required"})
                 return
             self._json(200, request_rerun(cache, tic, sector, vetting_on))
+
+        def _review_hooks(self):
+            from rhexas.config import VettingConfig
+
+            fetch = getattr(services, "science_shortlist", None)
+            factory = getattr(services, "coordinator_client", None)
+            raw = fallback.get("vetting") if isinstance(fallback.get("vetting"), dict) else {}
+            settings = VettingConfig(
+                enabled=bool(raw.get("enabled", vetting_on)),
+                radius_arcsec=float(raw.get("radius_arcsec", 15.0)),
+                timeout_s=float(raw.get("timeout_s", 20.0)),
+                cache_max_mb=float(raw.get("cache_max_mb", 200.0)),
+            )
+            return fetch, factory, settings
+
+        def _review_status(self) -> None:
+            from .review.runner import ensure_runner, status_payload
+
+            fetch, factory, settings = self._review_hooks()
+            if factory:
+                ensure_runner(cache, settings, coordinator_factory=factory)
+            self._json(200, status_payload(cache, fetch, settings))
+
+        def _review_detail(self, query: dict) -> None:
+            from .review.runner import detail_payload
+
+            tic, sector = self._query_int(query, "tic"), self._query_int(query, "sector")
+            if tic is None or sector is None:
+                self._json(400, {"available": False, "error": "tic and sector are required"})
+                return
+            self._json(200, detail_payload(cache, tic, sector))
+
+        def _post_review_queue(self) -> None:
+            from .review.runner import ensure_runner, queue_from_request
+
+            data = self._read_json(32_768) or {}
+            items = data.get("candidates") or data.get("items") or []
+            if not isinstance(items, list) or not items:
+                self._json(400, {"ok": False, "error": "candidates list is required"})
+                return
+            normalized = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    tic = int(item.get("tic"))
+                    sector = int(item.get("sector"))
+                except (TypeError, ValueError):
+                    continue
+                normalized.append({
+                    "tic": tic,
+                    "sector": sector,
+                    "period": item.get("period"),
+                    "t0": item.get("t0"),
+                    "duration": item.get("duration"),
+                    "depth": item.get("depth"),
+                    "snr": item.get("snr"),
+                    "sde": item.get("sde"),
+                    "rank": item.get("rank"),
+                })
+            if not normalized:
+                self._json(400, {"ok": False, "error": "no valid candidates"})
+                return
+            fetch, factory, settings = self._review_hooks()
+            if factory:
+                ensure_runner(cache, settings, coordinator_factory=factory)
+            self._json(200, queue_from_request(cache, normalized, settings))
+
+        def _post_review_cancel(self) -> None:
+            from .review.runner import ensure_runner
+
+            data = self._read_json(1024) or {}
+            try:
+                tic = int(data.get("tic"))
+                sector = int(data.get("sector"))
+            except (TypeError, ValueError):
+                self._json(400, {"ok": False, "error": "tic and sector are required"})
+                return
+            _, factory, settings = self._review_hooks()
+            runner = ensure_runner(cache, settings, coordinator_factory=factory) if factory else None
+            if runner is not None:
+                runner.request_cancel(tic, sector)
+            self._json(200, {"ok": True, "tic": tic, "sector": sector})
 
         def _star(self, query: dict, *, legacy: bool) -> None:
             tic_i = self._query_int(query, "tic")

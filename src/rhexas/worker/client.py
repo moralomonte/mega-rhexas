@@ -77,6 +77,17 @@ class CoordinatorClient:
         """Compact overall progress for enrolled sectors (worker or operator auth)."""
         return self._request("GET", "/api/v1/mission/progress", None)
 
+    def candidates_science(self, *, limit: int = 50) -> dict:
+        """Shortlist and progress from the coordinator science API."""
+        path = f"/api/v1/candidates/science?limit={max(1, min(int(limit), 200))}"
+        return self._request("GET", path, None)
+
+    def post_local_check(self, payload: dict) -> dict:
+        """Upload an untrusted local check. Worker auth only."""
+        tic = int(payload["tic"])
+        query = f"/api/v1/candidates/local-check?tic={tic}"
+        return self._request("POST", query, payload)
+
     def _request(self, method: str, path: str, payload) -> dict:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base + path, data=data, method=method)
