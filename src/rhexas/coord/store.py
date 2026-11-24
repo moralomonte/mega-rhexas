@@ -513,7 +513,6 @@ class Store:
     def init_schema(self) -> None:
         self.conn.executescript(_SCHEMA)
         self._migrate()
-        self._refresh_science()
         self._catalog_index = {}
 
     def replica_count(self, project: str) -> int:
@@ -1219,11 +1218,6 @@ class Store:
     def discovery_detail(self, tic: int, project: str | None = None) -> dict | None:
         from .discoveries_gallery import build_detail_payload
         return build_detail_payload(self, tic, project)
-
-    def _refresh_science(self) -> None:
-        from .science import refresh_candidate_recheck
-
-        refresh_candidate_recheck(self)
 
     def candidates_science(self, limit: int = 200, project: str | None = None) -> dict:
         from .science import attach_recheck, progress_summary, recheck_index, shortlist_rows

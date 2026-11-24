@@ -268,37 +268,33 @@ def iso_now(clock) -> str:
     return str(now)
 
 
-def _sector_watch_row(store, project: str | None) -> list[dict]:
-    where = ""
-    args: list = []
-    if project:
-        where = "WHERE project=?"
-        args.append(project)
-    rows = store.conn.execute(
-        f"""SELECT project, sector,
-                   COUNT(*) AS units_total,
-                   SUM(CASE WHEN state='agreed' THEN 1 ELSE 0 END) AS units_agreed
-            FROM units {where}
-            GROUP BY project, sector""",
-        args,
-    ).fetchall()
-    out = []
-    for row in rows:
+def _aggregate_units(unit_rows) -> tuple[list[dict], dict[int, set[int]]]:
+    """One pass over units: sector watch rows and TIC→observed-sector map."""
+    from collections import defaultdict
+
+    buckets: dict[tuple[str, int], dict] = {}
+    sector_tics: dict[tuple[str, int], set[int]] = defaultdict(set)
+    tic_observed: dict[int, set[int]] = defaultdict(set)
+    for row in unit_rows:
+        project = row["project"]
         sector = int(row["sector"])
-        tics: set[int] = set()
-        for unit in store.conn.execute(
-            "SELECT payload_json FROM units WHERE project=? AND sector=?",
-            (row["project"], sector),
-        ):
-            tics |= _tics_from_payload(unit["payload_json"])
-        out.append({
-            "project": row["project"],
-            "sector": sector,
-            "units_total": int(row["units_total"] or 0),
-            "units_agreed": int(row["units_agreed"] or 0),
-            "tics": sorted(tics),
-        })
-    return out
+        key = (project, sector)
+        if key not in buckets:
+            buckets[key] = {
+                "project": project,
+                "sector": sector,
+                "units_total": 0,
+                "units_agreed": 0,
+            }
+        buckets[key]["units_total"] += 1
+        if row["state"] == "agreed":
+            buckets[key]["units_agreed"] += 1
+        tics = _tics_from_payload(row["payload_json"])
+        sector_tics[key] |= tics
+        for tic in tics:
+            tic_observed[tic].add(sector)
+    watch = [{**buckets[key], "tics": sorted(sector_tics[key])} for key in sorted(buckets)]
+    return watch, tic_observed
 
 
 def _tics_from_payload(payload_json: str) -> set[int]:
@@ -320,9 +316,21 @@ def _tics_from_payload(payload_json: str) -> set[int]:
 
 def refresh_candidate_recheck(store, *, project: str | None = None) -> None:
     """Update per-TIC sector coverage and needs_recheck flags (idempotent)."""
+    from collections import defaultdict
+
     from .store import iso
 
-    watch = _sector_watch_row(store, project)
+    where = ""
+    args: list = []
+    if project:
+        where = "WHERE project=?"
+        args.append(project)
+    unit_rows = store.conn.execute(
+        f"SELECT project, sector, state, payload_json FROM units {where}",
+        args,
+    ).fetchall()
+    watch, tic_observed = _aggregate_units(unit_rows)
+
     previous_rows = store.conn.execute(
         "SELECT project, sector, units_total, units_agreed, tics_json FROM science_sector_watch"
     ).fetchall()
@@ -347,52 +355,59 @@ def refresh_candidate_recheck(store, *, project: str | None = None) -> None:
             triggered.add(int(row["sector"]))
         elif cur_total > 0 and cur_agreed >= cur_total and prev_agreed < cur_total:
             triggered.add(int(row["sector"]))
+
+    detection_by_tic: dict[int, list[int]] = defaultdict(list)
+    for row in store.conn.execute("SELECT DISTINCT tic, sector FROM candidates ORDER BY tic, sector"):
+        detection_by_tic[int(row["tic"])].append(int(row["sector"]))
+
+    prev_recheck: dict[int, set[int]] = {}
+    for row in store.conn.execute("SELECT tic, recheck_sectors FROM candidate_recheck"):
+        try:
+            prev_recheck[int(row["tic"])] = {int(x) for x in json.loads(row["recheck_sectors"] or "[]")}
+        except json.JSONDecodeError:
+            prev_recheck[int(row["tic"])] = set()
+
     now = iso(store.clock())
+    watch_rows = [
+        (row["project"], row["sector"], row["units_total"], row["units_agreed"], json.dumps(row["tics"]), now)
+        for row in watch
+    ]
+    recheck_rows = []
+    for tic in sorted(detection_by_tic):
+        detection = detection_by_tic[tic]
+        observed = sorted(tic_observed.get(tic, set()))
+        old_recheck = prev_recheck.get(tic, set())
+        new_from_trigger = set()
+        for sector in triggered:
+            sector_tics = sector_by_key.get(sector, {}).get("tics") or []
+            if tic in sector_tics:
+                new_from_trigger.add(sector)
+        recheck_sectors = sorted((old_recheck | new_from_trigger) - set(detection))
+        needs = 1 if recheck_sectors else 0
+        reason = ""
+        if recheck_sectors:
+            reason = "Star now covered by sector(s) " + ", ".join(str(s) for s in recheck_sectors)
+        recheck_rows.append((
+            tic,
+            json.dumps(detection),
+            json.dumps(observed),
+            json.dumps(recheck_sectors),
+            needs,
+            reason,
+            now,
+        ))
+
     with store._tx() as conn:
         conn.execute("DELETE FROM science_sector_watch")
-        for row in watch:
-            conn.execute(
+        if watch_rows:
+            conn.executemany(
                 """INSERT INTO science_sector_watch
                    (project, sector, units_total, units_agreed, tics_json, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    row["project"], row["sector"], row["units_total"], row["units_agreed"],
-                    json.dumps(row["tics"]), now,
-                ),
+                watch_rows,
             )
-        tic_rows = conn.execute("SELECT DISTINCT tic FROM candidates").fetchall()
-        for row in tic_rows:
-            tic = int(row["tic"])
-            detection = [
-                int(item["sector"])
-                for item in conn.execute(
-                    "SELECT DISTINCT sector FROM candidates WHERE tic=? ORDER BY sector", (tic,)
-                )
-            ]
-            observed: set[int] = set()
-            for unit in conn.execute("SELECT project, sector, payload_json FROM units"):
-                if tic in _tics_from_payload(unit["payload_json"]):
-                    observed.add(int(unit["sector"]))
-            prev_row = conn.execute(
-                "SELECT recheck_sectors FROM candidate_recheck WHERE tic=?", (tic,)
-            ).fetchone()
-            old_recheck: set[int] = set()
-            if prev_row:
-                try:
-                    old_recheck = {int(x) for x in json.loads(prev_row["recheck_sectors"] or "[]")}
-                except json.JSONDecodeError:
-                    old_recheck = set()
-            new_from_trigger = set()
-            for sector in triggered:
-                sector_tics = sector_by_key.get(sector, {}).get("tics") or []
-                if tic in sector_tics:
-                    new_from_trigger.add(sector)
-            recheck_sectors = sorted((old_recheck | new_from_trigger) - set(detection))
-            needs = 1 if recheck_sectors else 0
-            reason = ""
-            if recheck_sectors:
-                reason = "Star now covered by sector(s) " + ", ".join(str(s) for s in recheck_sectors)
-            conn.execute(
+        if recheck_rows:
+            conn.executemany(
                 """INSERT INTO candidate_recheck
                    (tic, detection_sectors, observed_sectors, recheck_sectors,
                     needs_recheck, recheck_reason, updated_at)
@@ -404,15 +419,7 @@ def refresh_candidate_recheck(store, *, project: str | None = None) -> None:
                        needs_recheck=excluded.needs_recheck,
                        recheck_reason=excluded.recheck_reason,
                        updated_at=excluded.updated_at""",
-                (
-                    tic,
-                    json.dumps(detection),
-                    json.dumps(sorted(observed)),
-                    json.dumps(recheck_sectors),
-                    needs,
-                    reason,
-                    now,
-                ),
+                recheck_rows,
             )
 
 

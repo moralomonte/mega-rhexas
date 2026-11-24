@@ -77,14 +77,21 @@ def serve(store: Store, host: str, port: int, *, accounts=None, smtp=None, maile
     print(f"database {store.path}", flush=True)
     print("The status page asks for the admin token. Worker tokens cannot open it.", flush=True)
     from .checker import CatalogChecker
+    from .science_refresh import ScienceRefresher
+
     checker = CatalogChecker(store)
     checker.lock = httpd.lock
     checker.start()
     print("Catalog cross-checks run in the background.", flush=True)
+    refresher = ScienceRefresher(store, lock=httpd.lock)
+    store.science_refresher = refresher
+    refresher.start()
+    print("Science sector watch and re-check flags refresh in the background.", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopping", flush=True)
     finally:
+        refresher.stop()
         checker.stop()
         httpd.server_close()
