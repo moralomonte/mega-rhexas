@@ -72,6 +72,22 @@ function checkVersion(v){if(!v||v===PAGE_VERSION)return;location.reload()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function badge(st){const name=String(st||'queued');const cls=['pass','warn','fail','unavailable','queued','running','done','cancelled'].includes(name)?name:'queued';return `<span class="badge ${cls}">${esc(name)}</span>`;}
 function ppm(v){if(v==null||!isFinite(+v))return '–';return Math.round(+v*1e6).toLocaleString()+' ppm'}
+function isDepthKey(k){return k==='depth'||/(^|_)depth($|_)/i.test(k);}
+function formatTransitDepth(v){
+  const n=+v;
+  if(!isFinite(n))return '–';
+  if(Math.abs(n)>=0.001)return (n*100).toFixed(2)+'%';
+  return Math.round(n*1e6).toLocaleString()+' ppm';
+}
+function formatCheckNumber(k,v){
+  if(v==null)return '–';
+  if(typeof v==='number'&&isFinite(v)){
+    if(isDepthKey(k))return formatTransitDepth(v);
+    if(Math.abs(v)>=1000||(Math.abs(v)<0.001&&v!==0))return v.toPrecision(4);
+    return String(+v.toFixed(4)).replace(/\.?0+$/,'');
+  }
+  return String(v);
+}
 let SHORTLIST=[], JOBS={}, OPEN=null, SELECTED=new Set(), SCHEDULER=null;
 function jobKey(tic,sector){return `${tic}:${sector}`}
 function jobFor(tic,sector){return JOBS[jobKey(tic,sector)]}
@@ -135,7 +151,12 @@ function paintDetail(d){
   $('dtitle').textContent=`TIC ${d.tic} · sector ${d.sector}`;
   $('dnote').textContent=[d.disclaimer,d.download_note,d.upload_detail].filter(Boolean).join(' ');
   draw(d.plot);
-  $('checks').innerHTML=(d.checks||[]).map(c=>`<div class="check"><b>${esc(c.title||c.name)} ${badge(c.status)}</b><div class="why">${esc(c.reason||'')}</div></div>`).join('')||'<div class="empty">No checks yet.</div>';
+  $('checks').innerHTML=(d.checks||[]).map(c=>{
+    const nums=c.numbers||{};
+    const bits=Object.keys(nums).filter(k=>nums[k]!=null).map(k=>`${k}: ${formatCheckNumber(k,nums[k])}`).join(' · ');
+    const bitsEsc=esc(bits);
+    return `<div class="check"><b>${esc(c.title||c.name)} ${badge(c.status)}</b><div class="why">${esc(c.reason||'')}</div>${bits?`<div class="note nums">${bitsEsc}</div>`:''}</div>`;
+  }).join('')||'<div class="empty">No checks yet.</div>';
 }
 async function openDetail(tic,sector){
   OPEN={tic,sector};paintRows();

@@ -9,6 +9,8 @@ import math
 
 import numpy as np
 
+from rhexas.transit_depth import format_transit_depth
+
 # TESS orbit and the downlink gap. Harmonics of this period often track systematics.
 ORBIT_DAYS = 13.7
 SECTOR_DAYS = 27.4
@@ -78,15 +80,6 @@ def _finite(value):
     return number
 
 
-def _depth_text(depth) -> str:
-    number = _finite(depth)
-    if number is None:
-        return "an unknown depth"
-    if abs(number) >= 0.001:
-        return f"{number * 100:.2f}%"
-    return f"{number * 1e6:.0f} ppm"
-
-
 def _as_arrays(time, flux):
     t = np.asarray(time, dtype=float)
     y = np.asarray(flux, dtype=float)
@@ -96,6 +89,9 @@ def _as_arrays(time, flux):
     t, y = t[mask], y[mask]
     if t.size < 8:
         return None
+    med = float(np.median(y))
+    if math.isfinite(med) and med > 0:
+        y = y / med
     order = np.argsort(t)
     return t[order], y[order]
 
@@ -215,8 +211,8 @@ def odd_even_check(time, flux, period, t0, duration) -> dict:
         "even_points": right["n_in"],
     }
     reason = (
-        f"Odd transits are {_depth_text(left['depth'])} deep and even transits are "
-        f"{_depth_text(right['depth'])} deep. The difference is {sigma:.1f} sigma."
+        f"Odd transits are {format_transit_depth(left['depth'])} deep and even transits are "
+        f"{format_transit_depth(right['depth'])} deep. The difference is {sigma:.1f} sigma."
     )
     if sigma > ODD_EVEN_FAIL:
         return check("odd_even", "Odd and even transits", "fail", reason, numbers)
@@ -265,26 +261,26 @@ def secondary_check(time, flux, period, t0, duration) -> dict:
     )
     if half_hit:
         reason = (
-            f"A dip at phase 0.5 is {_depth_text(at_half['depth'])} deep "
-            f"({at_half['sigma']:.1f} sigma), beside a primary of {_depth_text(primary_depth)}."
+            f"A dip at phase 0.5 is {format_transit_depth(at_half['depth'])} deep "
+            f"({at_half['sigma']:.1f} sigma), beside a primary of {format_transit_depth(primary_depth)}."
         )
         return check("secondary", "Secondary eclipse", "fail", reason, numbers)
     if other_hit:
         reason = (
             f"The deepest extra dip is at phase {best['phase']:.2f}, "
-            f"{_depth_text(best['depth'])} deep ({best['sigma']:.1f} sigma). "
+            f"{format_transit_depth(best['depth'])} deep ({best['sigma']:.1f} sigma). "
             "That can be an eclipse on an off-center orbit."
         )
         return check("secondary", "Secondary eclipse", "fail", reason, numbers)
     if other_warn or (at_half["sigma"] >= SECONDARY_FAIL and at_half["depth"] > 0 and not half_hit):
         reason = (
-            f"Phase 0.5 is {_depth_text(at_half['depth'])} ({at_half['sigma']:.1f} sigma). "
+            f"Phase 0.5 is {format_transit_depth(at_half['depth'])} ({at_half['sigma']:.1f} sigma). "
             "Nothing there is both deep and significant, but a weaker extra dip is worth a look."
         )
         return check("secondary", "Secondary eclipse", "warn", reason, numbers)
     reason = (
-        f"Phase 0.5 is {_depth_text(at_half['depth'])} ({at_half['sigma']:.1f} sigma), "
-        f"against a primary of {_depth_text(primary_depth)}. No second dip stands out."
+        f"Phase 0.5 is {format_transit_depth(at_half['depth'])} ({at_half['sigma']:.1f} sigma), "
+        f"against a primary of {format_transit_depth(primary_depth)}. No second dip stands out."
     )
     return check("secondary", "Secondary eclipse", "pass", reason, numbers)
 

@@ -1,6 +1,8 @@
 """Untrusted local review payloads from worker desktops.
 
 Nothing here is treated as confirmed vetting. Records are additive and size-limited.
+Check ``numbers`` depth fields are stored as flux fractions (see ``rhexas.transit_depth``);
+display code converts them to percent or ppm once.
 """
 from __future__ import annotations
 

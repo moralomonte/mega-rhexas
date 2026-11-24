@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rhexas.transit_depth import format_check_number
+
 from .checks import DISCLAIMER
 
 
@@ -68,7 +70,7 @@ def render_markdown(detail: dict) -> str:
         lines.append(f"- {item.get('reason') or ''}")
         numbers = item.get("numbers") or {}
         if numbers:
-            rendered = ", ".join(f"{key}={numbers[key]}" for key in numbers)
+            rendered = ", ".join(f"{key}={format_check_number(key, numbers[key])}" for key in numbers)
             lines.append(f"- Numbers: {rendered}")
         lines.append("")
     links = detail.get("links") or {}
