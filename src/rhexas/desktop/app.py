@@ -9,14 +9,13 @@ from __future__ import annotations
 
 import sys
 import threading
-import webbrowser
-
 from rhexas import __version__
 from rhexas.config import load_config
 from rhexas.worker.dashboard import DashboardHooks, fallback_resources, launch_in_thread
 from rhexas.worker.live import Store
 from rhexas.worker.loop import cache_dir, coordinator_client_hook, mission_progress_hook, resolve_worker, run_worker
 
+from .browser import open_dashboard
 from .paths import AppPaths
 from .setup import SetupGate
 from .tray import start_tray
@@ -65,7 +64,8 @@ def desktop_dashboard_hooks(cfg, gate: SetupGate, board: UpdateBoard) -> Dashboa
     )
 
 
-def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int | None = None,
+def run_desktop(cfg, *, open_browser: bool = True, app_window: bool | None = None,
+                tray: bool = True, port: int | None = None,
                 once: bool = False, quit_event: threading.Event | None = None,
                 paths: AppPaths | None = None) -> int:
     paths = paths or AppPaths.discover()
@@ -76,21 +76,24 @@ def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int 
     cache.mkdir(parents=True, exist_ok=True)
     gate = SetupGate(paths.root, cfg.worker.coordinator_url)
     board = UpdateBoard(__version__)
+    use_app_window = cfg.desktop.app_window if app_window is None else bool(app_window)
     url = launch_in_thread(
         cache,
         host="127.0.0.1",
         port=port,
-        open_browser=open_browser,
+        open_browser=False,
         fallback=fallback_resources(cfg),
         services=desktop_dashboard_hooks(cfg, gate, board),
     )
+    if open_browser:
+        open_dashboard(url, app_window=use_app_window)
     stop = quit_event or threading.Event()
 
     def _check() -> None:
         board.set_offer(check_for_update(__version__))
 
     threading.Thread(target=_check, name="rhexas-update", daemon=True).start()
-    icon = _start_tray(cache, url, stop) if tray else None
+    icon = _start_tray(cache, url, stop, use_app_window) if tray else None
     print(f"Mega Rhexas  {url}", flush=True)
     print("cache in app data, low priority, 20 GB cache cap, disk-space guard on", flush=True)
     try:
@@ -111,7 +114,7 @@ def run_desktop(cfg, *, open_browser: bool = True, tray: bool = True, port: int 
                 pass
 
 
-def _start_tray(cache, url: str, stop: threading.Event):
+def _start_tray(cache, url: str, stop: threading.Event, app_window: bool):
     def on_quit(icon) -> None:
         stop.set()
         try:
@@ -124,10 +127,11 @@ def _start_tray(cache, url: str, stop: threading.Event):
         store.request_user_pause(not store.user_paused())
 
     return start_tray(
-        on_open=lambda: webbrowser.open(url),
+        on_open=lambda: open_dashboard(url, app_window=app_window),
         on_toggle_pause=toggle,
         on_quit=on_quit,
         paused=lambda: Store(cache).user_paused(),
+        app_window=app_window,
     )
 
 
@@ -135,7 +139,11 @@ def run_from_args(cfg, args) -> int:
     """Entry from ``rhexas desktop``. Ignores a checkout config so the app is self-contained."""
     del cfg
     paths = AppPaths.discover()
-    fresh = load_config(search_files=False, environ={}, overrides={"root": paths.root})
+    app_toml = paths.root / "rhexas.toml"
+    if app_toml.is_file():
+        fresh = load_config(app_toml, search_files=False, environ={}, overrides={"root": paths.root})
+    else:
+        fresh = load_config(search_files=False, environ={}, overrides={"root": paths.root})
     coordinator = getattr(args, "coordinator", None)
     if coordinator:
         fresh = resolve_worker(fresh, coordinator=coordinator, environ={})

@@ -279,8 +279,10 @@ def test_versions_agree_across_package_and_installer():
 
 
 def test_tray_menu_is_open_pause_and_quit(tmp_path, monkeypatch):
+    from rhexas.desktop.tray import MENU_LABELS_TAB
     monkeypatch.setattr("rhexas.worker.loop.apply_priority", lambda priority: 0)
-    assert MENU_LABELS == ("Open dashboard", "Pause", "Quit")
+    assert MENU_LABELS == ("Reopen dashboard window", "Pause", "Quit")
+    assert MENU_LABELS_TAB == ("Open dashboard", "Pause", "Quit")
     assert "Eco" not in MENU_LABELS
     cache = tmp_path / "cache"
     store = Store(cache)

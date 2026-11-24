@@ -64,6 +64,8 @@ def test_committed_toml_matches_builtin_defaults():
     assert cfg.multisector == plain.multisector
     assert cfg.worker == plain.worker
     assert cfg.vetting == plain.vetting
+    assert cfg.desktop == plain.desktop
+    assert cfg.desktop.app_window is True
     assert cfg.vetting.enabled is False
     assert cfg.worker.procs == 2
     assert cfg.worker.max_cache_gb == 20.0

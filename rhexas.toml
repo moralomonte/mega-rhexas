@@ -140,6 +140,11 @@ max_cache_gb = 20
 # Processed light curves and result files kept for replay. Candidates are not auto-deleted.
 processed_limit_gb = 20
 
+[desktop]
+# Installed app only (`rhexas desktop`). Opens the dashboard in a dedicated
+# Edge or Chrome window instead of a normal browser tab.
+app_window = true
+
 [vetting]
 # Local advisory checks for candidates found on this computer. Off by default,
 # so only a machine that opts in runs them. Set enabled = true and restart the
