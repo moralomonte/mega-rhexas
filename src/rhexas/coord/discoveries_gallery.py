@@ -192,12 +192,19 @@ def thumb_cache_dir(db_path: Path) -> Path:
     return Path(db_path).resolve().parent / "thumbs"
 
 
-def read_or_write_thumbnail(cache_dir: Path, tic: int, fold_phase=None, fold_flux=None) -> bytes:
+def read_or_write_thumbnail(cache_dir: Path, tic: int, fold_phase=None, fold_flux=None, store=None) -> bytes:
     """Disk cache under /var/lib/rhexas/thumbs (or next to the sqlite file)."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"tic-{int(tic)}.svg"
     if path.is_file():
         return path.read_bytes()
+    if store is not None and fold_phase is None:
+        try:
+            loaded = store.local_check_fold_for_tic(int(tic))
+        except Exception:
+            loaded = None
+        if loaded is not None:
+            fold_phase, fold_flux = loaded
     svg = fold_thumbnail_svg(fold_phase or [], fold_flux or [])
     if svg is None:
         svg = placeholder_fold_svg()

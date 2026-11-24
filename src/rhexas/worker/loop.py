@@ -1379,6 +1379,13 @@ def run_worker(cfg: Config, *, once: bool = False, client=None, download=None, s
         except Exception as exc:
             vetting_runner = None
             print(f"vetting did not start ({exc}); the search continues", flush=True)
+        try:
+            client_factory, _shortlist = coordinator_client_hook(cfg)
+            from .review.runner import ensure_runner as ensure_review
+            ensure_review(cache, cfg.vetting, coordinator_factory=client_factory)
+            print("local review queue ready (coordinator shortlist)", flush=True)
+        except Exception as exc:
+            print(f"local review did not start ({exc})", flush=True)
         pace_memory: dict = {}
         current_pace(cfg, live, pace_memory)
         attempt = 0
@@ -1606,6 +1613,39 @@ def mission_progress_hook(cfg: Config):
     return _fetch
 
 
+def coordinator_client_hook(cfg: Config):
+    """Factory for authenticated coordinator calls (science shortlist, local-check upload)."""
+
+    def _client():
+        from .client import CoordinatorClient
+        from ..coord.projects import DEFAULT_PROJECT
+
+        token_value = load_token(cfg)
+        url = (cfg.worker.coordinator_url or "").strip()
+        if not token_value or not url:
+            return None
+        return CoordinatorClient(url, token_value, project=DEFAULT_PROJECT)
+
+    def _shortlist():
+        client = _client()
+        if client is None:
+            raise ValueError("coordinator URL or token is not set")
+        return client.candidates_science(limit=50)
+
+    return _client, _shortlist
+
+
+def _dashboard_hooks(cfg: Config):
+    from .dashboard import DashboardHooks
+
+    client_factory, shortlist = coordinator_client_hook(cfg)
+    return DashboardHooks(
+        mission_progress=mission_progress_hook(cfg),
+        science_shortlist=shortlist,
+        coordinator_client=client_factory,
+    )
+
+
 def run_from_args(cfg: Config, args) -> int:
     cfg = resolve_worker(
         cfg,
@@ -1651,7 +1691,7 @@ def run_from_args(cfg: Config, args) -> int:
                     port=getattr(args, "dashboard_port", None),
                     open_browser=not getattr(args, "no_browser", False),
                     fallback=fallback_resources(cfg),
-                    services=DashboardHooks(mission_progress=mission_progress_hook(cfg)),
+                    services=_dashboard_hooks(cfg),
                 )
             except (OSError, ValueError) as exc:
                 print(f"rhexas worker: dashboard did not start ({exc})", file=sys.stderr)

@@ -1,0 +1,181 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/img/triskelion.svg?v=__APP_VERSION__"><meta name="rhexas-version" content="__APP_VERSION__"><title>Mega Rhexas · Review</title>
+<style>
+:root{--bg:#05060f;--glass:rgba(255,255,255,.045);--bd:rgba(255,255,255,.09);--tx:#e7ecff;--mut:#8b93b8;--c1:#7c5cff;--c2:#22d3ee;--ok:#34d399;--warn:#fbbf24;--err:#f87171}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+body{background:radial-gradient(1200px 500px at 80% -10%,#1a1040,transparent 55%),#05060f}
+.wrap{max-width:1680px;margin:0 auto;padding:18px 22px 40px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}h1 small{display:block;font-size:12px;color:var(--mut);font-weight:400}
+a.back,a.nav{color:var(--tx);text-decoration:none;border:1px solid var(--bd);background:var(--glass);border-radius:999px;padding:6px 14px;font-weight:600}
+.card{margin-top:16px;background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:20px;padding:16px 18px}
+.note{color:var(--mut);font-size:13px;margin:8px 0 0}
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.btn{background:var(--glass);border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.btn.primary{border-color:var(--c1);background:#7c5cff33}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.pick{cursor:pointer}tr.pick:hover{background:rgba(255,255,255,.04)}tr.on{background:rgba(124,92,255,.12)}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--bd)}
+.badge.pass{color:#6ee7b7;border-color:#34d39977;background:#34d39922}
+.badge.warn{color:#fcd34d;border-color:#fbbf2477;background:#fbbf2422}
+.badge.fail{color:#fca5a5;border-color:#f8717166;background:#f8717122}
+.badge.unavailable,.badge.pending,.badge.running,.badge.queued{color:var(--mut)}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.check{border:1px solid var(--bd);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.03)}
+.check b{display:block;margin-bottom:4px}
+.check .why{color:var(--tx);font-size:13px}
+.empty{color:var(--mut);padding:28px 8px;text-align:center}
+.err{color:var(--err);min-height:1.2em}
+.cv{position:relative;width:100%;overflow:hidden;flex:none;height:280px;min-height:280px}
+.cv>canvas{position:absolute;inset:0;width:100%;height:100%}
+@media(max-width:800px){.wrap{padding:10px}.checks{grid-template-columns:1fr}table{display:block;overflow:auto}}
+</style></head><body>
+<div class="wrap">
+<header>
+<a class="back" href="/?v=__APP_VERSION__">← Dashboard</a>
+<a class="nav" href="/vetting?v=__APP_VERSION__">Vetting</a>
+<a class="nav" href="/discoveries?v=__APP_VERSION__">Discoveries</a>
+<h1>Review <small>Coordinator shortlist · local deep checks · candidate wording only</small></h1>
+</header>
+<section class="card">
+<p class="note" id="disc"></p>
+<p class="note" id="coord"></p>
+<div class="tools">
+<button class="btn" id="reload" type="button">Reload shortlist</button>
+<button class="btn primary" id="queue" type="button" disabled>Queue selected for local check</button>
+<button class="btn" id="cancel" type="button" disabled>Cancel selected job</button>
+</div>
+<p class="err" id="msg"></p>
+<table>
+<thead><tr>
+<th><input type="checkbox" id="all" aria-label="Select all"></th>
+<th>Rank</th><th>TIC</th><th>Sector</th><th>Period</th><th>Depth</th><th>SNR</th><th>Local job</th><th>Upload</th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</section>
+<section class="card" id="detail" hidden>
+<h2 id="dtitle" style="margin:0;font-size:18px">Candidate</h2>
+<p class="note" id="dnote"></p>
+<div class="cv"><canvas id="plot"></canvas></div>
+<div class="checks" id="checks"></div>
+</section>
+</div>
+<script>
+const $=id=>document.getElementById(id), DPR=Math.min(2,devicePixelRatio||1);
+const PAGE_VERSION="__APP_VERSION__";
+function checkVersion(v){if(!v||v===PAGE_VERSION)return;location.reload()}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function badge(st){const name=String(st||'queued');const cls=['pass','warn','fail','unavailable','queued','running','done','cancelled'].includes(name)?name:'queued';return `<span class="badge ${cls}">${esc(name)}</span>`;}
+function ppm(v){if(v==null||!isFinite(+v))return '–';return Math.round(+v*1e6).toLocaleString()+' ppm'}
+let SHORTLIST=[], JOBS={}, OPEN=null, SELECTED=new Set();
+function jobKey(tic,sector){return `${tic}:${sector}`}
+function jobFor(tic,sector){return JOBS[jobKey(tic,sector)]}
+function detectionSector(row){
+  const s=row.sector??(row.detections&&row.detections[0]&&row.detections[0].sector);
+  return s==null?0:+s;
+}
+function paintRows(){
+  const tbody=$('rows');
+  if(!SHORTLIST.length){tbody.innerHTML='<tr><td colspan="9" class="empty">No shortlist rows from the coordinator.</td></tr>';return}
+  tbody.innerHTML=SHORTLIST.map(row=>{
+    const tic=+row.tic, sector=detectionSector(row);
+    const key=jobKey(tic,sector);
+    const job=jobFor(tic,sector)||{};
+    const on=OPEN&&OPEN.tic===tic&&OPEN.sector===sector?' on':'';
+    const checked=SELECTED.has(key)?' checked':'';
+    return `<tr class="pick${on}" data-key="${esc(key)}">
+      <td><input type="checkbox" class="pickbox" data-key="${esc(key)}"${checked} onclick="event.stopPropagation()"></td>
+      <td class="num">${esc(row.rank??'–')}</td>
+      <td class="num">${tic}</td><td class="num">${sector}</td>
+      <td class="num">${esc((+row.period||0).toFixed(4))} d</td>
+      <td class="num">${ppm(row.depth)}</td><td class="num">${esc(row.snr??'–')}</td>
+      <td>${badge(job.state||'–')}</td>
+      <td>${badge(job.upload_state||'–')}</td></tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr.pick').forEach(tr=>{
+    tr.onclick=()=>{const [tic,sector]=tr.dataset.key.split(':').map(Number);openDetail(tic,sector);};
+  });
+  tbody.querySelectorAll('.pickbox').forEach(box=>{
+    box.onchange=()=>{box.checked?SELECTED.add(box.dataset.key):SELECTED.delete(box.dataset.key);syncButtons();};
+  });
+  syncButtons();
+}
+function syncButtons(){
+  $('queue').disabled=SELECTED.size===0;
+  $('cancel').disabled=SELECTED.size!==1;
+}
+$('all').onchange=()=>{
+  SELECTED.clear();
+  if($('all').checked)SHORTLIST.forEach(r=>SELECTED.add(jobKey(+r.tic,detectionSector(r))));
+  paintRows();
+};
+function setup(cv){
+  const box=cv.parentElement;let w=box.clientWidth,h=box.clientHeight;const x=cv.getContext('2d');
+  const bw=Math.max(1,Math.round(w*DPR)),bh=Math.max(1,Math.round(h*DPR));
+  cv.width=bw;cv.height=bh;x.setTransform(DPR,0,0,DPR,0,0);x.clearRect(0,0,w,h);return [x,w,h];
+}
+function draw(plot){
+  const sized=setup($('plot'));const ctx=sized[0],w=sized[1],h=sized[2];
+  if(!plot||!plot.phase||!plot.phase.length){ctx.fillStyle='#8b93b8';ctx.fillText('No phase curve yet.',16,28);return}
+  const series=(plot.flux||[]).filter(v=>isFinite(+v));let lo=Math.min(...series),hi=Math.max(...series);
+  const pad=(hi-lo)*0.15||0.01;lo-=pad;hi+=pad;
+  const xf=t=>36+(w-48)*t, yf=v=>16+(h-32)*(1-(v-lo)/(hi-lo));
+  ctx.strokeStyle='#9aa3c7';ctx.lineWidth=1.6;ctx.beginPath();
+  plot.phase.forEach((p,i)=>{const px=xf(+p),py=yf(plot.flux[i]);i?ctx.lineTo(px,py):ctx.moveTo(px,py)});
+  ctx.stroke();
+}
+function paintDetail(d){
+  $('detail').hidden=false;
+  $('dtitle').textContent=`TIC ${d.tic} · sector ${d.sector}`;
+  $('dnote').textContent=[d.disclaimer,d.download_note,d.upload_detail].filter(Boolean).join(' ');
+  draw(d.plot);
+  $('checks').innerHTML=(d.checks||[]).map(c=>`<div class="check"><b>${esc(c.title||c.name)} ${badge(c.status)}</b><div class="why">${esc(c.reason||'')}</div></div>`).join('')||'<div class="empty">No checks yet.</div>';
+}
+async function openDetail(tic,sector){
+  OPEN={tic,sector};paintRows();
+  const res=await fetch(`/api/review/detail?tic=${tic}&sector=${sector}`);
+  paintDetail(await res.json());
+}
+async function refresh(){
+  const res=await fetch('/api/review',{cache:'no-store'});
+  const body=await res.json();
+  checkVersion(body.app_version);
+  $('disc').textContent=body.disclaimer||'';
+  const coord=body.coordinator||{};
+  $('coord').textContent=coord.ok?`Shortlist: ${(coord.shortlist||[]).length} candidates · ${coord.disclaimer||''}`:(coord.detail||'Coordinator shortlist unavailable');
+  SHORTLIST=coord.shortlist||[];
+  JOBS={};
+  (body.jobs||[]).forEach(j=>{JOBS[jobKey(j.tic,j.sector)]=j;});
+  paintRows();
+  if(OPEN)openDetail(OPEN.tic,OPEN.sector);
+}
+$('reload').onclick=()=>refresh().catch(()=>$('msg').textContent='Reload failed.');
+$('queue').onclick=async()=>{
+  const items=[];
+  SELECTED.forEach(key=>{
+    const [tic,sector]=key.split(':').map(Number);
+    const row=SHORTLIST.find(r=>+r.tic===tic&&detectionSector(r)===sector);
+    if(!row)return;
+    const det=(row.detections||[]).find(d=>+d.sector===sector)||(row.detections||[])[0]||{};
+    items.push({tic,sector,rank:row.rank,period:row.period??det.period,depth:row.depth??det.depth,snr:row.snr??det.snr,sde:row.sde??det.sde,t0:det.t0,duration:det.duration});
+  });
+  const res=await fetch('/api/review/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates:items})});
+  const out=await res.json();
+  $('msg').textContent=out.ok?`Queued ${out.queued} candidate(s). Checks run one at a time while search is idle.`:(out.error||'Queue failed');
+  SELECTED.clear();await refresh();
+};
+$('cancel').onclick=async()=>{
+  const key=[...SELECTED][0];if(!key)return;
+  const [tic,sector]=key.split(':').map(Number);
+  await fetch('/api/review/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tic,sector})});
+  $('msg').textContent='Cancel requested.';await refresh();
+};
+refresh().catch(()=>$('msg').textContent='Review page did not load.');
+setInterval(()=>refresh().catch(()=>{}),6000);
+</script>
+</body></html>

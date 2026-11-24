@@ -242,7 +242,26 @@ CREATE TABLE IF NOT EXISTS candidate_recheck (
 );
 """
 
-_SCHEMA = _SCHEMA + _CATALOG_SCHEMA + _SCIENCE_SCHEMA
+_LOCAL_REVIEW_SCHEMA = """
+CREATE TABLE IF NOT EXISTS candidate_local_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tic INTEGER NOT NULL,
+    worker_id INTEGER NOT NULL,
+    check_key TEXT NOT NULL,
+    sector INTEGER,
+    verdict TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL,
+    fold_phase_json TEXT NOT NULL DEFAULT '[]',
+    fold_flux_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(tic, worker_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_local_checks_tic ON candidate_local_checks(tic, updated_at DESC);
+"""
+
+_SCHEMA = _SCHEMA + _CATALOG_SCHEMA + _SCIENCE_SCHEMA + _LOCAL_REVIEW_SCHEMA
 
 
 class CoordError(Exception):
@@ -1304,6 +1323,97 @@ class Store:
         self.log_event("info", f"TIC {tic} review set to {label}")
         return {"tic": tic, "status": status, "note": note, "updated_at": now}
 
+    def save_local_check(self, worker_id: int, record: dict) -> dict:
+        """Store an untrusted local review upload from a worker. Idempotent per check_key."""
+        from .local_review import LocalReviewError, validate_local_check
+
+        try:
+            body_tic = int(record.get("tic"))
+        except (TypeError, ValueError) as exc:
+            raise CoordError("tic is required", 400) from exc
+        try:
+            clean = validate_local_check(record, tic=body_tic)
+        except LocalReviewError as exc:
+            raise CoordError(str(exc), exc.status) from None
+        tic = int(clean["tic"])
+        if self.conn.execute("SELECT 1 FROM candidates WHERE tic=? LIMIT 1", (tic,)).fetchone() is None:
+            raise CoordError("no agreed candidate for that TIC", 404)
+        worker_id = int(worker_id)
+        now = iso(self.clock())
+        plot = clean.get("plot") or {}
+        payload = {
+            "tic": clean["tic"],
+            "sector": clean.get("sector"),
+            "check_key": clean["check_key"],
+            "verdict": clean["verdict"],
+            "note": clean["note"],
+            "checks": clean["checks"],
+            "disclaimer": clean["disclaimer"],
+            "app_version": clean.get("app_version") or "",
+            "source": "worker_local",
+        }
+        body = json.dumps(payload, separators=(",", ":"))
+        if len(body) > 90_000:
+            raise CoordError("payload too large after sanitization", 413)
+        phase_json = json.dumps(plot.get("phase") or [], separators=(",", ":"))
+        flux_json = json.dumps(plot.get("flux") or [], separators=(",", ":"))
+        with self._tx() as conn:
+            conn.execute(
+                """INSERT INTO candidate_local_checks
+                       (tic, worker_id, check_key, sector, verdict, note, payload_json,
+                        fold_phase_json, fold_flux_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(tic, worker_id, check_key) DO UPDATE SET
+                       sector=excluded.sector,
+                       verdict=excluded.verdict,
+                       note=excluded.note,
+                       payload_json=excluded.payload_json,
+                       fold_phase_json=excluded.fold_phase_json,
+                       fold_flux_json=excluded.fold_flux_json,
+                       updated_at=excluded.updated_at""",
+                (
+                    tic,
+                    worker_id,
+                    clean["check_key"],
+                    clean.get("sector"),
+                    clean["verdict"],
+                    clean["note"],
+                    body,
+                    phase_json,
+                    flux_json,
+                    now,
+                    now,
+                ),
+            )
+        try:
+            from .discoveries_gallery import thumb_cache_dir
+
+            thumb = thumb_cache_dir(Path(self.path).resolve().parent) / f"tic-{tic}.svg"
+            thumb.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.log_event("info", f"TIC {tic} local check from worker {worker_id} ({clean['check_key']})")
+        return {"tic": tic, "check_key": clean["check_key"], "updated_at": now, "stored": True}
+
+    def local_check_fold_for_tic(self, tic: int) -> tuple[list, list] | None:
+        """Newest local folded curve for gallery thumbnails."""
+        row = self.conn.execute(
+            """SELECT fold_phase_json, fold_flux_json FROM candidate_local_checks
+               WHERE tic=? AND length(fold_phase_json) > 2
+               ORDER BY updated_at DESC LIMIT 1""",
+            (int(tic),),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            phase = json.loads(row["fold_phase_json"] or "[]")
+            flux = json.loads(row["fold_flux_json"] or "[]")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(phase, list) or not isinstance(flux, list) or len(phase) < 4:
+            return None
+        return phase, flux
+
     def log_event(self, level: str, message: str) -> None:
         self.conn.execute(
             "INSERT INTO events (ts, level, message) VALUES (?, ?, ?)",
@@ -1760,6 +1870,7 @@ class Store:
         """
         self.conn.executescript(_CATALOG_SCHEMA)
         self.conn.executescript(_SCIENCE_SCHEMA)
+        self.conn.executescript(_LOCAL_REVIEW_SCHEMA)
         names = self._columns("units")
         if not names:
             self._add_columns("assignments", {
