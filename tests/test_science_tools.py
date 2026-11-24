@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
+from unittest import mock
 
 from rhexas.coord.httpapi import App
 from rhexas.coord.science import (
@@ -144,6 +146,87 @@ def test_export_markdown_contains_draft_banner(tmp_path):
         assert "DRAFT" in text
         assert "not submitted" in text.lower()
         assert "not a confirmed" in text.lower() or "not confirmed" in text.lower()
+    finally:
+        store.close()
+
+
+def _bulk_science_seed(store, *, n_units: int = 1000, n_candidates: int = 700) -> None:
+    """Large DB fixture: ~n_units units and ~n_candidates distinct candidate TICs."""
+    now = "2026-01-01T00:00:00+00:00"
+    unit_rows = []
+    tics_per_unit = 8
+    for uid in range(1, n_units + 1):
+        sector = 10 + (uid % 40)
+        ordinal = uid // 40
+        base_tic = 1_000_000 + uid * tics_per_unit
+        chunk = list(range(base_tic, base_tic + tics_per_unit))
+        payload = json.dumps({"sector": sector, "tics": chunk})
+        state = "agreed" if uid % 3 else "open"
+        unit_rows.append(("exoplanets", sector, ordinal, 1, payload, len(chunk), state, now))
+    store.conn.executemany(
+        """INSERT INTO units
+           (project, sector, ordinal, generation, payload_json, n_tics, state, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        unit_rows,
+    )
+    cand_rows = []
+    for cid in range(1, n_candidates + 1):
+        tic = 50_000 + cid
+        sector = 14 + (cid % 30)
+        unit_id = 1 + (cid % n_units)
+        cand_rows.append((unit_id, 1, tic, sector, 1.2, 0.01, 10.0, 9.0, "NEW", 1.0, ""))
+    store.conn.executemany(
+        """INSERT INTO candidates
+           (unit_id, generation, tic, sector, period, depth, sde, snr, status, score, flags)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        cand_rows,
+    )
+    # Map candidate TICs into a subset of unit payloads so observed-sector logic has work.
+    for cid in range(1, min(n_candidates, n_units) + 1):
+        unit_id = cid
+        row = store.conn.execute(
+            "SELECT payload_json, sector FROM units WHERE id=?", (unit_id,)
+        ).fetchone()
+        tic = 50_000 + cid
+        payload = json.loads(row["payload_json"])
+        if tic not in payload["tics"]:
+            payload["tics"].append(tic)
+        store.conn.execute(
+            "UPDATE units SET payload_json=?, n_tics=? WHERE id=?",
+            (json.dumps(payload), len(payload["tics"]), unit_id),
+        )
+
+
+def test_init_schema_does_not_call_refresh_synchronously(tmp_path):
+    path = tmp_path / "coord.sqlite"
+    store = Store(path, clock=Clock())
+    try:
+        store.init_schema()
+        _bulk_science_seed(store)
+    finally:
+        store.close()
+    with mock.patch("rhexas.coord.science.refresh_candidate_recheck") as mocked:
+        store = Store(path, clock=Clock())
+        try:
+            t0 = time.perf_counter()
+            store.init_schema()
+            elapsed = time.perf_counter() - t0
+            mocked.assert_not_called()
+            assert elapsed < 1.0, f"init_schema took {elapsed:.2f}s"
+        finally:
+            store.close()
+
+
+def test_refresh_candidate_recheck_large_db_fast(tmp_path):
+    store = _store(tmp_path)
+    try:
+        _bulk_science_seed(store)
+        t0 = time.perf_counter()
+        refresh_candidate_recheck(store)
+        elapsed = time.perf_counter() - t0
+        n_recheck = store.conn.execute("SELECT COUNT(*) AS n FROM candidate_recheck").fetchone()["n"]
+        assert n_recheck == 700
+        assert elapsed < 5.0, f"refresh took {elapsed:.2f}s"
     finally:
         store.close()
 

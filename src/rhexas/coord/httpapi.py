@@ -249,13 +249,26 @@ class App:
     def _science_dashboard(self, query: dict) -> Response:
         limit = _first_int(query.get("limit"), 200)
         project = _first_text(query.get("project")) or None
+        refresher = getattr(self.store, "science_refresher", None)
+        refresh_meta = refresher.status() if refresher is not None else {"stale": True, "refreshing": False}
         return _json(200, {
             **self.store.candidates_science(limit=limit, project=project),
+            "science_refresh": refresh_meta,
             "priority_help": PRIORITY_HELP,
             "disclaimer": (
                 "Transiting signal candidates only — not confirmed or newly discovered planets."
             ),
         })
+
+    def _science_refresh_trigger(self) -> Response:
+        refresher = getattr(self.store, "science_refresher", None)
+        if refresher is None:
+            from .science import refresh_candidate_recheck
+
+            refresh_candidate_recheck(self.store)
+            return _json(200, {"refreshing": False, "triggered": "inline"})
+        refresher.trigger()
+        return _json(200, {"triggered": True, **refresher.status()})
 
     def _science_export(self, query: dict) -> Response:
         fmt = _first_text(query.get("format")) or "md"
@@ -504,6 +517,8 @@ def _task_path(path: str) -> tuple[str, str] | None:
 def _science_api(method: str, path: str):
     if method == "GET" and path == "/api/v1/candidates/science":
         return lambda app, query, body: app._science_dashboard(query)
+    if method == "POST" and path == "/api/v1/candidates/science/refresh":
+        return lambda app, query, body: app._science_refresh_trigger()
     if method == "GET" and path == "/api/v1/candidates/export":
         return lambda app, query, body: app._science_export(query)
     return None
