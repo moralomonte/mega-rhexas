@@ -15,6 +15,8 @@ _PAGE = "status.html"
 _SECTORS_PAGE = "sectors.html"
 _DISCOVERIES_PAGE = "discoveries.html"
 _DISCOVERY_PAGE = "discovery_detail.html"
+_CANDIDATES_PAGE = "candidates.html"
+_VETTING_PAGE = "vetting.html"
 _FAVICON = "favicon.svg"
 _COOKIE = "rhexas_admin"
 _MAX_BODY = 8_000_000
@@ -88,6 +90,8 @@ class App:
         self.sectors_page = _load_asset(_SECTORS_PAGE)
         self.discoveries_page = _load_asset(_DISCOVERIES_PAGE)
         self.discovery_page = _load_asset(_DISCOVERY_PAGE)
+        self.candidates_page = _load_asset(_CANDIDATES_PAGE)
+        self.vetting_page = _load_asset(_VETTING_PAGE)
         self.favicon = _load_asset(_FAVICON)
         self.accounts = accounts or AccountsConfig()
         self.mailer = mailer if mailer is not None else SmtpMailer(smtp)
@@ -131,6 +135,10 @@ class App:
             return self._sectors_page(headers)
         if method == "GET" and path == "/discoveries":
             return self._discoveries_page(headers)
+        if method == "GET" and path == "/candidates":
+            return self._candidates_page(headers)
+        if method == "GET" and path == "/vetting":
+            return self._vetting_page(headers)
         discovery = _discovery_tic_path(path)
         if method == "GET" and discovery is not None:
             return self._discovery_detail_page(headers, discovery)
@@ -180,10 +188,17 @@ class App:
                 if not self._operator_ok(headers):
                     return _error(401, "unauthorized", "unauthorized")
                 return self._discovery_api(detail_path, query)
+            science = _science_api(method, path)
+            if science is not None:
+                if not self._operator_ok(headers):
+                    return _error(401, "unauthorized", "unauthorized")
+                return science(self, query, body)
+            if method == "POST" and path == "/api/v1/candidates/review":
+                if not self._operator_ok(headers):
+                    return _error(401, "unauthorized", "unauthorized")
+                return self._set_review(body)
             if not self.store.admin_ok(_admin_token(headers)):
                 return _error(401, "unauthorized", "unauthorized")
-            if method == "POST" and path == "/api/v1/candidates/review":
-                return self._set_review(body)
             return self._admin_read(method, path, query)
         return _error(404, "not found", "not_found")
 
@@ -218,6 +233,46 @@ class App:
             from .routes_account import _redirect
             return _redirect(f"/login?next={quote('/discoveries')}")
         return Response(200, self.discoveries_page, "text/html; charset=utf-8")
+
+    def _candidates_page(self, headers: dict) -> Response:
+        if not self._operator_ok(headers):
+            from .routes_account import _redirect
+            return _redirect(f"/login?next={quote('/candidates')}")
+        return Response(200, self.candidates_page, "text/html; charset=utf-8")
+
+    def _vetting_page(self, headers: dict) -> Response:
+        if not self._operator_ok(headers):
+            from .routes_account import _redirect
+            return _redirect(f"/login?next={quote('/vetting')}")
+        return Response(200, self.vetting_page, "text/html; charset=utf-8")
+
+    def _science_dashboard(self, query: dict) -> Response:
+        limit = _first_int(query.get("limit"), 200)
+        project = _first_text(query.get("project")) or None
+        return _json(200, {
+            **self.store.candidates_science(limit=limit, project=project),
+            "priority_help": PRIORITY_HELP,
+            "disclaimer": (
+                "Transiting signal candidates only — not confirmed or newly discovered planets."
+            ),
+        })
+
+    def _science_export(self, query: dict) -> Response:
+        fmt = _first_text(query.get("format")) or "md"
+        shortlist = _first_text(query.get("shortlist")).lower() in ("1", "true", "yes")
+        tic_raw = _first_text(query.get("tic"))
+        tic = None
+        if tic_raw:
+            try:
+                tic = int(tic_raw)
+            except ValueError as exc:
+                raise CoordError("tic must be an integer", 400) from exc
+        if not shortlist and tic is None:
+            raise CoordError("tic or shortlist=1 is required", 400)
+        content_type, ext, payload = self.store.candidate_export(tic, shortlist=shortlist, fmt=fmt)
+        name = "shortlist" if shortlist else (f"TIC{tic}" if tic is not None else "candidates")
+        headers = [("Content-Disposition", f'attachment; filename="{name}.{ext}"')]
+        return Response(200, payload, content_type, headers)
 
     def _discovery_detail_page(self, headers: dict, tic: int) -> Response:
         if not self._operator_ok(headers):
@@ -443,6 +498,14 @@ def _task_path(path: str) -> tuple[str, str] | None:
     parts = path[len(prefix):].split("/")
     if len(parts) == 3 and parts[1] == "tasks" and parts[2] in _TASKS:
         return parts[0], parts[2]
+    return None
+
+
+def _science_api(method: str, path: str):
+    if method == "GET" and path == "/api/v1/candidates/science":
+        return lambda app, query, body: app._science_dashboard(query)
+    if method == "GET" and path == "/api/v1/candidates/export":
+        return lambda app, query, body: app._science_export(query)
     return None
 
 

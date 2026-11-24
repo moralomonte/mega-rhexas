@@ -220,7 +220,29 @@ CREATE TABLE IF NOT EXISTS candidate_reviews (
 CREATE INDEX IF NOT EXISTS idx_candidates_tic ON candidates(tic);
 """
 
-_SCHEMA = _SCHEMA + _CATALOG_SCHEMA
+# Phase 5 science tools: sector watch and re-check flags (additive only).
+_SCIENCE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS science_sector_watch (
+    project TEXT NOT NULL DEFAULT 'exoplanets',
+    sector INTEGER NOT NULL,
+    units_total INTEGER NOT NULL DEFAULT 0,
+    units_agreed INTEGER NOT NULL DEFAULT 0,
+    tics_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (project, sector)
+);
+CREATE TABLE IF NOT EXISTS candidate_recheck (
+    tic INTEGER PRIMARY KEY,
+    detection_sectors TEXT NOT NULL DEFAULT '[]',
+    observed_sectors TEXT NOT NULL DEFAULT '[]',
+    recheck_sectors TEXT NOT NULL DEFAULT '[]',
+    needs_recheck INTEGER NOT NULL DEFAULT 0,
+    recheck_reason TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+"""
+
+_SCHEMA = _SCHEMA + _CATALOG_SCHEMA + _SCIENCE_SCHEMA
 
 
 class CoordError(Exception):
@@ -472,6 +494,7 @@ class Store:
     def init_schema(self) -> None:
         self.conn.executescript(_SCHEMA)
         self._migrate()
+        self._refresh_science()
         self._catalog_index = {}
 
     def replica_count(self, project: str) -> int:
@@ -1178,6 +1201,60 @@ class Store:
         from .discoveries_gallery import build_detail_payload
         return build_detail_payload(self, tic, project)
 
+    def _refresh_science(self) -> None:
+        from .science import refresh_candidate_recheck
+
+        refresh_candidate_recheck(self)
+
+    def candidates_science(self, limit: int = 200, project: str | None = None) -> dict:
+        from .science import attach_recheck, progress_summary, recheck_index, shortlist_rows
+
+        groups = self.candidates_public(limit=limit, project=project)
+        attach_recheck(groups, recheck_index(self))
+        summary = progress_summary(groups)
+        shortlist = shortlist_rows(groups, limit=min(25, limit))
+        return {
+            "candidates": groups,
+            "progress": summary,
+            "shortlist": shortlist,
+        }
+
+    def candidate_export(self, tic: int | None, *, shortlist: bool = False, fmt: str = "md") -> tuple[str, str, bytes]:
+        from .science import (
+            export_csv,
+            export_json_payload,
+            export_markdown,
+            iso_now,
+            rank_explanation,
+            shortlist_rows,
+        )
+        from .science import attach_recheck, recheck_index
+
+        payload = self.candidates_science(limit=200)
+        rows = payload["shortlist"] if shortlist else payload["candidates"]
+        if tic is not None:
+            rows = [row for row in rows if int(row["tic"]) == int(tic)]
+            if not rows:
+                groups = self.candidates_public(limit=200)
+                attach_recheck(groups, recheck_index(self))
+                rows = [row for row in groups if int(row["tic"]) == int(tic)]
+            if not rows:
+                raise CoordError("no agreed candidate for that TIC", 404)
+            if shortlist:
+                rows = shortlist_rows(rows, limit=1)
+            for row in rows:
+                row["rank_explanation"] = rank_explanation(row)
+        generated = iso_now(self.clock)
+        fmt = (fmt or "md").strip().lower()
+        if fmt == "csv":
+            text = export_csv(rows)
+            return "text/csv; charset=utf-8", "csv", text.encode("utf-8")
+        if fmt == "json":
+            body = export_json_payload(rows, kind="shortlist" if shortlist else "candidate", generated_at=generated)
+            return "application/json; charset=utf-8", "json", json.dumps(body, indent=2).encode("utf-8")
+        text = "\n\n".join(export_markdown(row, generated_at=generated) for row in rows)
+        return "text/markdown; charset=utf-8", "md", text.encode("utf-8")
+
     def candidates_public(self, limit: int = 50, project: str | None = None) -> list[dict]:
         """One row per TIC, highest review priority first.
 
@@ -1682,6 +1759,7 @@ class Store:
         and result rows are not updated.
         """
         self.conn.executescript(_CATALOG_SCHEMA)
+        self.conn.executescript(_SCIENCE_SCHEMA)
         names = self._columns("units")
         if not names:
             self._add_columns("assignments", {

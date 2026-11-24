@@ -117,7 +117,7 @@ table.cands .tag{white-space:nowrap}
 <h1>Mega Rhexas <small id="sub">Friends beta · coordinator</small></h1>
 </div>
 </div>
-<div class="pill"><span class="dot" id="dot"></span><span id="live">Connecting…</span><a href="/sectors" style="color:var(--c2);margin-left:8px;text-decoration:none">Sectors</a><a href="/discoveries" style="color:var(--c2);margin-left:8px;text-decoration:none">Discoveries</a></div>
+<div class="pill"><span class="dot" id="dot"></span><span id="live">Connecting…</span><a href="/sectors" style="color:var(--c2);margin-left:8px;text-decoration:none">Sectors</a><a href="/discoveries" style="color:var(--c2);margin-left:8px;text-decoration:none">Discoveries</a><a href="/candidates" style="color:var(--c2);margin-left:8px;text-decoration:none">Candidates</a><a href="/vetting" style="color:var(--c2);margin-left:8px;text-decoration:none">Vetting</a></div>
 </header>
 <div class="grid">
 <section class="card s5">
@@ -160,9 +160,9 @@ table.cands .tag{white-space:nowrap}
 <div id="workers"><div class="empty">No invites yet.</div></div>
 </section>
 <section class="card s12">
-<h2>Candidates both workers agreed on</h2>
-<p class="note candhelp" id="candhelp">Review priority loads with the candidate list. Higher numbers are looked at first.</p>
-<div id="cands"><div class="empty">None yet. A candidate appears here only after the two copies agree.</div></div>
+<h2>Candidate review</h2>
+<p class="note">The candidate list, catalog vetting checks, shortlist ranking, and draft exports moved to the private science pages (same login as Discoveries and Sectors).</p>
+<p class="note"><a href="/candidates" style="color:var(--c2)">Candidates</a> · <a href="/vetting" style="color:var(--c2)">Vetting</a></p>
 </section>
 <section class="card s12">
 <h2>Console <span class="tools" style="float:right"><button id="auto" class="on" type="button">auto-scroll</button><button id="pause" type="button">pause</button></span></h2>
@@ -568,18 +568,13 @@ function drawEvents(events){
 }
 async function tick(){
   try {
-    const [status, workers, cands, events] = await Promise.all([
+    const [status, workers, events] = await Promise.all([
       api('/api/v1/status'),
       api('/api/v1/workers'),
-      api('/api/v1/candidates?limit=200'),
       api('/api/v1/events?after=' + after),
     ]);
     $('login').style.display = 'none';
-    if (cands.priority_help) {
-      candHelp = cands.priority_help;
-      $('candhelp').textContent = cands.priority_help;
-    }
-    drawStatus(status); drawWorkers(workers.workers); drawCands(cands.candidates); drawEvents(events.events);
+    drawStatus(status); drawWorkers(workers.workers); drawEvents(events.events);
   } catch (err) {
     if (err.message !== 'auth') $('live').textContent = 'Reconnecting…';
   }

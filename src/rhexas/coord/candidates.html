@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Mega Rhexas · candidates</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#05060f;--bd:rgba(255,255,255,.1);--tx:#e7ecff;--mut:#8b93b8;--ok:#34d399;--warn:#fbbf24;--err:#f87171;--c2:#22d3ee;--c1:#7c5cff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:20px 18px 36px}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{margin:0;font-size:20px}h1 small{display:block;color:var(--mut);font-size:12px;font-weight:400}
+nav{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}
+nav a{color:var(--c2);text-decoration:none;font-size:13px}
+.card{background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--bd);border-radius:18px;padding:14px 16px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--mut)}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;color:var(--mut);text-transform:uppercase}
+.note{color:var(--mut);font-size:12px;margin:8px 0 0}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button,a.btn{background:#0b0d1c;border:1px solid var(--bd);color:var(--tx);border-radius:9px;padding:7px 12px;font:inherit;font-size:12px;text-decoration:none;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}
+th{color:var(--mut);font-size:11px;text-transform:uppercase}
+.tag{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(255,209,102,.15);color:var(--warn)}
+.tag.recheck{border-color:rgba(251,191,36,.35);color:var(--warn)}
+.empty{color:var(--mut);padding:20px;text-align:center}
+ul.exp{margin:6px 0;padding-left:18px;color:var(--mut);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<div><h1>Candidate review <small>Private · transiting signal candidates, not confirmed planets</small></h1></div>
+<nav><a href="/discoveries">Discoveries</a><a href="/sectors">Sectors</a><a href="/vetting">Vetting</a><a href="/">Status</a><a href="/account">Account</a></nav>
+</header>
+<section class="card">
+<h2>Review progress</h2>
+<div class="stats" id="stats">
+<div class="stat"><span>Total</span><b id="p_total">–</b></div>
+<div class="stat"><span>New</span><b id="p_new">–</b></div>
+<div class="stat"><span>Under review</span><b id="p_review">–</b></div>
+<div class="stat"><span>False positive</span><b id="p_fp">–</b></div>
+<div class="stat"><span>Known</span><b id="p_known">–</b></div>
+</div>
+<p class="note" id="p_pct">Reviewed: –</p>
+<div class="toolbar">
+<a class="btn" href="/vetting">Open vetting checks</a>
+<button type="button" id="exp_short_md">Export shortlist (Markdown)</button>
+<button type="button" id="exp_short_csv">Export shortlist (CSV)</button>
+</div>
+</section>
+<section class="card">
+<h2>Shortlist — strongest candidates</h2>
+<p class="note" id="disclaimer">Loading…</p>
+<div id="shortlist"><div class="empty">Loading…</div></div>
+</section>
+<section class="card">
+<h2>All candidates</h2>
+<div id="list"><div class="empty">Loading…</div></div>
+</section>
+</div>
+<script>
+function $(id){return document.getElementById(id);}
+function el(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=text;if(cls)n.className=cls;return n;}
+async function load(){
+  const res=await fetch('/api/v1/candidates/science?limit=200');
+  if(res.status===401){location.href='/login?next='+encodeURIComponent('/candidates');return;}
+  if(!res.ok){$('disclaimer').textContent='Could not load candidates.';return;}
+  const body=await res.json();
+  const p=body.progress||{};
+  $('p_total').textContent=p.total??'0';
+  $('p_new').textContent=p.new??'0';
+  $('p_review').textContent=p.under_review??'0';
+  $('p_fp').textContent=p.false_positive??'0';
+  $('p_known').textContent=p.known??'0';
+  $('p_pct').textContent='Reviewed '+ (p.reviewed??0) +' of '+ (p.total??0) +' ('+ (p.reviewed_pct??0) +'%)';
+  $('disclaimer').textContent=body.disclaimer||'Candidates only — not confirmed planets.';
+  paintShort(body.shortlist||[]);
+  paintList(body.candidates||[]);
+}
+function paintShort(rows){
+  const box=$('shortlist');box.replaceChildren();
+  if(!rows.length){box.append(el('div','No shortlist yet.','empty'));return;}
+  const table=document.createElement('table');
+  const head=document.createElement('tr');
+  for(const h of ['Rank','TIC','Priority','Status','Re-check','Why'])head.append(el('th',h));
+  table.append(head);
+  for(const row of rows){
+    const tr=document.createElement('tr');
+    tr.append(el('td',String(row.rank??'–')));
+    const tic=el('td');const a=document.createElement('a');a.href='/discoveries/'+row.tic;a.textContent=String(row.tic);a.style.color='var(--c2)';tic.append(a);tr.append(tic);
+    tr.append(el('td',row.review_priority==null?'–':Number(row.review_priority).toFixed(1)));
+    tr.append(el('td',row.status_label||'New'));
+    const rc=el('td');
+    if(row.needs_recheck){rc.append(el('span','needs re-check','tag recheck'));}else rc.textContent='–';
+    tr.append(rc);
+    const why=el('td');const ul=document.createElement('ul');ul.className='exp';
+    for(const line of (row.rank_explanation||[]).slice(0,4))ul.append(el('li',line));
+    why.append(ul);tr.append(why);
+    table.append(tr);
+  }
+  box.append(table);
+}
+function paintList(rows){
+  const box=$('list');box.replaceChildren();
+  if(!rows.length){box.append(el('div','No agreed candidates yet.','empty'));return;}
+  const table=document.createElement('table');
+  const head=document.createElement('tr');
+  for(const h of ['TIC','Sectors','Period','SNR','Priority','Status','Re-check'])head.append(el('th',h));
+  table.append(head);
+  for(const row of rows){
+    const tr=document.createElement('tr');
+    const tic=el('td');const a=document.createElement('a');a.href='/vetting#'+row.tic;a.textContent=String(row.tic);a.style.color='var(--c2)';tic.append(a);tr.append(tic);
+    tr.append(el('td',row.sectors_label||'–'));
+    tr.append(el('td',row.period==null?'–':Number(row.period).toFixed(4)+' d'));
+    tr.append(el('td',row.snr==null?'–':Number(row.snr).toFixed(1)));
+    tr.append(el('td',row.review_priority==null?'–':Number(row.review_priority).toFixed(1)));
+    tr.append(el('td',row.status_label||'New'));
+    tr.append(el('td',row.needs_recheck?'yes':'no'));
+    table.append(tr);
+  }
+  box.append(table);
+}
+$('exp_short_md').onclick=()=>{window.location='/api/v1/candidates/export?shortlist=1&format=md';};
+$('exp_short_csv').onclick=()=>{window.location='/api/v1/candidates/export?shortlist=1&format=csv';};
+load();
+</script>
+</body>
+</html>
