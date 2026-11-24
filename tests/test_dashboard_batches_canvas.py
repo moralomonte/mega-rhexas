@@ -208,6 +208,101 @@ def test_batches_page_panels_and_soak(served):
             browser.close()
 
 
+def test_batch_dropdown_renders_the_chosen_unit(tmp_path, monkeypatch):
+    """Choosing another batch paints that unit, and a late live refresh does not put it back."""
+    store = Store(tmp_path)
+    store.begin_batch(
+        {
+            "project": "exoplanets",
+            "sector": 83,
+            "unit_id": 631,
+            "assignment_id": 1,
+            "n_tics": 80,
+            "tics": list(range(1, 81)),
+        },
+        "searching",
+    )
+    store.update_batch(stage="done")
+    store.begin_batch(
+        {
+            "project": "exoplanets",
+            "sector": 83,
+            "unit_id": 632,
+            "assignment_id": 2,
+            "n_tics": 5,
+            "tics": list(range(100, 105)),
+        },
+        "searching",
+    )
+    store.update_batch(stars_done=2, stars_total=5)
+    import sqlite3
+
+    from rhexas.worker.batch_index import migrate, register_unit
+
+    conn = sqlite3.connect(tmp_path / "dashboard.sqlite")
+    try:
+        migrate(conn)
+        register_unit(
+            conn, sector=89, unit=4, project="exoplanets", assignment_id=3,
+            tics=list(range(200, 212)), started_at=time.time(),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from rhexas.worker.batch_index import unit_view as real_view
+
+    live_calls = {"n": 0}
+
+    def slow_view(cache, sector, unit, *, snap=None):
+        if int(unit) == 632:
+            live_calls["n"] += 1
+            if live_calls["n"] > 1:
+                time.sleep(2.2)
+        return real_view(cache, sector, unit, snap=snap)
+
+    monkeypatch.setattr("rhexas.worker.batch_index.unit_view", slow_view)
+    httpd, port, thread = _serve(tmp_path)
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                errors = []
+                page.on("pageerror", lambda err: errors.append(str(err)))
+                page.goto(f"http://127.0.0.1:{port}/batches", wait_until="domcontentloaded")
+                page.wait_for_function(
+                    "() => document.getElementById('progress-text').textContent.includes('2 / 5')",
+                    timeout=15000,
+                )
+                page.wait_for_timeout(1800)
+                page.select_option("#unit-pick", "631")
+                page.wait_for_function(
+                    "() => document.getElementById('progress-text').textContent.includes('80 / 80')",
+                    timeout=10000,
+                )
+                assert "80 TICs" in page.inner_text("#batch-meta")
+                page.wait_for_timeout(3200)
+                assert "80 / 80" in page.inner_text("#progress-text")
+                assert page.input_value("#unit-pick") == "631"
+                assert "80 TICs" in page.inner_text("#batch-meta")
+                assert page.input_value("#sector-pick") == "83"
+                page.select_option("#sector-pick", "89")
+                page.wait_for_function(
+                    "() => document.getElementById('batch-meta').textContent.includes('12 TICs')",
+                    timeout=10000,
+                )
+                page.wait_for_timeout(1800)
+                assert page.input_value("#sector-pick") == "89"
+                assert "12 / 12" in page.inner_text("#progress-text")
+                assert "12 TICs" in page.inner_text("#batch-meta")
+                assert not errors, errors
+            finally:
+                browser.close()
+    finally:
+        _stop(httpd, thread)
+
+
 def test_batches_page_is_not_a_placeholder():
     text = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "batches.html").read_text(
         encoding="utf-8",

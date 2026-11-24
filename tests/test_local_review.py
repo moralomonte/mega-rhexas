@@ -147,3 +147,157 @@ def test_review_queue_serial(tmp_path):
     assert runner.run_once() is True
     assert len(outcomes) == 2
     assert set(outcomes) == {1, 2}
+
+
+def test_review_store_adds_sky_columns_on_an_existing_database(tmp_path):
+    import sqlite3
+
+    from rhexas.worker.review.store import enqueue_selected, get_row, migrate
+
+    conn = sqlite3.connect(tmp_path / "old.sqlite")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """CREATE TABLE local_review (
+            tic INTEGER NOT NULL,
+            sector INTEGER NOT NULL,
+            check_key TEXT NOT NULL DEFAULT '',
+            period REAL,
+            t0 REAL,
+            duration REAL,
+            depth REAL,
+            snr REAL,
+            sde REAL,
+            rank INTEGER,
+            state TEXT NOT NULL DEFAULT 'queued',
+            verdict TEXT,
+            result_json TEXT,
+            upload_state TEXT NOT NULL DEFAULT 'none',
+            upload_detail TEXT NOT NULL DEFAULT '',
+            download_bytes INTEGER,
+            download_note TEXT NOT NULL DEFAULT '',
+            checked_at REAL,
+            updated_at REAL,
+            cancelled INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tic, sector)
+        )"""
+    )
+    migrate(conn)
+    assert enqueue_selected(conn, [{"tic": 7, "sector": 89, "ra": 113.97, "dec": -65.68, "t0": 1700.5}], 10) == 1
+    conn.commit()
+    saved = get_row(conn, 7, 89)
+    conn.close()
+    assert saved["ra"] == pytest.approx(113.97)
+    assert saved["dec"] == pytest.approx(-65.68)
+    assert saved["t0"] == pytest.approx(1700.5)
+
+
+def test_review_detail_reads_the_saved_sqlite_row(tmp_path):
+    from rhexas.config import VettingConfig
+    from rhexas.worker.live import DB_NAME, _connect
+    from rhexas.worker.review.runner import detail_payload
+    from rhexas.worker.review.store import get_row
+
+    cache = tmp_path / "cache-detail"
+    cache.mkdir()
+    conn = _connect(cache / DB_NAME, write=True)
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    conn.close()
+
+    def fake_evaluate(cache, row, settings, fetcher=None, **kw):
+        return {
+            "verdict": "Needs review",
+            "result": {
+                "checks": [{"name": "test", "title": "Test", "status": "pass", "reason": "ok", "numbers": {}}],
+                "plot": {"phase": [0, 0.5, 1], "flux": [1, 0.99, 1]},
+                "links": {},
+            },
+        }
+
+    runner = ReviewRunner(cache, VettingConfig(), evaluate=fake_evaluate)
+    runner.queue_items([{
+        "tic": 349911034, "sector": 89, "period": 3.2, "t0": 1700.5,
+        "duration": 0.12, "ra": 113.97, "dec": -65.68,
+    }])
+    assert runner.run_once() is True
+    payload = detail_payload(cache, 349911034, 89)
+    assert payload["available"] is True
+    assert payload["checks"][0]["name"] == "test"
+    assert payload["checks"][0]["status"] == "pass"
+    conn = _connect(cache / DB_NAME, write=False)
+    try:
+        saved = get_row(conn, 349911034, 89)
+    finally:
+        conn.close()
+    assert saved["t0"] == pytest.approx(1700.5)
+    assert saved["ra"] == pytest.approx(113.97)
+    assert saved["dec"] == pytest.approx(-65.68)
+
+
+def test_review_downloads_a_missing_light_curve_and_skips_when_it_does_not_fit(tmp_path, monkeypatch):
+    from rhexas.worker.review.fetch import ensure_lightcurve, ensure_tpf
+    from rhexas.worker.vetting.evaluate import find_lightcurve
+
+    monkeypatch.setattr("requests.get", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("network")))
+    tic = 349911034
+    name = f"tess2026221103959-s0089-{tic:016d}-0309-s_lc.fits"
+    script = f'curl -C - -L -o {name} "https://example.invalid/file?uri=mast:HLSP/tess/{name}"\n'
+    urls = []
+
+    class _Resp:
+        def __init__(self, status, content=b"", text=""):
+            self.status_code = status
+            self.content = content
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    def getter(url, timeout=60):
+        urls.append(url)
+        if "tesscurl" in url:
+            return _Resp(200, text=script)
+        return _Resp(200, content=b"FITSBYTES")
+
+    cache = tmp_path / "cache-dl"
+    info = ensure_lightcurve(cache, tic, 89, getter=getter, sleeper=lambda _s: None)
+    assert info["downloaded"] is True
+    assert info["path"] == find_lightcurve(cache, tic, 89)
+    assert info["path"].read_bytes() == b"FITSBYTES"
+    assert any(url.endswith("tesscurl_sector_89_lc.sh") for url in urls)
+    assert all("_tp" not in url for url in urls)
+
+    urls.clear()
+    again = ensure_lightcurve(cache, tic, 89, getter=getter, sleeper=lambda _s: None)
+    assert again["downloaded"] is False
+    assert again["path"] == info["path"]
+    assert urls == []
+
+    monkeypatch.setattr("rhexas.worker.review.fetch.estimate_fits_bytes", lambda sector: 2_000_000_000)
+    other = tmp_path / "cache-huge"
+    skipped = ensure_lightcurve(other, tic, 89, getter=getter, sleeper=lambda _s: None)
+    assert skipped["skipped"] is True
+    assert skipped["path"] is None
+    assert "1 GB" in skipped["note"]
+    assert urls == []
+
+    monkeypatch.setattr("rhexas.worker.review.fetch.estimate_fits_bytes", lambda sector: 500_000)
+    monkeypatch.setattr(
+        "rhexas.worker.review.gate.processed_headroom",
+        lambda cache, configured_gb=None: (1_000_000_000, 1_000_000_000, "near the cap"),
+    )
+    capped = ensure_lightcurve(tmp_path / "cache-cap", tic, 89, getter=getter, sleeper=lambda _s: None)
+    assert capped["skipped"] is True
+    assert "processed-data cap" in capped["note"]
+    assert urls == []
+
+    called = []
+    monkeypatch.setattr(
+        "rhexas.worker.review.fetch.fits_gate",
+        lambda cache, nbytes: (False, "skipped download: it would pass the processed-data cap"),
+    )
+    tpf = ensure_tpf(tmp_path / "cache-tpf", tic, 89, downloader=lambda *args: called.append(args))
+    assert called == []
+    assert tpf["skipped"] is True
+    assert tpf["path"] is None

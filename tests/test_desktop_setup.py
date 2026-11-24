@@ -11,7 +11,7 @@ from rhexas import __version__
 from rhexas.config import default_config
 from rhexas.desktop.device import DevicePoll, DeviceStart
 from rhexas.desktop.paths import AppPaths, app_data_dir
-from rhexas.desktop.app import apply_desktop_defaults, desktop_dashboard_hooks, ensure_stdio
+from rhexas.desktop.app import apply_desktop_defaults, desktop_dashboard_hooks, ensure_stdio, load_desktop_config
 from rhexas.desktop.updates import UpdateBoard
 from rhexas.desktop.setup import SetupGate
 from rhexas.desktop.tokenstore import TokenError, read_token, windows_acl_command, write_token
@@ -40,6 +40,33 @@ def test_app_data_paths_follow_the_platform(tmp_path):
     assert mac == tmp_path / "Library" / "Application Support" / "Mega Rhexas"
     linux = app_data_dir(platform="linux", env={}, home=tmp_path)
     assert linux == tmp_path / ".local" / "share" / "mega-rhexas"
+
+
+def test_desktop_vetting_defaults_on_and_does_not_overwrite_a_choice(tmp_path):
+    missing = AppPaths(tmp_path / "fresh")
+    created = load_desktop_config(missing)
+    assert created.vetting.enabled is True
+    written = (missing.root / "rhexas.toml").read_bytes()
+    assert b"enabled = true" in written
+    again = load_desktop_config(missing)
+    assert again.vetting.enabled is True
+    assert (missing.root / "rhexas.toml").read_bytes() == written
+
+    kept = AppPaths(tmp_path / "kept")
+    kept.ensure()
+    off = b"[worker]\nprocs = 2\n\n[vetting]\nenabled = false\n"
+    (kept.root / "rhexas.toml").write_bytes(off)
+    loaded = load_desktop_config(kept)
+    assert loaded.vetting.enabled is False
+    assert (kept.root / "rhexas.toml").read_bytes() == off
+
+    implied = AppPaths(tmp_path / "implied")
+    implied.ensure()
+    bare = b"[worker]\nprocs = 2\n"
+    (implied.root / "rhexas.toml").write_bytes(bare)
+    turned_on = load_desktop_config(implied)
+    assert turned_on.vetting.enabled is True
+    assert (implied.root / "rhexas.toml").read_bytes() == bare
 
 
 def test_desktop_defaults_are_the_friendly_ones(tmp_path):

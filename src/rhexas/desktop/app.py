@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import sys
 import threading
+from dataclasses import replace
+
 from rhexas import __version__
-from rhexas.config import load_config
+from rhexas.config import load_config, read_toml
 from rhexas.worker.dashboard import DashboardHooks, fallback_resources, launch_in_thread
 from rhexas.worker.live import Store
 from rhexas.worker.loop import cache_dir, coordinator_client_hook, mission_progress_hook, resolve_worker, run_worker
@@ -135,15 +137,42 @@ def _start_tray(cache, url: str, stop: threading.Event, app_window: bool):
     )
 
 
+_DESKTOP_VETTING = """# Local advisory checks. Set enabled = false to turn them off.
+[vetting]
+enabled = true
+"""
+
+
+def load_desktop_config(paths: AppPaths):
+    """Config for ``rhexas desktop``.
+
+    A missing ``rhexas.toml`` is created with vetting on. An existing file is
+    never rewritten. A file that has no ``[vetting]`` section still runs the
+    checks. An explicit ``enabled = false`` stays off.
+    """
+    paths.ensure()
+    app_toml = paths.root / "rhexas.toml"
+    if not app_toml.is_file():
+        try:
+            app_toml.write_text(_DESKTOP_VETTING, encoding="utf-8")
+        except OSError:
+            fresh = load_config(search_files=False, environ={}, overrides={"root": paths.root})
+            return replace(fresh, vetting=replace(fresh.vetting, enabled=True))
+    fresh = load_config(app_toml, search_files=False, environ={}, overrides={"root": paths.root})
+    try:
+        data = read_toml(app_toml)
+    except Exception:
+        data = {}
+    if isinstance(data, dict) and "vetting" not in data:
+        fresh = replace(fresh, vetting=replace(fresh.vetting, enabled=True))
+    return fresh
+
+
 def run_from_args(cfg, args) -> int:
     """Entry from ``rhexas desktop``. Ignores a checkout config so the app is self-contained."""
     del cfg
     paths = AppPaths.discover()
-    app_toml = paths.root / "rhexas.toml"
-    if app_toml.is_file():
-        fresh = load_config(app_toml, search_files=False, environ={}, overrides={"root": paths.root})
-    else:
-        fresh = load_config(search_files=False, environ={}, overrides={"root": paths.root})
+    fresh = load_desktop_config(paths)
     coordinator = getattr(args, "coordinator", None)
     if coordinator:
         fresh = resolve_worker(fresh, coordinator=coordinator, environ={})

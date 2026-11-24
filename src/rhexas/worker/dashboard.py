@@ -589,6 +589,8 @@ def make_handler(cache: Path, fallback: dict | None, services: DashboardHooks | 
                     "snr": item.get("snr"),
                     "sde": item.get("sde"),
                     "rank": item.get("rank"),
+                    "ra": item.get("ra"),
+                    "dec": item.get("dec"),
                 })
             if not normalized:
                 self._json(400, {"ok": False, "error": "no valid candidates"})

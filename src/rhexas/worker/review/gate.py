@@ -45,3 +45,26 @@ def processed_headroom(cache: Path, configured_gb: float | None = None) -> tuple
 def estimate_fits_bytes(sector: int) -> int:
     """Rough size for one TESS light curve when not cached."""
     return 2_500_000
+
+
+def estimate_tpf_bytes(sector: int) -> int:
+    """Rough size for one SPOC target-pixel file. Larger than the light curve."""
+    del sector
+    return 80_000_000
+
+
+_ONE_GB = 1_000_000_000
+
+
+def fits_gate(cache: Path, nbytes: int) -> tuple[bool, str]:
+    """False when a download is over 1 GB or would pass the processed-data cap."""
+    try:
+        nbytes = int(nbytes)
+    except (TypeError, ValueError):
+        nbytes = 0
+    if nbytes > _ONE_GB:
+        return False, "skipped download: estimated file is over 1 GB"
+    used, limit, note = processed_headroom(cache)
+    if used + nbytes > limit:
+        return False, "skipped download: it would pass the processed-data cap"
+    return True, note

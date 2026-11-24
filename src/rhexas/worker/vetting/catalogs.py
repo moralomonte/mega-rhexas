@@ -15,13 +15,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SIMBAD_PRIMARY = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
-SIMBAD_MIRROR = "https://simbad.u-strasbg.fr/simbad/sim-tap/sync"
+# Strasbourg CDS is returning 404. Harvard answers, and IDIA is the other live mirror.
+SIMBAD_PRIMARY = "https://simbad.cfa.harvard.edu/simbad/sim-tap/sync"
+SIMBAD_MIRROR = "https://simbad.idia.ac.za/simbad/sim-tap/sync"
 VIZIER_TAP = "https://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync"
 TOI_URL = "https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=csv"
 CTOI_URL = "https://exofop.ipac.caltech.edu/tess/download_ctoi.php?sort=ctoi&output=csv"
+MAST_TIC_URL = "https://mast.stsci.edu/portal/Mashup/Mashup.asmx/invoke"
 
 LIST_MAX_AGE_S = 24 * 60 * 60
+TOI_LIST_TIMEOUT_S = 120.0
+TOI_LIST_RETRIES = 3
 NEIGHBOUR_ARCSEC = 42.0
 PIXEL_ARCSEC = 21.0
 RUWE_WARN = 1.4
@@ -37,7 +41,13 @@ _BINARY_PREFIXES = ("SB",)
 
 
 def urlopen_fetch(url: str, timeout: float) -> tuple[int, str]:
-    """GET a public URL. Raises on a transport failure. No API key is sent."""
+    """GET a public URL. Raises on a transport failure. No API key is sent.
+
+    ``mast-tic://<tic>`` is a POST to the MAST catalog service. Tests pass a
+    fetcher, so this branch only runs against the live service.
+    """
+    if str(url).startswith("mast-tic://"):
+        return _mast_tic_fetch(str(url).split("://", 1)[1], timeout)
     request = urllib.request.Request(url, headers={
         "User-Agent": "MegaRhexasWorker/vetting (local advisory; no api key)",
         "Accept": "application/json, text/csv, text/plain, */*",
@@ -295,8 +305,16 @@ def _list_fresh(path: Path, now: float) -> bool:
         return False
 
 
-def load_catalog_list(cache: Path, name: str, url: str, fetcher, timeout: float, now: float | None = None) -> tuple[str, str]:
-    """Return (csv text, error). Uses a file newer than a day, and refreshes at most that often."""
+def load_catalog_list(
+    cache: Path, name: str, url: str, fetcher, timeout: float, now: float | None = None,
+    *, retries: int = 1, pause_s: float = 0.0, sleeper=None,
+) -> tuple[str, str]:
+    """Return (csv text, error). A file newer than a day is reused.
+
+    A failed fetch is tried again ``retries`` times. The last file on disk is
+    still returned when every try fails, including after its TTL. With no file
+    and no successful fetch, the error is returned and the check stays unavailable.
+    """
     now = time.time() if now is None else float(now)
     path = list_path(cache, name)
     if _list_fresh(path, now):
@@ -304,20 +322,26 @@ def load_catalog_list(cache: Path, name: str, url: str, fetcher, timeout: float,
             return path.read_text(encoding="utf-8"), ""
         except OSError as exc:
             return "", _short(exc)
-    status, text, error = _call(fetcher, url, timeout)
-    if error or not parse_table(text):
-        if path.is_file():
+    attempts = max(1, int(retries))
+    last_error = ""
+    for attempt in range(attempts):
+        _status, text, error = _call(fetcher, url, timeout)
+        if not error and parse_table(text):
             try:
-                return path.read_text(encoding="utf-8"), ""
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
             except OSError:
                 pass
-        return "", error or "the list had no rows"
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
-    return text, ""
+            return text, ""
+        last_error = error or "the list had no rows"
+        if attempt + 1 < attempts and pause_s > 0 and callable(sleeper):
+            sleeper(pause_s)
+    if path.is_file():
+        try:
+            return path.read_text(encoding="utf-8"), ""
+        except OSError:
+            pass
+    return "", last_error or "the list had no rows"
 
 
 def bound_catalog_cache(cache: Path, max_bytes: int) -> None:
@@ -572,6 +596,59 @@ def gaia_check(rows: list[dict], *, error: str, ra, dec, depth) -> dict:
     return _check("gaia", "Gaia neighbours and RUWE", status, " ".join(notes), numbers)
 
 
+def _mast_tic_fetch(tic_text: str, timeout: float) -> tuple[int, str]:
+    """POST one TIC id to MAST's catalog service. Raises on a transport failure."""
+    try:
+        tic = int(str(tic_text).strip())
+    except (TypeError, ValueError):
+        return 400, ""
+    payload = json.dumps({
+        "service": "Mast.Catalogs.Filtered.Tic",
+        "params": {
+            "columns": "ID,ra,dec,Tmag,rad,mass",
+            "filters": [{"paramName": "ID", "values": [tic]}],
+        },
+        "format": "json",
+    })
+    data = urllib.parse.urlencode({"request": payload}).encode("utf-8")
+    request = urllib.request.Request(
+        MAST_TIC_URL,
+        data=data,
+        headers={
+            "User-Agent": "MegaRhexasWorker/vetting (local advisory; no api key)",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        status = int(getattr(response, "status", 200))
+        body = response.read(2_000_000)
+    return status, body.decode("utf-8", "replace")
+
+
+def _parse_mast(text: str) -> dict:
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    if raw[0] == "{":
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            return {}
+        row = rows[0]
+        return {
+            "ra": _float(row.get("ra") if row.get("ra") is not None else row.get("RA")),
+            "dec": _float(row.get("dec") if row.get("dec") is not None else row.get("DEC")),
+            "tmag": _float(row.get("Tmag") if row.get("Tmag") is not None else row.get("tmag")),
+            "rad": _float(row.get("rad")),
+            "mass": _float(row.get("mass")),
+        }
+    return _parse_tic(text)
+
+
 def _parse_tic(text: str) -> dict:
     rows = parse_table(text)
     if not rows:
@@ -595,8 +672,13 @@ def crossmatch(cache, tic: int, ra, dec, depth, *, radius_arcsec: float, timeout
     blob = _load_json(tic_cache_path(cache, tic))
     stellar = dict(blob.get("stellar") or {}) if isinstance(blob.get("stellar"), dict) else {}
 
-    toi_text, toi_error = load_catalog_list(cache, "toi", TOI_URL, fetcher, timeout_s, now)
-    ctoi_text, ctoi_error = load_catalog_list(cache, "ctoi", CTOI_URL, fetcher, timeout_s, now)
+    list_timeout = max(float(timeout_s), TOI_LIST_TIMEOUT_S)
+    toi_text, toi_error = load_catalog_list(
+        cache, "toi", TOI_URL, fetcher, list_timeout, now, retries=TOI_LIST_RETRIES,
+    )
+    ctoi_text, ctoi_error = load_catalog_list(
+        cache, "ctoi", CTOI_URL, fetcher, list_timeout, now, retries=TOI_LIST_RETRIES,
+    )
     toi_rows = [] if toi_error and not toi_text else index_toi(toi_text).get(int(tic), [])
     ctoi_rows = [] if ctoi_error and not ctoi_text else index_ctoi(ctoi_text).get(int(tic), [])
     if toi_error and not toi_text:
@@ -615,6 +697,22 @@ def crossmatch(cache, tic: int, ra, dec, depth, *, radius_arcsec: float, timeout
     if tic_section and tic_section.get("ok"):
         stellar.update(_parse_tic(tic_section.get("text") or ""))
         blob["stellar"] = {key: stellar.get(key) for key in ("ra", "dec", "tmag", "rad", "mass")}
+
+    if stellar.get("ra") is None or stellar.get("dec") is None:
+        mast = _cached_section(blob, "mast_tic")
+        if mast is None:
+            _status, text, error = _call(fetcher, f"mast-tic://{int(tic)}", timeout_s)
+            parsed = _parse_mast(text) if not error else {}
+            if error or parsed.get("ra") is None or parsed.get("dec") is None:
+                blob["mast_tic"] = {"ok": 0, "error": error or "no TIC row"}
+            else:
+                _store_section(blob, "mast_tic", text)
+                mast = blob["mast_tic"]
+        if mast and mast.get("ok"):
+            for key, value in _parse_mast(mast.get("text") or "").items():
+                if value is not None:
+                    stellar[key] = value
+            blob["stellar"] = {key: stellar.get(key) for key in ("ra", "dec", "tmag", "rad", "mass")}
 
     if ra is None:
         ra = stellar.get("ra")
@@ -728,7 +826,7 @@ def crossmatch(cache, tic: int, ra, dec, depth, *, radius_arcsec: float, timeout
 def catalog_links(tic: int, ra, dec, simbad_id, vsx_name) -> dict:
     ident = simbad_id or f"TIC {int(tic)}"
     links = {
-        "simbad": "https://simbad.cds.unistra.fr/simbad/sim-id?Ident=" + urllib.parse.quote(ident),
+        "simbad": "https://simbad.cfa.harvard.edu/simbad/sim-id?Ident=" + urllib.parse.quote(ident),
         "exofop": f"https://exofop.ipac.caltech.edu/tess/target.php?id={int(tic)}",
     }
     if ra is not None and dec is not None:

@@ -65,6 +65,19 @@ def _one(detections, cache=None, files=None, review=None):
     return groups[0]
 
 
+def test_shortlist_keeps_the_epoch_and_the_sky_position():
+    row = _detection(t0=2459000.5, duration=0.12)
+    group = _one([row], _pass_cache())
+    hit = group["detections"][0]
+    assert hit["t0"] == 2459000.5
+    assert hit["period"] == 1.5
+    assert hit["duration"] == 0.12
+    assert group["t0"] == 2459000.5
+    assert group["duration"] == 0.12
+    assert group["ra"] == 1.0
+    assert group["dec"] == 2.0
+
+
 def test_periods_merge_on_a_ratio_and_ignore_a_mismatch():
     assert periods_compatible(3.0, 3.02) == (True, "")
     assert periods_compatible(6.02, 3.0) == (True, "2×")

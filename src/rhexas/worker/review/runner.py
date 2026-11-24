@@ -138,6 +138,24 @@ class ReviewRunner:
         download_note = f"~{est_bytes / 1_000_000:.1f} MB light curve if not cached"
         if cap_note:
             download_note = f"{cap_note} {download_note}"
+        lc_download = None
+        if self.evaluate is default_evaluate:
+            from .fetch import ensure_lightcurve, ensure_tpf
+
+            lc_info = ensure_lightcurve(self.cache, tic, sector)
+            if lc_info.get("note"):
+                download_note = str(lc_info["note"])
+                if cap_note and cap_note not in download_note:
+                    download_note = f"{cap_note} {download_note}"
+            try:
+                est_bytes = int(lc_info.get("bytes") or 0)
+            except (TypeError, ValueError):
+                est_bytes = 0
+
+            def lc_download(cache, one_tic, one_sector, kind, _info=lc_info):
+                if kind == "tpf":
+                    return ensure_tpf(cache, one_tic, one_sector)
+                return _info
 
         row = {
             "tic": tic,
@@ -148,6 +166,8 @@ class ReviewRunner:
             "depth": job.get("depth"),
             "snr": job.get("snr"),
             "sde": job.get("sde"),
+            "ra": job.get("ra"),
+            "dec": job.get("dec"),
             "attempts": 0,
         }
         from dataclasses import replace
@@ -156,7 +176,10 @@ class ReviewRunner:
         if not getattr(eval_settings, "enabled", False):
             eval_settings = replace(eval_settings, enabled=True)
         try:
-            outcome = self.evaluate(self.cache, row, eval_settings, fetcher=None, now=now)
+            extra = {"now": now}
+            if lc_download is not None:
+                extra["download"] = lc_download
+            outcome = self.evaluate(self.cache, row, eval_settings, fetcher=None, **extra)
         except Exception as exc:
             outcome = {
                 "verdict": "Needs review",
