@@ -8,105 +8,220 @@
 <link rel="icon" type="image/svg+xml" href="/img/triskelion.svg?v=__APP_VERSION__">
 <title>Mega Rhexas</title>
 <style>
-:root{--bg:#07091a;--panel:#101428;--line:#2a3148;--tx:#e7ecff;--mut:#8b93b8;--ok:#34d399;--warn:#fbbf24;--c1:#7c5cff;--c2:#22d3ee}
+:root{--bg:#0b0b0b;--panel:#10100e;--line:#2c261c;--tx:#e8dcc8;--mut:#8a8070;
+  --amb:#e59a3a;--ok:#7eaa7a;--warn:#d4b05a;--info:#6e8fb8;--err:#f87171;
+  --cpu:#e59a3a;--netdn:#6eafb8;--netup:#4f9d88;--disk:#9b95c4;--prog:#9caf6a;--rate:#6e8fb8;--tick:#2a2418}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI Variable","Segoe UI",Inter,system-ui,sans-serif}
-body{min-height:100vh}
-.wrap{max-width:1180px;margin:0 auto;padding:16px 18px 32px}
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+html,body{margin:0;background:var(--bg);color:var(--tx);min-height:100vh;
+  font:13px/1.45 ui-monospace,"Cascadia Mono",Consolas,monospace;letter-spacing:.02em}
+.wrap{max-width:1440px;margin:0 auto;padding:8px 14px 8px;min-height:100vh;display:flex;flex-direction:column;gap:7px}
+header.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 8px}
 .brand{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none}
-.brand img{width:36px;height:36px}
-h1{font-size:18px;margin:0}
-h1 small{display:block;font-weight:400;color:var(--mut);font-size:12px}
-nav{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
-nav a{color:var(--tx);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:12px;font-weight:650}
-nav a[aria-current="page"]{border-color:var(--c1);background:#7c5cff22}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 14px;overflow:hidden}
-.panel h2{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);font-weight:650}
-#panel-cpu,#panel-net{height:220px}
-#panel-state{height:340px}
-#panel-disk{height:280px}
-.plot{height:132px;width:100%}
-canvas{display:block;width:100%;height:100%}
-.row{display:flex;justify-content:space-between;gap:12px;margin:4px 0;font-variant-numeric:tabular-nums}
-.row span{color:var(--mut)}
-button.switch{border:1px solid var(--line);background:#0c1022;color:var(--tx);border-radius:999px;padding:6px 14px;font:inherit;font-weight:700;cursor:pointer}
-button.switch[aria-checked="true"]{border-color:var(--ok);color:var(--ok)}
-button.switch[data-state="pausing"],button.switch[data-state="paused"]{border-color:var(--warn);color:var(--warn)}
-#feed{list-style:none;margin:8px 0 0;padding:0;max-height:72px;overflow:hidden;color:var(--mut);font-size:12px}
-#feed li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar{height:8px;border-radius:99px;background:#ffffff22;overflow:hidden;margin:8px 0}
-.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--c1),var(--c2))}
-.note{color:var(--mut);font-size:12px;margin:6px 0 0}
+.brand img{width:30px;height:30px}
+.brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.18em}
+.brand h1 small{display:block;font-size:9px;color:var(--mut);letter-spacing:.22em;font-weight:500}
+.pill{border:1px solid var(--line);padding:4px 10px;font-size:10px;letter-spacing:.14em;display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--tx);font:inherit;cursor:default}
+.pill.on{border-color:var(--amb);color:var(--amb)}
+.pill.ok{border-color:var(--amb);color:var(--amb)}
+.pill.off{color:var(--mut)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--amb);box-shadow:0 0 8px var(--amb);flex:none}
+.dot.off{background:var(--mut);box-shadow:none}
+.spacer{flex:1;min-width:8px}
+.kvtiny{font-size:9px;color:var(--mut);letter-spacing:.14em;text-align:right;line-height:1.5}
+.kvtiny b{color:var(--tx);font-weight:500}
+nav.tabs{display:flex;gap:0;border:1px solid var(--line);flex-wrap:wrap}
+nav.tabs a{padding:6px 14px;font-size:10px;letter-spacing:.16em;border-right:1px solid var(--line);color:var(--mut);text-decoration:none}
+nav.tabs a:last-child{border-right:0}
+nav.tabs a[aria-current="page"]{color:var(--amb);background:#1a150e}
+nav.tabs em{font-style:normal;color:var(--amb);margin-left:6px}
+.body{flex:1;display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr) minmax(280px,430px);gap:10px;min-height:420px}
+.panel{border:1px solid var(--line);background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;min-height:0}
+.ph{font-size:9px;letter-spacing:.2em;color:var(--mut);margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.ph i{font-style:normal;letter-spacing:.08em;font-weight:400}
+.read{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:end;padding:3px 0;border-bottom:1px solid #1c1914}
+.read span{font-size:9px;letter-spacing:.18em;color:var(--mut);padding-bottom:6px}
+.read b{font-size:28px;font-weight:500;line-height:1;letter-spacing:.02em;color:var(--tx);font-variant-numeric:tabular-nums}
+.read b.sm{font-size:22px}
+.read b i{font-style:normal;font-size:12px;color:var(--mut);margin-left:6px;letter-spacing:.08em}
+.steps{display:flex;gap:0;margin-top:12px}
+.st{flex:1;text-align:center;font-size:8px;letter-spacing:.12em;color:var(--mut)}
+.st .bar{height:4px;background:#2a2418;margin-bottom:5px;border-radius:0}
+.st.done .bar{background:var(--ok)}
+.st.on .bar{background:var(--amb)}
+.st.on{color:var(--amb)}
+.st.done{color:var(--ok)}
+.next{margin-top:12px;font-size:10px;letter-spacing:.1em;color:var(--mut);border:1px solid var(--line);padding:8px}
+.next b{color:var(--prog);font-weight:500;display:block;margin:2px 0 6px;text-transform:uppercase}
+.tickbar svg{display:block;width:100%;height:10px}
+.sys{margin-top:auto;padding-top:12px;font-size:9px;letter-spacing:.1em;color:var(--mut)}
+.sys .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1c1914;gap:8px}
+.sys b{color:var(--tx);font-weight:500;font-variant-numeric:tabular-nums}
+.mrow{display:grid;grid-template-columns:minmax(100px,148px) 1fr minmax(88px,118px);gap:8px;align-items:center;padding:5px 0}
+.mlab{font-size:9px;letter-spacing:.16em;color:var(--mut);display:flex;align-items:center}
+.mbar{min-width:0}
+.mbar svg{display:block;width:100%;height:16px}
+.mval{text-align:right;white-space:nowrap}
+.mval b{font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+.mval i{font-style:normal;font-size:9px;color:var(--mut);margin-left:4px;letter-spacing:.08em}
+.sparkbox{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
+.plot{height:70px;width:100%}
+.plot canvas{display:block;width:100%;height:100%}
+.leg{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 5px 0 0;vertical-align:middle;flex:none}
+.ph .leg{margin:0 5px 0 10px}
+.mlab .leg{margin:0 7px 0 0}
+.legl{color:var(--tx);letter-spacing:.1em;font-style:normal}
+.alerts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.alerts li{display:grid;grid-template-columns:44px 1fr;gap:8px;align-items:center;font-size:10px;letter-spacing:.06em;border:1px solid var(--line);padding:6px 8px}
+.chip{font-size:8px;letter-spacing:.14em;text-align:center;padding:3px 0}
+.chip.ok{color:var(--ok);border:1px solid var(--ok)}
+.chip.inf{color:var(--info);border:1px solid var(--info)}
+.chip.nte{color:var(--warn);border:1px solid var(--warn)}
+.chip.err{color:var(--err);border:1px solid var(--err)}
+.life{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px}
+.life div{border:1px solid var(--line);padding:6px 8px}
+.life span{display:block;font-size:8px;letter-spacing:.14em;color:var(--mut)}
+.life b{font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+footer.ft{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:9px;letter-spacing:.12em;color:var(--mut);border-top:1px solid var(--line);padding-top:6px}
+footer.ft b{font-weight:500}
+.note{font-size:10px;color:var(--mut);margin:0}
+#setup[hidden]{display:none!important}
+#setup input.texty{width:100%;max-width:420px;padding:8px;margin:8px 0;background:#0b0b0b;border:1px solid var(--line);color:var(--tx);font:inherit}
+#setup button{border:1px solid var(--line);background:#1a150e;color:var(--tx);padding:6px 12px;font:inherit;cursor:pointer}
+.hist-slot{display:none}
+#panel-state{position:relative}
+#run-switch{cursor:pointer}
+#run-switch[data-state="pausing"],#run-switch[data-state="paused"]{border-color:var(--warn);color:var(--warn)}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
-@media (max-width:800px){.grid{grid-template-columns:1fr}}
+@media (max-width:1100px){
+  .body{grid-template-columns:1fr}
+  .mrow{grid-template-columns:120px 1fr 100px}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
-<header>
-<a class="brand" href="/?v=__APP_VERSION__"><img src="/img/triskelion.svg?v=__APP_VERSION__" alt="triskelion"><h1>Mega Rhexas<small id="ver">worker</small></h1></a>
-<nav>
-<a id="sectors" href="/sectors?v=__APP_VERSION__">Sectors</a>
-<a id="batches" href="/batches?v=__APP_VERSION__">Batches</a>
-<a id="discoveries" href="/discoveries?v=__APP_VERSION__">Discoveries</a>
-<a id="candidates" href="/candidates?v=__APP_VERSION__">Candidates</a>
-<a id="vetting" href="/vetting?v=__APP_VERSION__">Vetting</a>
-<a id="review" href="/review?v=__APP_VERSION__">Review</a>
-</nav>
+<header class="top">
+<a class="brand" href="/?v=__APP_VERSION__"><img src="/img/triskelion.svg?v=__APP_VERSION__" alt="triskelion"><h1>MEGA RHEXAS<small>WORKER · MISSION CONTROL</small></h1></a>
+<div class="pill on" id="pill-stage"><span class="dot" id="stage-dot"></span><span id="hdr-stage">–</span></div>
+<button type="button" class="pill on" id="run-switch" role="switch" aria-checked="true">RUN · ON</button>
+<div class="pill ok" id="pill-coord"><span id="hdr-coord">COORD · –</span></div>
+<div class="spacer"></div>
+<div class="kvtiny" id="hdr-meta">V__APP_VERSION__<br>PID <b id="hdr-pid">–</b> · <b id="hdr-procs">–</b> PROC · <b id="hdr-threads">–</b> THR<br><b id="hdr-priority">–</b> · MODE <b id="hdr-mode">–</b></div>
 </header>
-<p class="note" id="label">candidates, unverified until the coordinator has checked the upload. This page does not announce a discovery.</p>
+<nav class="tabs" aria-label="Pages">
+<a id="tab-status" href="/?v=__APP_VERSION__" aria-current="page">STATUS</a>
+<a id="sectors" href="/sectors?v=__APP_VERSION__">SECTORS</a>
+<a id="batches" href="/batches?v=__APP_VERSION__">BATCHES <em id="tab-batches"></em></a>
+<a id="discoveries" href="/discoveries?v=__APP_VERSION__">DISCOVERIES</a>
+<a id="candidates" href="/candidates?v=__APP_VERSION__">CANDIDATES <em id="tab-candidates"></em></a>
+<a id="vetting" href="/vetting?v=__APP_VERSION__">VETTING</a>
+<a id="review" href="/review?v=__APP_VERSION__">REVIEW</a>
+</nav>
 <section id="setup" hidden>
 <p>Paste a token from the coordinator. Device linking is closed.</p>
 <input class="texty" id="setup-paste" type="password" autocomplete="off" placeholder="rhx_…">
 <button type="button" id="setup-save">Save token</button>
 <p class="note" id="setup-msg"></p>
 </section>
-<div class="grid">
-<section class="panel" id="panel-cpu">
-<h2>CPU</h2>
-<div class="plot"><canvas id="cpu" width="640" height="132"></canvas></div>
-<div class="row"><span>Now</span><b id="cpu-now">–</b></div>
-</section>
-<section class="panel" id="panel-net">
-<h2>Network</h2>
-<div class="plot"><canvas id="net" width="640" height="132"></canvas></div>
-<div class="row"><span>Down / up</span><b id="net-now">–</b></div>
-</section>
+<div class="body">
 <section class="panel" id="panel-state">
-<h2>Worker</h2>
-<div class="row"><span>Run</span><button class="switch" id="run-switch" type="button" role="switch" aria-checked="true">Running</button></div>
-<div class="row"><span>State</span><b id="run-state">Running</b></div>
-<div class="row"><span>Sector</span><b id="sector">–</b></div>
-<div class="row"><span>Batch</span><b id="batch">–</b></div>
-<div class="row"><span>Star</span><b id="star">–</b></div>
-<div class="row"><span>Stars per hour</span><b id="rate">–</b></div>
-<div class="row"><span>ETA</span><b id="eta">–</b></div>
-<div class="row"><span>Next</span><b id="next_line">–</b></div>
-<ul id="feed"></ul>
+<p class="ph">CURRENT ASSIGNMENT</p>
+<div class="read"><span>SECTOR</span><b id="sector">–</b></div>
+<div class="read"><span>UNIT</span><b id="batch">–</b></div>
+<div class="read"><span>STARS</span><b id="stars-readout" style="color:var(--prog)">–</b></div>
+<div class="read"><span>ETA</span><b id="eta">–</b></div>
+<div class="read"><span>RATE</span><b id="rate" style="color:var(--rate)">–</b></div>
+<div class="read"><span>STAR</span><b class="sm" id="star">–</b></div>
+<div class="steps" id="pipe-steps">
+<div class="st" data-step="dl"><div class="bar"></div>DOWNLOAD</div>
+<div class="st" data-step="bls"><div class="bar"></div>BLS SEARCH</div>
+<div class="st" data-step="flt"><div class="bar"></div>FILTER</div>
+<div class="st" data-step="upl"><div class="bar"></div>UPLOAD</div>
+</div>
+<div class="next">NEXT UNIT<br><b id="next_line">–</b>
+<div class="tickbar" id="next-bar"></div>
+</div>
+<div class="sys">
+<div class="row"><span>PROCESSED</span><b id="sys-processed" style="color:var(--disk)">–</b></div>
+<div class="row"><span>CACHE</span><b id="sys-cache" style="color:var(--disk)">–</b></div>
+<div class="row"><span>STARS SEARCHED</span><b id="sys-stars" style="color:var(--prog)">–</b></div>
+<div class="row"><span>BATCHES VERIFIED</span><b id="sys-batches" style="color:var(--prog)">–</b></div>
+<div class="row"><span>COORDINATOR</span><b id="sys-coord" style="color:var(--ok)">–</b></div>
+</div>
 </section>
-<section class="panel" id="panel-mission" style="grid-column:1/-1;height:108px">
-<h2>Mission progress</h2>
-<div class="row"><span>Verified units</span><b id="mission-pct">–</b></div>
-<p class="note" id="mission-note">Loads from the coordinator when this worker has a token.</p>
+<section class="panel" id="panel-telemetry">
+<p class="ph">TELEMETRY</p>
+<div class="mrow" id="panel-cpu">
+<div class="mlab"><span class="leg" style="background:var(--cpu)"></span>CPU LOAD</div>
+<div class="mbar" id="bar-cpu"></div>
+<div class="mval"><b id="val-cpu" style="color:var(--cpu)">–</b><i>%</i></div>
+</div>
+<div class="mrow" id="panel-net">
+<div class="mlab"><span class="leg" style="background:var(--netdn)"></span>NET DN</div>
+<div class="mbar" id="bar-netdn"></div>
+<div class="mval"><b id="val-netdn" style="color:var(--netdn)">–</b><i id="unit-netdn"></i></div>
+</div>
+<div class="mrow">
+<div class="mlab"><span class="leg" style="background:var(--netup)"></span>NET UP</div>
+<div class="mbar" id="bar-netup"></div>
+<div class="mval"><b id="val-netup" style="color:var(--netup)">–</b><i id="unit-netup"></i></div>
+</div>
+<div class="mrow" id="panel-disk">
+<div class="mlab"><span class="leg" style="background:var(--disk)"></span>PROCESSED</div>
+<div class="mbar" id="bar-processed"></div>
+<div class="mval"><b id="disk-now" style="color:var(--disk)">–</b></div>
+</div>
+<div class="mrow">
+<div class="mlab"><span class="leg" style="background:var(--disk)"></span>CACHE</div>
+<div class="mbar" id="bar-cache"></div>
+<div class="mval"><b id="cache-now" style="color:var(--disk)">–</b></div>
+</div>
+<div class="mrow">
+<div class="mlab"><span class="leg" style="background:var(--prog)"></span>BATCH STARS</div>
+<div class="mbar" id="bar-batch"></div>
+<div class="mval"><b id="val-batch" style="color:var(--prog)">–</b></div>
+</div>
+<div class="mrow">
+<div class="mlab"><span class="leg" id="leg-sector" style="background:var(--prog)"></span><span id="lbl-sector-units">SECTOR UNITS</span></div>
+<div class="mbar" id="bar-sector"></div>
+<div class="mval"><b id="val-sector" style="color:var(--prog)">–</b></div>
+</div>
+<div class="mrow">
+<div class="mlab"><span class="leg" style="background:var(--prog)"></span>MISSION UNITS</div>
+<div class="mbar" id="bar-mission"></div>
+<div class="mval"><b id="mission-pct" style="color:var(--prog)">–</b></div>
+</div>
+<div class="sparkbox">
+<p class="ph">SESSION SPARKLINE<i><span class="leg" style="background:var(--cpu)"></span><span class="legl">CPU</span><span class="leg" style="background:var(--netdn)"></span><span class="legl">NET DN</span><span class="leg" style="background:var(--netup)"></span><span class="legl">NET UP</span> · FROM /api/status POLLS</i></p>
+<div class="plot"><canvas id="spark" width="640" height="70"></canvas></div>
+</div>
+<div class="hist-slot" id="hist-charts-slot" hidden aria-hidden="true"></div>
 </section>
-<section class="panel" id="panel-disk">
-<h2>Stored data</h2>
-<div class="row"><span>Processed</span><b id="disk-now">–</b></div>
-<div class="bar" title="Processed light curves and results against the limit"><i id="disk-bar"></i></div>
-<p class="note" id="disk-note">Light curves and results kept for replay. Candidates are not auto-deleted.</p>
-<div class="row"><span>Light-curve cap</span><b id="cache-now">–</b></div>
+<section class="panel" id="panel-board">
+<p class="ph">STATUS BOARD</p>
+<ul class="alerts" id="alerts"></ul>
+<div class="life">
+<div><span>STARS SEARCHED</span><b id="life-stars" style="color:var(--prog)">–</b></div>
+<div><span>BATCHES VERIFIED</span><b id="life-verified" style="color:var(--prog)">–</b></div>
+<div><span>PENDING</span><b id="life-pending" style="color:var(--warn)">–</b></div>
+</div>
+<p class="note" id="label">candidates, unverified until the coordinator has checked the upload. This page does not announce a discovery.</p>
+<p class="note" id="mission-note" hidden></p>
 </section>
 </div>
+<footer class="ft">
+<span>PROCESSED <b id="foot-processed" style="color:var(--disk)">–</b> · CACHE <b id="foot-cache" style="color:var(--disk)">–</b> · CANDIDATES ARE NOT AUTO-DELETED</span>
+<span id="foot-mission">MISSION <b id="foot-mission-val" style="color:var(--prog)">–</b> · <span id="foot-mission-note">ENROLLED SECTORS ONLY</span></span>
+</footer>
 </div>
 <script>
 const PAGE_VERSION="__APP_VERSION__";
 const HIST_MAX=90;
-const FEED_MAX=12;
+const COL={cpu:"#e59a3a",netdn:"#6eafb8",netup:"#4f9d88",tick:"#2a2418"};
 const cpuH=[], downH=[], upH=[];
-const feed=[];
-let booted=false, reloading=false;
+const meterHist={cpu:[],netdn:[],netup:[],proc:[],cache:[],batch:[],sector:[],mission:[]};
+let booted=false, reloading=false, missionStamp=0, catalogStamp=0, sectorUnits={done:0,total:0};
+let netDnMax=500000, netUpMax=50000;
 const $=id=>document.getElementById(id);
 
 function push(arr, value){
@@ -114,123 +229,312 @@ function push(arr, value){
   arr.push(value);
   if(arr.length>HIST_MAX) arr.splice(0, arr.length-HIST_MAX);
 }
-function note(line){
-  if(!line) return;
-  if(feed[feed.length-1]===line) return;
-  feed.push(line);
-  if(feed.length>FEED_MAX) feed.splice(0, feed.length-FEED_MAX);
-  const list=$("feed");
+function pushMeter(key, frac){
+  const v=typeof frac==="number"&&isFinite(frac)?Math.max(0,Math.min(1,frac)):null;
+  if(v==null) return;
+  meterHist[key].push(v);
+  if(meterHist[key].length>48) meterHist[key].shift();
+}
+function tickSvg(series, color, bars){
+  const n=Math.max(1, bars||48);
+  const w=360, h=16, gap=2, barW=(w-gap*(n-1))/n;
+  let out=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="presentation">`;
+  const data=series.length?series:Array(n).fill(0);
+  const pad=Math.max(0,n-data.length);
+  for(let i=0;i<n;i++){
+    const v=i<pad?0:data[i-pad];
+    const full=(i%8)===0;
+    const bh=full?h:h*0.72;
+    const y=full?0:h-bh;
+    const fill=v>0.02?color:COL.tick;
+    const x=i*(barW+gap);
+    out+=`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${bh.toFixed(2)}" fill="${fill}"/>`;
+  }
+  return out+"</svg>";
+}
+function fmtRate(bps){
+  if(typeof bps!=="number"||!isFinite(bps)) return {text:"–",unit:""};
+  if(bps<1024) return {text:bps.toFixed(0),unit:"B/S"};
+  if(bps<1024*1024) return {text:(bps/1024).toFixed(1),unit:"KB/S"};
+  return {text:(bps/1024/1024).toFixed(2),unit:"MB/S"};
+}
+function gbPair(bytes, capGb){
+  if(bytes==null) return "–";
+  const gb=bytes/1e9;
+  const main=gb<0.01&&bytes>0?gb.toExponential(1):gb.toFixed(gb<10?2:1);
+  return capGb!=null?`${main} / ${capGb} GB`:`${main} GB`;
+}
+function gbShort(bytes, capGb){
+  if(bytes==null) return "–";
+  const gb=bytes/1e9;
+  const main=gb.toFixed(gb<10?2:1);
+  return capGb!=null?`${main} / ${capGb} GB`:`${main} GB`;
+}
+function stageIdx(raw){
+  const s=String(raw||"").toLowerCase();
+  if(s==="claimed"||s==="downloading") return 0;
+  if(s==="downloaded"||s==="searching") return 1;
+  if(s==="searched"||s==="filtering"||s==="filtered"||s==="uploading") return 2;
+  if(s==="uploaded"||s==="waiting") return 3;
+  return -1;
+}
+function stageLabel(raw, alive){
+  const s=String(raw||"").toLowerCase();
+  if(!s) return alive?"IDLE":"NO WORKER";
+  if(s==="searching") return "SEARCHING";
+  if(s==="downloading"||s==="claimed") return "DOWNLOADING";
+  if(s==="filtering"||s==="filtered"||s==="uploading") return "FILTERING";
+  if(s==="uploaded"||s==="waiting") return "UPLOADING";
+  return s.toUpperCase();
+}
+function paintSteps(idx){
+  $("pipe-steps").querySelectorAll(".st").forEach((el,i)=>{
+    el.classList.remove("done","on");
+    if(idx<0) return;
+    if(i<idx) el.classList.add("done");
+    else if(i===idx) el.classList.add("on");
+  });
+}
+function coordLine(conn){
+  const ok=conn&&conn.ok;
+  const kind=String((conn&&conn.kind)||"").toLowerCase();
+  const detail=String((conn&&conn.detail)||"").toLowerCase();
+  if(kind==="unreachable"||detail.startsWith("unreachable")||ok===false) return {pill:"COORD · OFFLINE",sys:"OFFLINE",chip:"err",msg:"COORDINATOR UNREACHABLE"};
+  if(kind==="rejected"||detail.startsWith("rejected")) return {pill:"COORD · REJECTED",sys:"REJECTED",chip:"err",msg:"COORDINATOR REJECTED A REQUEST"};
+  if(ok===true||kind==="connected"||kind==="lease_ended") return {pill:"COORD · CONNECTED",sys:"CONNECTED",chip:"ok",msg:null};
+  return {pill:"COORD · –",sys:"–",chip:"nte",msg:"COORDINATOR NOT CHECKED YET"};
+}
+function paintAlerts(items){
+  const list=$("alerts");
   list.textContent="";
-  for(const item of feed){
+  for(const row of items){
     const li=document.createElement("li");
-    li.textContent=item;
+    const chip=document.createElement("span");
+    chip.className="chip "+row.chip;
+    chip.textContent=row.tag;
+    const span=document.createElement("span");
+    span.textContent=row.text;
+    li.appendChild(chip);
+    li.appendChild(span);
     list.appendChild(li);
   }
 }
 function fit(canvas){
   const plot=canvas.parentElement;
   if(!plot||!plot.classList.contains("plot")) return null;
-  const dpr=Math.min(window.devicePixelRatio||1, 2);
+  const dpr=Math.min(window.devicePixelRatio||1,2);
   const w=Math.max(1, plot.clientWidth);
   const h=Math.max(1, plot.clientHeight);
   const bw=Math.max(1, Math.floor(w*dpr));
   const bh=Math.max(1, Math.floor(h*dpr));
-  if(canvas.width!==bw||canvas.height!==bh){
-    canvas.width=bw;
-    canvas.height=bh;
-  }
-  return {w:bw, h:bh};
+  if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw;canvas.height=bh;}
+  return {w:bw,h:bh};
 }
-function line(ctx, series, box, max, color){
+function sparkLine(ctx, series, box, max, color){
   if(!series.length) return;
   ctx.strokeStyle=color;
-  ctx.lineWidth=3;
+  ctx.lineWidth=Math.max(1.4,1.4*(window.devicePixelRatio||1));
   ctx.beginPath();
   series.forEach((v,i)=>{
     const x=series.length===1?box.w-2:(i/(series.length-1))*(box.w-2)+1;
-    const y=box.h-6-(Math.max(0,v)/max)*(box.h-16);
+    const y=box.h-4-(Math.max(0,v)/max)*(box.h-12);
     if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
   });
   ctx.stroke();
 }
-function draw(canvas, seriesList){
+function drawSpark(){
+  const canvas=$("spark");
   const box=fit(canvas);
   if(!box) return;
   const ctx=canvas.getContext("2d");
   ctx.clearRect(0,0,box.w,box.h);
-  ctx.fillStyle="#161b33";
-  ctx.fillRect(0, 8, box.w, box.h-16);
-  let max=1;
-  for(const series of seriesList) for(const v of series.values) if(v>max) max=v;
-  for(const series of seriesList) line(ctx, series.values, box, max, series.color);
-}
-function gb(n){
-  if(n==null) return "–";
-  if(n<1e6) return (n/1e3).toFixed(0)+" KB";
-  if(n<1e9) return (n/1e6).toFixed(1)+" MB";
-  return (n/1e9).toFixed(2)+" GB";
-}
-function nextLine(nxt){
-  if(!nxt||!nxt.stage) return "–";
-  if(nxt.stage==="ready") return "Next: ready";
-  const done=nxt.stars_done==null?0:nxt.stars_done;
-  const total=nxt.stars_total;
-  if(total) return "Next: "+nxt.stage+" "+done+"/"+total;
-  return "Next: "+nxt.stage;
-}
-function rateText(bps){
-  if(typeof bps!=="number"||!isFinite(bps)) return "–";
-  if(bps<1024) return bps.toFixed(0)+" B/s";
-  if(bps<1024*1024) return (bps/1024).toFixed(1)+" KB/s";
-  return (bps/1024/1024).toFixed(2)+" MB/s";
+  let max=100;
+  for(const v of cpuH) if(v>max) max=v;
+  let nmax=netDnMax;
+  for(const v of downH) if(v>nmax) nmax=v;
+  let umax=netUpMax;
+  for(const v of upH) if(v>umax) umax=v;
+  if(cpuH.length){
+    ctx.fillStyle="rgba(229,154,58,0.14)";
+    ctx.beginPath();
+    cpuH.forEach((v,i)=>{
+      const x=cpuH.length===1?box.w-2:(i/(cpuH.length-1))*(box.w-2)+1;
+      const y=box.h-4-(Math.max(0,v)/max)*(box.h-12);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.lineTo(box.w-2,box.h); ctx.lineTo(1,box.h); ctx.closePath(); ctx.fill();
+  }
+  sparkLine(ctx, cpuH, box, max, COL.cpu);
+  sparkLine(ctx, downH, box, nmax||1, COL.netdn);
+  sparkLine(ctx, upH, box, umax||1, COL.netup);
 }
 function paintPause(pause){
   const state=(pause&&pause.state)||"running";
   const sw=$("run-switch");
-  const label=state==="pausing"?"Pausing…":(state==="paused"?"Paused":"Running");
-  sw.textContent=label;
-  sw.setAttribute("aria-checked", state==="running"?"true":"false");
+  const on=state==="running";
+  sw.setAttribute("aria-checked", on?"true":"false");
   sw.dataset.state=state;
-  $("run-state").textContent=label;
+  if(state==="pausing"){
+    sw.textContent="Pausing…";
+    sw.classList.remove("on"); sw.classList.add("off");
+  }else if(state==="paused"){
+    sw.textContent="RUN · OFF";
+    sw.classList.remove("on"); sw.classList.add("off");
+  }else{
+    sw.textContent="RUN · ON";
+    sw.classList.add("on"); sw.classList.remove("off");
+  }
+  const dot=$("stage-dot");
+  dot.classList.toggle("off", !on);
 }
 function paint(data){
   if(data&&data.app_version&&data.app_version!==PAGE_VERSION&&!reloading){
-    reloading=true;
-    location.reload();
-    return;
+    reloading=true; location.reload(); return;
   }
   const res=data.resources||{};
   const batch=data.batch||{};
-  const pause=res.pause||{};
-  paintPause(pause);
+  const life=data.lifetime||{};
+  const conn=data.connection||{};
+  const proc=res.processed||{};
+  const used=proc.bytes||0, capBytes=proc.limit_bytes||0, capGb=proc.limit_gb;
+  const maxGb=res.max_cache_gb;
+  const cacheBytes=res.cache_bytes||0;
+  const starsDone=batch.stars_done, starsTotal=batch.stars_total;
+  const sector=batch.sector??"–";
+  const unit=batch.unit_id??"–";
+  const star=(data.display&&data.display.tic)||(data.current_star&&data.current_star.tic);
+  paintPause(res.pause||{});
   push(cpuH, typeof res.cpu_percent==="number"?res.cpu_percent:null);
   push(downH, res.net_recv_bps);
   push(upH, res.net_sent_bps);
-  $("cpu-now").textContent=typeof res.cpu_percent==="number"?res.cpu_percent.toFixed(0)+"%":"–";
-  $("net-now").textContent=rateText(res.net_recv_bps)+" / "+rateText(res.net_sent_bps);
-  draw($("cpu"), [{values:cpuH, color:"#c4b5fd"}]);
-  draw($("net"), [{values:downH, color:"#67e8f9"}, {values:upH, color:"#fbbf24"}]);
-  const sector=batch.sector||"–";
-  const unit=batch.unit_id||"–";
-  const star=(data.display&&data.display.tic)||(data.current_star&&data.current_star.tic)||"–";
-  const per=typeof batch.per_s==="number"?batch.per_s*3600:null;
-  $("sector").textContent=String(sector);
+  if(typeof res.net_recv_bps==="number"&&res.net_recv_bps>netDnMax) netDnMax=res.net_recv_bps*1.2;
+  if(typeof res.net_sent_bps==="number"&&res.net_sent_bps>netUpMax) netUpMax=res.net_sent_bps*1.2;
+  const cpuFrac=typeof res.cpu_percent==="number"?res.cpu_percent/100:null;
+  pushMeter("cpu",cpuFrac);
+  pushMeter("netdn",typeof res.net_recv_bps==="number"?Math.min(1,res.net_recv_bps/(netDnMax||1)):null);
+  pushMeter("netup",typeof res.net_sent_bps==="number"?Math.min(1,res.net_sent_bps/(netUpMax||1)):null);
+  pushMeter("proc",capBytes?used/capBytes:null);
+  pushMeter("cache",maxGb?cacheBytes/(maxGb*1e9):null);
+  pushMeter("batch",starsTotal?Number(starsDone||0)/Number(starsTotal):null);
+  pushMeter("sector",sectorUnits.total?sectorUnits.done/sectorUnits.total:null);
+  const alive=!!res.worker_alive;
+  const idx=stageIdx(batch.stage);
+  paintSteps(idx);
+  $("hdr-stage").textContent=stageLabel(batch.stage, alive);
+  const cl=coordLine(conn);
+  $("hdr-coord").textContent=cl.pill;
+  $("pill-coord").classList.toggle("ok", cl.chip==="ok");
+  $("sector").textContent=sector==="–"?"–":String(sector);
   $("batch").textContent=unit==="–"?"–":String(unit);
-  $("star").textContent=String(star);
-  $("rate").textContent=per==null?"–":Math.round(per).toLocaleString()+" / h";
-  $("eta").textContent=batch.eta_min==null?"–":batch.eta_min+" min";
-  $("next_line").textContent=nextLine(data.next);
-  const proc=res.processed||{};
-  const used=proc.bytes||0, cap=proc.limit_bytes||0;
-  $("disk-now").textContent=gb(used)+(proc.limit_gb!=null?" / "+proc.limit_gb+" GB":"");
-  $("disk-bar").style.width=cap?Math.min(100, 100*used/cap)+"%":"0%";
-  const cbytes=res.cache_bytes||0;
-  $("cache-now").textContent=gb(cbytes)+(res.max_cache_gb!=null?" / "+res.max_cache_gb+" GB":"");
-  const stage=batch.stage||(res.worker_alive?"idle":"no worker");
-  note(stage+" · sector "+sector+" · batch "+unit+" · "+(pause.label||""));
-  if(!booted){booted=true; $("ver").textContent="v"+PAGE_VERSION;}
+  if(starsTotal){
+    $("stars-readout").innerHTML=`${Number(starsDone||0).toLocaleString()}<i>/ ${Number(starsTotal).toLocaleString()}</i>`;
+    $("val-batch").innerHTML=`${Number(starsDone||0)}<i>/ ${starsTotal}</i>`;
+  }else{
+    $("stars-readout").textContent="–";
+    $("val-batch").textContent="–";
+  }
+  const eta=batch.eta_min;
+  if(eta==null) $("eta").textContent="–";
+  else $("eta").innerHTML=`${(eta/60>=1?(eta/60).toFixed(1):(eta)).toString()}<i>${eta/60>=1?"H":"MIN"}</i>`;
+  const per=typeof batch.per_s==="number"?batch.per_s*3600:null;
+  $("rate").innerHTML=per==null?"–":`${Math.round(per).toLocaleString()}<i>/ H</i>`;
+  $("star").textContent=star?`TIC ${star}`:"–";
+  const nxt=data.next;
+  let nextText="–";
+  let nextFrac=null;
+  if(nxt&&nxt.stage){
+    const st=String(nxt.stage).toLowerCase();
+  const nd=nxt.stars_done==null?0:Number(nxt.stars_done);
+  const nt=nxt.stars_total;
+    if(st==="ready"||st==="downloaded") nextText="READY";
+    else if(nt) nextText=`${st.toUpperCase()} ${nd}/${nt}`;
+    else nextText=st.toUpperCase();
+    if(nt) nextFrac=Math.min(1,nd/nt);
+  }
+  $("next_line").textContent=nextText;
+  $("next-bar").innerHTML=tickSvg(nextFrac!=null?[nextFrac]:[], "#9caf6a", 32);
+  const procText=gbShort(used, capGb);
+  const cacheText=gbShort(cacheBytes, maxGb);
+  $("disk-now").textContent=procText;
+  $("cache-now").textContent=cacheText;
+  $("sys-processed").textContent=procText;
+  $("sys-cache").textContent=cacheText;
+  $("foot-processed").textContent=procText;
+  $("foot-cache").textContent=cacheText;
+  const searched=Number(life.stars_searched||0);
+  const verified=Number(life.batches_verified||0);
+  const submitted=Number(life.batches_submitted||0);
+  const pending=Number(life.contributions_pending||0);
+  $("sys-stars").textContent=searched.toLocaleString();
+  $("sys-batches").textContent=submitted?`${verified} / ${submitted}`:String(verified);
+  $("sys-coord").textContent=cl.sys;
+  $("life-stars").textContent=searched.toLocaleString();
+  $("life-verified").textContent=String(verified);
+  $("life-pending").textContent=String(pending);
+  if(typeof res.cpu_percent==="number") $("val-cpu").textContent=res.cpu_percent.toFixed(0);
+  else $("val-cpu").textContent="–";
+  const dn=fmtRate(res.net_recv_bps);
+  $("val-netdn").textContent=dn.text;
+  $("unit-netdn").textContent=dn.unit;
+  const up=fmtRate(res.net_sent_bps);
+  $("val-netup").textContent=up.text;
+  $("unit-netup").textContent=up.unit;
+  $("bar-cpu").innerHTML=tickSvg(meterHist.cpu, COL.cpu);
+  $("bar-netdn").innerHTML=tickSvg(meterHist.netdn, COL.netdn);
+  $("bar-netup").innerHTML=tickSvg(meterHist.netup, COL.netup);
+  $("bar-processed").innerHTML=tickSvg(meterHist.proc, COL.cpu.replace("#e59a3a","#9b95c4"));
+  $("bar-cache").innerHTML=tickSvg(meterHist.cache, "#9b95c4");
+  $("bar-batch").innerHTML=tickSvg(meterHist.batch, "#9caf6a");
+  const secLab=sector!=="–"?`SECTOR ${sector} UNITS`:"SECTOR UNITS";
+  $("lbl-sector-units").textContent=secLab;
+  if(sectorUnits.total){
+    $("val-sector").innerHTML=`${sectorUnits.done}<i>/ ${sectorUnits.total}</i>`;
+  }else $("val-sector").textContent="–";
+  $("bar-sector").innerHTML=tickSvg(meterHist.sector, "#9caf6a");
+  $("bar-mission").innerHTML=tickSvg(meterHist.mission, "#9caf6a");
+  $("hdr-pid").textContent=String(res.pid||"–");
+  $("hdr-procs").textContent=res.procs!=null?String(res.procs):"–";
+  $("hdr-threads").textContent=res.threads!=null?String(res.threads):"–";
+  $("hdr-priority").textContent=String(res.priority||"–").replace(/_/g," ").toUpperCase();
+  $("hdr-mode").textContent=String(res.mode||"live").toUpperCase();
+  const stats=data.candidate_stats||{};
+  const candN=Number(stats.rows!=null?stats.rows:(data.candidates||[]).length);
+  $("tab-candidates").textContent=candN?String(candN):"";
+  const alerts=[];
+  const url=conn&&conn.url?String(conn.url):"";
+  alerts.push({tag:"OK",chip:cl.chip==="ok"?"ok":"nte",text:(cl.msg||"COORDINATOR "+cl.sys)+(url?` · ${url}`:"")});
+  if(nextText!=="–"&&nextText!=="READY") alerts.push({tag:"INF",chip:"inf",text:`NEXT UNIT ${nextText}`});
+  if(pending>0) alerts.push({tag:"NTE",chip:"nte",text:`${pending} CONTRIBUTION${pending===1?"":"S"} PENDING AGREEMENT`});
+  alerts.push({tag:"NTE",chip:"nte",text:"CANDIDATES UNVERIFIED UNTIL THE COORDINATOR CHECKS THE UPLOAD"});
+  if(data.label) alerts.push({tag:"NTE",chip:"nte",text:String(data.label).toUpperCase()+" · THIS PAGE DOES NOT ANNOUNCE A DISCOVERY"});
+  paintAlerts(alerts);
+  drawSpark();
+  if(!booted){booted=true;}
 }
-let missionStamp=0;
+async function pollCatalog(sector){
+  if(Date.now()-catalogStamp<20000) return;
+  catalogStamp=Date.now();
+  try{
+    const res=await fetch("/api/batches/catalog",{cache:"no-store"});
+    if(!res.ok) return;
+    const data=await res.json();
+    let units=0;
+    const sectors=data.sectors||[];
+    if(Array.isArray(sectors)){
+      units=sectors.reduce((n,s)=>n+((s.units&&s.units.length)||0),0);
+      if(sector!=="–"&&sector!=null){
+        const bucket=sectors.find(s=>Number(s.sector)===Number(sector));
+        if(bucket&&Array.isArray(bucket.units)){
+          const list=bucket.units;
+          sectorUnits.total=list.length;
+          sectorUnits.done=list.filter(u=>u.finished_at!=null).length;
+        }
+      }
+    }
+    $("tab-batches").textContent=units?String(units):"";
+  }catch(e){/* keep last */}
+}
+let missionPct=0;
 async function pollMission(){
   if(Date.now()-missionStamp<12000) return;
   missionStamp=Date.now();
@@ -238,56 +542,54 @@ async function pollMission(){
     const res=await fetch("/api/mission/progress",{cache:"no-store"});
     if(!res.ok) return;
     const data=await res.json();
-    if(!data.ok){$("mission-note").textContent=data.detail||"Mission progress unavailable"; return;}
-    $("mission-pct").textContent=(data.percent_units||0).toFixed(1)+"% · "+(data.units_verified||0)+"/"+(data.units_total||0)+" units";
-    $("mission-note").textContent=data.scope_note||"Enrolled sectors only.";
-  }catch(e){ /* leave last value */ }
+    if(!data.ok){
+      $("mission-note").hidden=false;
+      $("mission-note").textContent=data.detail||"Mission progress unavailable";
+      return;
+    }
+    missionPct=Number(data.percent_units||0);
+    pushMeter("mission", missionPct/100);
+    const foot=`${missionPct.toFixed(1)}% · ${data.units_verified||0}/${data.units_total||0} UNITS`;
+    $("mission-pct").innerHTML=`${missionPct.toFixed(1)}<i>%</i>`;
+    $("foot-mission-val").textContent=foot;
+    $("foot-mission-note").textContent=(data.scope_note||"ENROLLED SECTORS ONLY").toUpperCase();
+    $("bar-mission").innerHTML=tickSvg(meterHist.mission, "#9caf6a");
+  }catch(e){/* leave last */ }
 }
 async function poll(){
   try{
     const res=await fetch("/api/status",{cache:"no-store"});
-    if(!res.ok){note("status "+res.status); return;}
-    paint(await res.json());
+    if(!res.ok) return;
+    const data=await res.json();
+    paint(data);
+  const sector=data.batch&&data.batch.sector;
+    pollCatalog(sector);
     pollMission();
-  }catch(e){
-    note("status unavailable");
-  }
+  }catch(e){/* status unavailable */ }
 }
 $("run-switch").onclick=async()=>{
   const paused=$("run-switch").getAttribute("aria-checked")==="true";
   try{
     const res=await fetch("/api/pause",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      cache:"no-store",
+      method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",
       body:JSON.stringify({paused})
     });
     if(res.ok) poll();
-    else note("pause was not saved");
-  }catch(e){
-    note("pause was not saved");
-  }
+  }catch(e){/* pause was not saved */ }
 };
-window.addEventListener("resize", ()=>{
-  draw($("cpu"), [{values:cpuH, color:"#c4b5fd"}]);
-  draw($("net"), [{values:downH, color:"#67e8f9"}, {values:upH, color:"#fbbf24"}]);
-});
+window.addEventListener("resize", drawSpark);
 $("setup-save").onclick=async()=>{
   const token=($("setup-paste").value||"").trim();
   $("setup-paste").value="";
   try{
     const res=await fetch("/api/setup/token",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      cache:"no-store",
+      method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",
       body:JSON.stringify({token})
     });
     const body=await res.json().catch(()=>({}));
     $("setup-msg").textContent=res.ok?"Token saved.":(body.error||"token was not saved");
     if(res.ok) $("setup").hidden=true;
-  }catch(e){
-    $("setup-msg").textContent="token was not saved";
-  }
+  }catch(e){$("setup-msg").textContent="token was not saved";}
 };
 fetch("/api/setup",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(data=>{
   if(data&&data.needs_token) $("setup").hidden=false;

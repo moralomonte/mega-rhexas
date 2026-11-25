@@ -222,7 +222,7 @@ def test_setup_page_saves_a_pasted_token_without_showing_it(tmp_path, monkeypatc
         assert SECRET.encode() not in body
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:
             page = response.read()
-        setup = page[page.index(b'id="setup"'):page.index(b'class="grid"', page.index(b'id="setup"'))]
+        setup = page[page.index(b'id="setup"'):page.index(b'class="body"', page.index(b'id="setup"'))]
         assert b"Sign in with megarhexas.com" not in setup
         assert b"Paste a token" in setup
         assert b"Device linking is closed" in setup
