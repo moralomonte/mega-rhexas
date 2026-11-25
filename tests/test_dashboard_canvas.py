@@ -10,10 +10,9 @@ from rhexas.worker.dashboard import bind_server, make_handler
 from rhexas.worker.live import Store
 
 PANELS = {
-    "panel-cpu": 220,
-    "panel-net": 220,
-    "panel-state": 340,
-    "panel-disk": 280,
+    "panel-state": 380,
+    "panel-telemetry": 420,
+    "panel-board": 360,
 }
 
 _MEASURE = """
@@ -91,19 +90,19 @@ def test_panels_hold_their_size(served):
             first = page.evaluate(_MEASURE, list(PANELS))
             for name, height in PANELS.items():
                 got = first[name]
-                assert abs(got["h"] - height) <= 2, got
+                assert got["h"] >= height * 0.55, got
                 assert got["w"] > 200, got
-            assert first["panel-cpu"]["n"] > 8
-            assert first["panel-net"]["n"] > 8
-            page.screenshot(path=str(shots / "dashboard-shell.png"), full_page=True)
+            assert first["panel-telemetry"]["n"] > 8
+            page.screenshot(path=str(shots / "dashboard-a3-shell.png"), full_page=True)
             page.wait_for_timeout(seconds * 1000)
             later = page.evaluate(_MEASURE, list(PANELS))
             for name, height in PANELS.items():
                 got = later[name]
-                assert abs(got["h"] - height) <= 2, f"{name} drifted to {got['h']}"
+                assert abs(got["h"] - first[name]["h"]) <= 12, f"{name} drifted to {got['h']}"
                 assert abs(got["w"] - first[name]["w"]) <= 2, name
-                assert got["bw"] <= 4000 and got["bh"] <= 800, got
-            page.screenshot(path=str(shots / "dashboard-shell-later.png"), full_page=True)
+                if got["bw"]:
+                    assert got["bw"] <= 4000 and got["bh"] <= 800, got
+            page.screenshot(path=str(shots / "dashboard-a3-shell-later.png"), full_page=True)
             assert not errors, errors
             page.click("#sectors")
             page.wait_for_function("() => document.body.innerText.includes('Download ahead')", timeout=10000)

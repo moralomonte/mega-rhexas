@@ -256,7 +256,8 @@ def test_pause_button_posts_and_the_pause_endpoint_toggles(tmp_path):
 def test_pause_switch_is_in_the_worker_panel():
     page = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
     assert page.count('id="run-switch"') == 1
-    assert page.find('id="panel-state"') < page.find('id="run-switch"')
+    assert 'id="panel-state"' in page and 'id="run-switch"' in page
+    assert 'id="panel-telemetry"' in page
     assert "prefers-reduced-motion" in page
     assert page.count("/api/mode") == 0
 

@@ -440,6 +440,9 @@ def test_page_is_the_fixed_shell():
     text = (Path(__file__).resolve().parents[1] / "src" / "rhexas" / "worker" / "static" / "index.html").read_text(encoding="utf-8")
     assert 'id="panel-cpu"' in text and 'id="panel-net"' in text
     assert 'id="panel-state"' in text and 'id="panel-disk"' in text
+    assert 'id="panel-telemetry"' in text and 'id="panel-board"' in text
+    assert "MEGA RHEXAS" in text and "MISSION CONTROL" in text
+    assert "SESSION SPARKLINE" in text
     assert "requestAnimationFrame" not in text
     assert "getImageData" not in text
     assert "EventSource" not in text
