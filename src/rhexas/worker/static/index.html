@@ -17,7 +17,7 @@ html,body{margin:0;background:var(--bg);color:var(--tx);min-height:100vh;
 .wrap{max-width:1440px;margin:0 auto;padding:8px 14px 8px;min-height:100vh;display:flex;flex-direction:column;gap:7px}
 header.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 8px}
 .brand{display:flex;align-items:center;gap:10px;color:inherit;text-decoration:none}
-.brand img{width:30px;height:30px}
+.brand img{width:30px;height:30px;filter:brightness(0) saturate(100%) invert(72%) sepia(35%) saturate(1200%) hue-rotate(349deg) brightness(98%) contrast(92%)}
 .brand h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.18em}
 .brand h1 small{display:block;font-size:9px;color:var(--mut);letter-spacing:.22em;font-weight:500}
 .pill{border:1px solid var(--line);padding:4px 10px;font-size:10px;letter-spacing:.14em;display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--tx);font:inherit;cursor:default}
@@ -205,7 +205,7 @@ footer.ft b{font-weight:500}
 <div><span>BATCHES VERIFIED</span><b id="life-verified" style="color:var(--prog)">–</b></div>
 <div><span>PENDING</span><b id="life-pending" style="color:var(--warn)">–</b></div>
 </div>
-<p class="note" id="label">candidates, unverified until the coordinator has checked the upload. This page does not announce a discovery.</p>
+<span id="label" hidden>candidates, unverified until the coordinator has checked the upload. This page does not announce a discovery.</span>
 <p class="note" id="mission-note" hidden></p>
 </section>
 </div>
@@ -219,9 +219,10 @@ const PAGE_VERSION="__APP_VERSION__";
 const HIST_MAX=90;
 const COL={cpu:"#e59a3a",netdn:"#6eafb8",netup:"#4f9d88",tick:"#2a2418"};
 const cpuH=[], downH=[], upH=[];
-const meterHist={cpu:[],netdn:[],netup:[],proc:[],cache:[],batch:[],sector:[],mission:[]};
+const NET_DN_FULL=2*1024*1024;
+const NET_UP_FULL=100*1024;
 let booted=false, reloading=false, missionStamp=0, catalogStamp=0, sectorUnits={done:0,total:0};
-let netDnMax=500000, netUpMax=50000;
+let missionFrac=0;
 const $=id=>document.getElementById(id);
 
 function push(arr, value){
@@ -229,24 +230,17 @@ function push(arr, value){
   arr.push(value);
   if(arr.length>HIST_MAX) arr.splice(0, arr.length-HIST_MAX);
 }
-function pushMeter(key, frac){
-  const v=typeof frac==="number"&&isFinite(frac)?Math.max(0,Math.min(1,frac)):null;
-  if(v==null) return;
-  meterHist[key].push(v);
-  if(meterHist[key].length>48) meterHist[key].shift();
-}
-function tickSvg(series, color, bars){
+function tickSvg(frac, color, bars){
   const n=Math.max(1, bars||48);
   const w=360, h=16, gap=2, barW=(w-gap*(n-1))/n;
+  const f=typeof frac==="number"&&isFinite(frac)?Math.max(0,Math.min(1,frac)):0;
   let out=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="presentation">`;
-  const data=series.length?series:Array(n).fill(0);
-  const pad=Math.max(0,n-data.length);
   for(let i=0;i<n;i++){
-    const v=i<pad?0:data[i-pad];
     const full=(i%8)===0;
     const bh=full?h:h*0.72;
     const y=full?0:h-bh;
-    const fill=v>0.02?color:COL.tick;
+    const on=((i+1)/n)<=f+1e-9;
+    const fill=on?color:COL.tick;
     const x=i*(barW+gap);
     out+=`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW.toFixed(2)}" height="${bh.toFixed(2)}" fill="${fill}"/>`;
   }
@@ -301,8 +295,16 @@ function coordLine(conn){
   const detail=String((conn&&conn.detail)||"").toLowerCase();
   if(kind==="unreachable"||detail.startsWith("unreachable")||ok===false) return {pill:"COORD · OFFLINE",sys:"OFFLINE",chip:"err",msg:"COORDINATOR UNREACHABLE"};
   if(kind==="rejected"||detail.startsWith("rejected")) return {pill:"COORD · REJECTED",sys:"REJECTED",chip:"err",msg:"COORDINATOR REJECTED A REQUEST"};
-  if(ok===true||kind==="connected"||kind==="lease_ended") return {pill:"COORD · CONNECTED",sys:"CONNECTED",chip:"ok",msg:null};
-  return {pill:"COORD · –",sys:"–",chip:"nte",msg:"COORDINATOR NOT CHECKED YET"};
+  if(ok===true||kind==="connected"||kind==="lease_ended") return {pill:"COORD · CONNECTED",sys:"CONNECTED",chip:"ok",msg:"COORDINATOR CONNECTED"};
+  if(kind==="network"||detail.startsWith("network")) return {pill:"COORD · NETWORK",sys:"NETWORK",chip:"inf",msg:"COORDINATOR NETWORK TROUBLE"};
+  return {pill:"COORD · –",sys:"–",chip:"inf",msg:"COORDINATOR NOT CHECKED YET"};
+}
+function coordAlert(conn, cl){
+  const url=conn&&conn.url?String(conn.url):"";
+  const suffix=url?` · ${url}`:"";
+  if(cl.chip==="ok") return {tag:"OK",chip:"ok",text:cl.msg+suffix};
+  if(cl.chip==="err") return {tag:"NTE",chip:"err",text:cl.msg+suffix};
+  return {tag:"INF",chip:"inf",text:cl.msg+suffix};
 }
 function paintAlerts(items){
   const list=$("alerts");
@@ -350,10 +352,8 @@ function drawSpark(){
   ctx.clearRect(0,0,box.w,box.h);
   let max=100;
   for(const v of cpuH) if(v>max) max=v;
-  let nmax=netDnMax;
-  for(const v of downH) if(v>nmax) nmax=v;
-  let umax=netUpMax;
-  for(const v of upH) if(v>umax) umax=v;
+  const nmax=NET_DN_FULL;
+  const umax=NET_UP_FULL;
   if(cpuH.length){
     ctx.fillStyle="rgba(229,154,58,0.14)";
     ctx.beginPath();
@@ -407,16 +407,13 @@ function paint(data){
   push(cpuH, typeof res.cpu_percent==="number"?res.cpu_percent:null);
   push(downH, res.net_recv_bps);
   push(upH, res.net_sent_bps);
-  if(typeof res.net_recv_bps==="number"&&res.net_recv_bps>netDnMax) netDnMax=res.net_recv_bps*1.2;
-  if(typeof res.net_sent_bps==="number"&&res.net_sent_bps>netUpMax) netUpMax=res.net_sent_bps*1.2;
   const cpuFrac=typeof res.cpu_percent==="number"?res.cpu_percent/100:null;
-  pushMeter("cpu",cpuFrac);
-  pushMeter("netdn",typeof res.net_recv_bps==="number"?Math.min(1,res.net_recv_bps/(netDnMax||1)):null);
-  pushMeter("netup",typeof res.net_sent_bps==="number"?Math.min(1,res.net_sent_bps/(netUpMax||1)):null);
-  pushMeter("proc",capBytes?used/capBytes:null);
-  pushMeter("cache",maxGb?cacheBytes/(maxGb*1e9):null);
-  pushMeter("batch",starsTotal?Number(starsDone||0)/Number(starsTotal):null);
-  pushMeter("sector",sectorUnits.total?sectorUnits.done/sectorUnits.total:null);
+  const netDnFrac=typeof res.net_recv_bps==="number"?Math.min(1,res.net_recv_bps/NET_DN_FULL):null;
+  const netUpFrac=typeof res.net_sent_bps==="number"?Math.min(1,res.net_sent_bps/NET_UP_FULL):null;
+  const procFrac=capBytes?used/capBytes:null;
+  const cacheFrac=maxGb?cacheBytes/(maxGb*1e9):null;
+  const batchFrac=starsTotal?Number(starsDone||0)/Number(starsTotal):null;
+  const sectorFrac=sectorUnits.total?sectorUnits.done/sectorUnits.total:null;
   const alive=!!res.worker_alive;
   const idx=stageIdx(batch.stage);
   paintSteps(idx);
@@ -452,7 +449,7 @@ function paint(data){
     if(nt) nextFrac=Math.min(1,nd/nt);
   }
   $("next_line").textContent=nextText;
-  $("next-bar").innerHTML=tickSvg(nextFrac!=null?[nextFrac]:[], "#9caf6a", 32);
+  $("next-bar").innerHTML=tickSvg(nextFrac!=null?nextFrac:0, "#9caf6a", 32);
   const procText=gbShort(used, capGb);
   const cacheText=gbShort(cacheBytes, maxGb);
   $("disk-now").textContent=procText;
@@ -479,19 +476,19 @@ function paint(data){
   const up=fmtRate(res.net_sent_bps);
   $("val-netup").textContent=up.text;
   $("unit-netup").textContent=up.unit;
-  $("bar-cpu").innerHTML=tickSvg(meterHist.cpu, COL.cpu);
-  $("bar-netdn").innerHTML=tickSvg(meterHist.netdn, COL.netdn);
-  $("bar-netup").innerHTML=tickSvg(meterHist.netup, COL.netup);
-  $("bar-processed").innerHTML=tickSvg(meterHist.proc, COL.cpu.replace("#e59a3a","#9b95c4"));
-  $("bar-cache").innerHTML=tickSvg(meterHist.cache, "#9b95c4");
-  $("bar-batch").innerHTML=tickSvg(meterHist.batch, "#9caf6a");
+  $("bar-cpu").innerHTML=tickSvg(cpuFrac, COL.cpu);
+  $("bar-netdn").innerHTML=tickSvg(netDnFrac, COL.netdn);
+  $("bar-netup").innerHTML=tickSvg(netUpFrac, COL.netup);
+  $("bar-processed").innerHTML=tickSvg(procFrac, "#9b95c4");
+  $("bar-cache").innerHTML=tickSvg(cacheFrac, "#9b95c4");
+  $("bar-batch").innerHTML=tickSvg(batchFrac, "#9caf6a");
   const secLab=sector!=="–"?`SECTOR ${sector} UNITS`:"SECTOR UNITS";
   $("lbl-sector-units").textContent=secLab;
   if(sectorUnits.total){
     $("val-sector").innerHTML=`${sectorUnits.done}<i>/ ${sectorUnits.total}</i>`;
   }else $("val-sector").textContent="–";
-  $("bar-sector").innerHTML=tickSvg(meterHist.sector, "#9caf6a");
-  $("bar-mission").innerHTML=tickSvg(meterHist.mission, "#9caf6a");
+  $("bar-sector").innerHTML=tickSvg(sectorFrac, "#9caf6a");
+  $("bar-mission").innerHTML=tickSvg(missionFrac, "#9caf6a");
   $("hdr-pid").textContent=String(res.pid||"–");
   $("hdr-procs").textContent=res.procs!=null?String(res.procs):"–";
   $("hdr-threads").textContent=res.threads!=null?String(res.threads):"–";
@@ -500,15 +497,13 @@ function paint(data){
   const stats=data.candidate_stats||{};
   const candN=Number(stats.rows!=null?stats.rows:(data.candidates||[]).length);
   $("tab-candidates").textContent=candN?String(candN):"";
-  const alerts=[];
-  const url=conn&&conn.url?String(conn.url):"";
-  alerts.push({tag:"OK",chip:cl.chip==="ok"?"ok":"nte",text:(cl.msg||"COORDINATOR "+cl.sys)+(url?` · ${url}`:"")});
+  const alerts=[coordAlert(conn, cl)];
   if(nextText!=="–"&&nextText!=="READY") alerts.push({tag:"INF",chip:"inf",text:`NEXT UNIT ${nextText}`});
   if(pending>0) alerts.push({tag:"NTE",chip:"nte",text:`${pending} CONTRIBUTION${pending===1?"":"S"} PENDING AGREEMENT`});
-  alerts.push({tag:"NTE",chip:"nte",text:"CANDIDATES UNVERIFIED UNTIL THE COORDINATOR CHECKS THE UPLOAD"});
-  if(data.label) alerts.push({tag:"NTE",chip:"nte",text:String(data.label).toUpperCase()+" · THIS PAGE DOES NOT ANNOUNCE A DISCOVERY"});
+  alerts.push({tag:"NTE",chip:"nte",text:"CANDIDATES UNVERIFIED UNTIL THE COORDINATOR CHECKS THE UPLOAD. THIS PAGE DOES NOT ANNOUNCE A DISCOVERY"});
   paintAlerts(alerts);
   drawSpark();
+  window.__lastDash=data;
   if(!booted){booted=true;}
 }
 async function pollCatalog(sector){
@@ -548,12 +543,12 @@ async function pollMission(){
       return;
     }
     missionPct=Number(data.percent_units||0);
-    pushMeter("mission", missionPct/100);
+    missionFrac=missionPct/100;
     const foot=`${missionPct.toFixed(1)}% · ${data.units_verified||0}/${data.units_total||0} UNITS`;
     $("mission-pct").innerHTML=`${missionPct.toFixed(1)}<i>%</i>`;
     $("foot-mission-val").textContent=foot;
     $("foot-mission-note").textContent=(data.scope_note||"ENROLLED SECTORS ONLY").toUpperCase();
-    $("bar-mission").innerHTML=tickSvg(meterHist.mission, "#9caf6a");
+    $("bar-mission").innerHTML=tickSvg(missionFrac, "#9caf6a");
   }catch(e){/* leave last */ }
 }
 async function poll(){
@@ -595,7 +590,8 @@ fetch("/api/setup",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(data=>{
   if(data&&data.needs_token) $("setup").hidden=false;
 }).catch(()=>{});
 poll();
-setInterval(poll, 1500);
+window.poll=poll;
+window.__pollTimer=setInterval(poll, 1500);
 </script>
 </body>
 </html>
